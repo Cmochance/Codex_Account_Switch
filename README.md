@@ -1,124 +1,50 @@
 # Codex Account Switch
 
-中文文档: [README.zh-CN.md](./README.zh-CN.md)
+This is a standalone local script project for quickly switching between multiple Codex accounts on macOS.
 
-A standalone shell-based utility to switch between multiple Codex ChatGPT account sessions by swapping `auth.json` and profile-managed files under `~/.codex`.
+## Features
 
-## Why this project
+- Multi-account profile management: `~/.codex/account_backup/<profile>`
+- One-command switch: `codex switch <profile>`
+- Automatically tracks the active account: `.current_profile` + `.active_profile`
+- Auto sync before switching: writes current `~/.codex` state back to the previous profile
+- Auto snapshot: `_autosave/<timestamp>/auth.json`
 
-Codex usage quota can run out on one account while you still need to work. This project helps you:
-
-- Keep multiple account backups under `~/.codex/account_backup/<profile>`
-- Switch with one command: `codex switch <profile>`
-- Preserve real-time login state updates
-- Mark the active profile and sync state back before every switch
-
-## Core behavior
-
-When you switch from profile `A` to `B`:
-
-1. Resolve current active profile from:
-   - `~/.codex/account_backup/.current_profile`
-   - or `.active_profile` marker in each profile folder
-2. Backup current root state (`~/.codex`) back into previous profile (`A`)
-3. Save an extra auto snapshot to `~/.codex/account_backup/_autosave/<timestamp>/auth.json`
-4. Copy target profile (`B`) files into `~/.codex`
-5. Set marker:
-   - `~/.codex/account_backup/.current_profile`
-   - `~/.codex/account_backup/B/.active_profile`
-
-This keeps each account folder continuously updated with the latest login state.
-
-## Project structure
+## Project Structure
 
 ```text
 Codex_Account_Switch/
 ├── scripts/
-│   ├── codex-switch.sh      # Main switch logic
-│   ├── install.sh           # Install script + zsh wrapper
-│   ├── uninstall.sh         # Remove managed wrapper block
-│   └── smoke-test.sh        # Local behavior test
+│   ├── codex-switch.sh
+│   ├── install.sh
+│   ├── uninstall.sh
+│   └── smoke-test.sh
 ├── docs/
-│   ├── SECURITY.md
-│   └── IMPLEMENTATION.md
 ├── examples/
-│   └── account_backup/demo/auth.json.example
-├── .gitignore
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── LICENSE
 └── README.md
-```
-
-## Prerequisites
-
-- macOS or Linux
-- `bash`
-- `codex` CLI installed
-- Multiple backup profiles under `~/.codex/account_backup/`
-
-Example:
-
-```text
-~/.codex/account_backup/
-├── a/auth.json
-├── b/auth.json
-├── c/auth.json
-└── d/auth.json
 ```
 
 ## Installation
 
 ```bash
-cd ~/alysechen/Github/Codex_Account_Switch
-bash scripts/install.sh
-source ~/.zshrc
-```
-
-If you only want the script without shell wrapper injection:
-
-```bash
-bash scripts/install.sh --no-shell
+cd ~/.../Codex_Account_Switch # Enter the project directory
+bash scripts/install.sh # Install the script to ~/.codex and inject shell command wrapper
+source ~/.zshrc # Reload shell config so the wrapper takes effect
 ```
 
 ## Usage
 
 ```bash
-codex switch list
-codex switch a
-codex switch b
-```
-
-Direct script usage:
-
-```bash
-~/.codex/account_backup/codex-switch.sh list
-~/.codex/account_backup/codex-switch.sh c
+codex switch list # List all accounts
+codex switch a    # Switch to account a
+codex switch b    # Switch to account b
+...
 ```
 
 ## Uninstall
 
 ```bash
-cd ~/alysechen/Github/Codex_Account_Switch
-bash scripts/uninstall.sh
-# Optional: also remove installed switch script
-bash scripts/uninstall.sh --remove-script
-source ~/.zshrc
+bash scripts/uninstall.sh # Remove only the shell wrapper block
+bash scripts/uninstall.sh --remove-script # Also remove installed script under ~/.codex
+source ~/.zshrc # Reload shell config to remove the wrapper
 ```
-
-## Security notes
-
-- `auth.json` contains sensitive tokens. Do not commit real account data.
-- Keep `~/.codex/account_backup` private (`chmod 700` recommended).
-- This tool is for personal account management on your own device.
-
-## Local test
-
-```bash
-cd ~/alysechen/Github/Codex_Account_Switch
-bash scripts/smoke-test.sh
-```
-
-## License
-
-MIT License. See [LICENSE](./LICENSE).
