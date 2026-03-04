@@ -1,0 +1,10 @@
+{
+  "auth_mode": "chatgpt",
+  "tokens": {
+    "access_token": "replace-me",
+    "refresh_token": "replace-me",
+    "id_token": "replace-me",
+    "account_id": "replace-me"
+  },
+  "last_refresh": "2026-03-04T00:00:00Z"
+}

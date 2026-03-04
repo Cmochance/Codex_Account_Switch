@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Secrets and runtime artifacts
+**/auth.json
+**/.active_profile
+**/.current_profile
+**/_autosave/
+
+# Local temp/test outputs
+*.log
+tmp/
