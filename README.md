@@ -7,7 +7,10 @@ This is a standalone local script project for quickly switching between multiple
 - Multi-account profile management: `~/.codex/account_backup/<profile>`
 - One-command switch: `codex switch <profile>`
 - Automatically tracks the active account: `.current_profile` + `.active_profile`
+- First-time fallback: if no marker exists, current account defaults to `a`
+- Auto-create target profile folder when it does not exist
 - Auto sync before switching: writes current `~/.codex` state back to the previous profile
+- Unified replacement flow: backup -> remove -> copy (new/empty profile skips copy)
 - Auto snapshot: `_autosave/<timestamp>/auth.json`
 
 ## Project Structure
