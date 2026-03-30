@@ -6,7 +6,8 @@ BACKUP_ROOT="$CODHOME/account_backup"
 AUTO_SAVE_ROOT="$BACKUP_ROOT/_autosave"
 CURRENT_PROFILE_FILE="$BACKUP_ROOT/.current_profile"
 ACTIVE_MARKER_FILE=".active_profile"
-DEFAULT_PROFILE="a"
+APP_NAME="Codex"
+APP_PATH="/Applications/Codex.app"
 
 usage() {
   cat <<'USAGE'
@@ -47,105 +48,42 @@ resolve_current_profile() {
     fi
   done
 
-  # First-time fallback: if root auth exists but no marker is set, treat "a" as current.
-  if [[ -f "$CODHOME/auth.json" ]]; then
-    echo "$DEFAULT_PROFILE"
-    return
-  fi
-
   echo ""
-}
-
-collect_managed_names() {
-  local profile_dir="$1"
-  local entry name
-  local managed_names=("auth.json")
-  local dedup="::auth.json::"
-
-  if [[ -d "$profile_dir" ]]; then
-    for entry in "$profile_dir"/*; do
-      [[ -e "$entry" ]] || continue
-      name="$(basename "$entry")"
-      [[ "$name" == ".DS_Store" || "$name" == "$ACTIVE_MARKER_FILE" ]] && continue
-      if [[ "$dedup" != *"::$name::"* ]]; then
-        managed_names+=("$name")
-        dedup+="${name}::"
-      fi
-    done
-  fi
-
-  printf '%s\n' "${managed_names[@]}"
-}
-
-profile_has_copy_source() {
-  local profile_dir="$1"
-  local entry name
-
-  [[ -d "$profile_dir" ]] || return 1
-
-  for entry in "$profile_dir"/*; do
-    [[ -e "$entry" ]] || continue
-    name="$(basename "$entry")"
-    [[ "$name" == ".DS_Store" || "$name" == "$ACTIVE_MARKER_FILE" ]] && continue
-    return 0
-  done
-
-  return 1
-}
-
-remove_root_state() {
-  local names=("$@")
-  local name path
-
-  for name in "${names[@]}"; do
-    [[ -n "$name" ]] || continue
-    [[ "$name" == "account_backup" ]] && continue
-    path="$CODHOME/$name"
-    rm -rf "$path"
-  done
-}
-
-copy_profile_state_to_root() {
-  local profile_dir="$1"
-  local entry name
-
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --exclude '.DS_Store' --exclude "$ACTIVE_MARKER_FILE" "$profile_dir/" "$CODHOME/"
-  else
-    find "$profile_dir" -mindepth 1 -maxdepth 1 -print0 | while IFS= read -r -d '' entry; do
-      name="$(basename "$entry")"
-      [[ "$name" == ".DS_Store" || "$name" == "$ACTIVE_MARKER_FILE" ]] && continue
-      cp -R "$entry" "$CODHOME/$name"
-    done
-  fi
 }
 
 # Save current ~/.codex managed files back to the previously active profile folder.
 backup_root_state_to_profile() {
   local profile="$1"
   local profile_dir="$BACKUP_ROOT/$profile"
-  local managed_names=()
-  local name src dst
+  local entry name src dst
+  local managed_names=("auth.json")
+  local dedup="::auth.json::"
 
-  mkdir -p "$profile_dir"
-  while IFS= read -r name; do
-    managed_names+=("$name")
-  done < <(collect_managed_names "$profile_dir")
+  [[ -d "$profile_dir" ]] || return 0
+
+  for entry in "$profile_dir"/*; do
+    [[ -e "$entry" ]] || continue
+    name="$(basename "$entry")"
+    [[ "$name" == ".DS_Store" || "$name" == "$ACTIVE_MARKER_FILE" ]] && continue
+    if [[ "$dedup" != *"::$name::"* ]]; then
+      managed_names+=("$name")
+      dedup+="${name}::"
+    fi
+  done
 
   for name in "${managed_names[@]}"; do
     src="$CODHOME/$name"
     dst="$profile_dir/$name"
 
     if [[ -d "$src" ]]; then
-      rm -rf "$dst"
+      mkdir -p "$dst"
       if command -v rsync >/dev/null 2>&1; then
-        mkdir -p "$dst"
-        rsync -a "$src/" "$dst/"
+        rsync -a --delete "$src/" "$dst/"
       else
+        rm -rf "$dst"
         cp -R "$src" "$dst"
       fi
     elif [[ -f "$src" ]]; then
-      rm -rf "$dst"
       cp "$src" "$dst"
     else
       rm -rf "$dst"
@@ -166,6 +104,48 @@ set_active_marker() {
 
   printf 'activated_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BACKUP_ROOT/$profile/$ACTIVE_MARKER_FILE"
   echo "$profile" > "$CURRENT_PROFILE_FILE"
+}
+
+is_codex_app_running() {
+  pgrep -x "$APP_NAME" >/dev/null 2>&1
+}
+
+quit_codex_app_if_running() {
+  local attempt
+
+  if ! is_codex_app_running; then
+    return 1
+  fi
+
+  # Use process signals to avoid the app's interactive quit confirmation.
+  pkill -TERM -x "$APP_NAME" >/dev/null 2>&1 || true
+
+  for attempt in $(seq 1 20); do
+    if ! is_codex_app_running; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  pkill -KILL -x "$APP_NAME" >/dev/null 2>&1 || true
+
+  for attempt in $(seq 1 10); do
+    if ! is_codex_app_running; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "Error: $APP_NAME did not exit cleanly. Close it manually and retry." >&2
+  exit 1
+}
+
+reopen_codex_app_if_needed() {
+  local app_was_running="$1"
+
+  if [[ "$app_was_running" -eq 1 ]]; then
+    open -a "$APP_PATH" >/dev/null 2>&1 || open -a "$APP_NAME" >/dev/null 2>&1
+  fi
 }
 
 if [[ ! -d "$BACKUP_ROOT" ]]; then
@@ -191,14 +171,27 @@ fi
 
 profile="$cmd"
 profile_dir="$BACKUP_ROOT/$profile"
-target_was_new=0
+
 if [[ ! -d "$profile_dir" ]]; then
-  mkdir -p "$profile_dir"
-  target_was_new=1
+  echo "Error: profile not found: $profile" >&2
+  echo "Available profiles:" >&2
+  list_profiles >&2
+  exit 1
+fi
+
+if [[ ! -f "$profile_dir/auth.json" ]]; then
+  echo "Error: missing auth file: $profile_dir/auth.json" >&2
+  exit 1
+fi
+
+app_was_running=0
+if is_codex_app_running; then
+  app_was_running=1
+  quit_codex_app_if_running
 fi
 
 current_profile="$(resolve_current_profile)"
-if [[ -n "$current_profile" && "$current_profile" != "$profile" ]]; then
+if [[ -n "$current_profile" ]]; then
   backup_root_state_to_profile "$current_profile"
 fi
 
@@ -209,49 +202,21 @@ if [[ -f "$CODHOME/auth.json" ]]; then
   cp "$CODHOME/auth.json" "$AUTO_SAVE_ROOT/$ts/auth.json"
 fi
 
-remove_names=()
-dedup_names="::"
-if [[ -n "$current_profile" ]]; then
-  current_names=()
-  while IFS= read -r name; do
-    current_names+=("$name")
-  done < <(collect_managed_names "$BACKUP_ROOT/$current_profile")
-  for name in "${current_names[@]}"; do
-    if [[ "$dedup_names" != *"::$name::"* ]]; then
-      remove_names+=("$name")
-      dedup_names+="${name}::"
-    fi
+if command -v rsync >/dev/null 2>&1; then
+  rsync -a --exclude '.DS_Store' --exclude "$ACTIVE_MARKER_FILE" "$profile_dir/" "$CODHOME/"
+else
+  find "$profile_dir" -mindepth 1 -maxdepth 1 -print0 | while IFS= read -r -d '' entry; do
+    name="$(basename "$entry")"
+    [[ "$name" == ".DS_Store" || "$name" == "$ACTIVE_MARKER_FILE" ]] && continue
+    cp -R "$entry" "$CODHOME/$name"
   done
-fi
-target_names=()
-while IFS= read -r name; do
-  target_names+=("$name")
-done < <(collect_managed_names "$profile_dir")
-for name in "${target_names[@]}"; do
-  if [[ "$dedup_names" != *"::$name::"* ]]; then
-    remove_names+=("$name")
-    dedup_names+="${name}::"
-  fi
-done
-remove_root_state "${remove_names[@]}"
-
-copied_from_target=0
-if profile_has_copy_source "$profile_dir"; then
-  copy_profile_state_to_root "$profile_dir"
-  copied_from_target=1
 fi
 
 set_active_marker "$profile"
+reopen_codex_app_if_needed "$app_was_running"
 
 echo "Switched to profile: $profile"
-if [[ -n "$current_profile" && "$current_profile" != "$profile" ]]; then
-  echo "Backed up current root state to previous profile: $current_profile"
+if [[ -n "$current_profile" ]]; then
+  echo "Backed up current root state to profile: $current_profile"
 fi
-if [[ "$target_was_new" -eq 1 ]]; then
-  echo "Created profile folder: $profile_dir"
-fi
-if [[ "$copied_from_target" -eq 1 ]]; then
-  echo "Auth file replaced: $CODHOME/auth.json"
-else
-  echo "Profile has no source files to copy, skipped copy step."
-fi
+echo "Auth file replaced: $CODHOME/auth.json"

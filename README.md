@@ -1,17 +1,42 @@
 # Codex Account Switch
 
-This is a standalone local script project for quickly switching between multiple Codex accounts on macOS.
+中文文档: [README.zh-CN.md](./README.zh-CN.md)
+
+This project packages the locally used Codex account switch workflow into a standalone shell utility for macOS.
 
 ## Features
 
-- Multi-account profile management: `~/.codex/account_backup/<profile>`
-- One-command switch: `codex switch <profile>`
-- Automatically tracks the active account: `.current_profile` + `.active_profile`
-- First-time fallback: if no marker exists, current account defaults to `a`
-- Auto-create target profile folder when it does not exist
-- Auto sync before switching: writes current `~/.codex` state back to the previous profile
-- Unified replacement flow: backup -> remove -> copy (new/empty profile skips copy)
-- Auto snapshot: `_autosave/<timestamp>/auth.json`
+- Multi-account profile management under `~/.codex/account_backup/<profile>`
+- One-command switch via `codex switch <profile>`
+- Active profile tracking with `.current_profile` and `.active_profile`
+- Before each switch, current root state is written back to the active profile
+- Automatic `auth.json` snapshot in `_autosave/<timestamp>/auth.json`
+- If `Codex.app` is running, the script closes it before switching and relaunches it after the switch
+
+## Important behavior
+
+- The script does **not** auto-create new profile folders
+- The target profile folder must already exist
+- The target profile folder must already contain `auth.json`
+- You must prepare profiles manually before switching
+- `install.sh` creates `~/.codex/account_backup/a` through `~/.codex/account_backup/d`
+- `install.sh` seeds only `a/auth.json` from the current `~/.codex/auth.json`
+
+Example:
+
+```text
+~/.codex/account_backup/
+├── a/
+│   └── auth.json
+├── b/
+│   └── auth.json
+├── c/
+│   └── auth.json
+└── d/
+    └── auth.json
+```
+
+If you run `codex switch x` and `~/.codex/account_backup/x/auth.json` is missing, the script exits with an error instead of creating files for you.
 
 ## Project Structure
 
@@ -20,8 +45,7 @@ Codex_Account_Switch/
 ├── scripts/
 │   ├── codex-switch.sh
 │   ├── install.sh
-│   ├── uninstall.sh
-│   └── smoke-test.sh
+│   └── uninstall.sh
 ├── docs/
 ├── examples/
 └── README.md
@@ -30,24 +54,33 @@ Codex_Account_Switch/
 ## Installation
 
 ```bash
-cd ~/.../Codex_Account_Switch # Enter the project directory
-bash scripts/install.sh # Install the script to ~/.codex and inject shell command wrapper
-source ~/.zshrc # Reload shell config so the wrapper takes effect
+cd ~/.../Codex_Account_Switch
+bash scripts/install.sh
+source ~/.zshrc
 ```
+
+The installer:
+
+- copies `scripts/codex-switch.sh` to `~/.codex/account_backup/codex-switch.sh`
+- creates `~/.codex/account_backup/a` through `~/.codex/account_backup/d`
+- copies the current `~/.codex/auth.json` to `~/.codex/account_backup/a/auth.json` when available
+- injects a `codex()` wrapper into `~/.zshrc`
+- leaves non-switch commands to the user's existing `codex` CLI in `PATH`
 
 ## Usage
 
 ```bash
-codex switch list # List all accounts
-codex switch a    # Switch to account a
-codex switch b    # Switch to account b
-...
+codex switch list
+codex switch a
+codex switch b
 ```
 
 ## Uninstall
 
 ```bash
-bash scripts/uninstall.sh # Remove only the shell wrapper block
-bash scripts/uninstall.sh --remove-script # Also remove installed script under ~/.codex
-source ~/.zshrc # Reload shell config to remove the wrapper
+bash scripts/uninstall.sh
+bash scripts/uninstall.sh --remove-script
+source ~/.zshrc
 ```
+
+`uninstall.sh` removes only the managed shell wrapper block by default. It does not delete your account folders unless you remove them manually.

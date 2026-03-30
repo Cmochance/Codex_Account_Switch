@@ -6,6 +6,10 @@ SOURCE_SCRIPT="$PROJECT_ROOT/scripts/codex-switch.sh"
 CODHOME="${CODEX_HOME:-$HOME/.codex}"
 TARGET_DIR="$CODHOME/account_backup"
 TARGET_SCRIPT="$TARGET_DIR/codex-switch.sh"
+DEFAULT_PROFILES=(a b c d)
+DEFAULT_PROFILE_DIR="$TARGET_DIR/a"
+ROOT_AUTH_FILE="$CODHOME/auth.json"
+DEFAULT_PROFILE_AUTH_FILE="$DEFAULT_PROFILE_DIR/auth.json"
 ZSHRC="$HOME/.zshrc"
 BEGIN_MARK="# >>> Codex Account Switch (managed) >>>"
 END_MARK="# <<< Codex Account Switch (managed) <<<"
@@ -23,6 +27,17 @@ fi
 mkdir -p "$TARGET_DIR"
 cp "$SOURCE_SCRIPT" "$TARGET_SCRIPT"
 chmod +x "$TARGET_SCRIPT"
+for profile in "${DEFAULT_PROFILES[@]}"; do
+  mkdir -p "$TARGET_DIR/$profile"
+done
+
+if [[ -f "$ROOT_AUTH_FILE" ]]; then
+  cp "$ROOT_AUTH_FILE" "$DEFAULT_PROFILE_AUTH_FILE"
+  chmod 600 "$DEFAULT_PROFILE_AUTH_FILE"
+  echo "Backed up current login to: $DEFAULT_PROFILE_AUTH_FILE"
+else
+  echo "Warning: current auth.json not found at $ROOT_AUTH_FILE; skipped seeding profile a." >&2
+fi
 
 echo "Installed switch script to: $TARGET_SCRIPT"
 
