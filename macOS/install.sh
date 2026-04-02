@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE_SCRIPT="$PROJECT_ROOT/scripts/codex-switch.sh"
+SOURCE_SCRIPT="$PROJECT_ROOT/macOS/codex-switch.sh"
 CODHOME="${CODEX_HOME:-$HOME/.codex}"
 TARGET_DIR="$CODHOME/account_backup"
 TARGET_SCRIPT="$TARGET_DIR/codex-switch.sh"

@@ -10,3 +10,6 @@
 # Local temp/test outputs
 *.log
 tmp/
+.venv/
+.pytest_cache/
+__pycache__/
