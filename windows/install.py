@@ -7,25 +7,35 @@ from pathlib import Path
 
 if __package__ in {None, ""}:
     from common import (  # type: ignore[no-redef]
+        ACTIVE_MARKER_FILE,
+        CURRENT_PROFILE_FILENAME,
         DEFAULT_PROFILES,
         detect_codex_app_path,
         ensure_dir_on_user_path,
         get_backup_root,
         get_codex_home,
         get_runtime_dir,
+        list_profile_dirs,
         load_install_state,
+        read_text_stripped,
         save_install_state,
+        utc_timestamp,
     )
 else:
     from .common import (
+        ACTIVE_MARKER_FILE,
+        CURRENT_PROFILE_FILENAME,
         DEFAULT_PROFILES,
         detect_codex_app_path,
         ensure_dir_on_user_path,
         get_backup_root,
         get_codex_home,
         get_runtime_dir,
+        list_profile_dirs,
         load_install_state,
+        read_text_stripped,
         save_install_state,
+        utc_timestamp,
     )
 
 
@@ -34,6 +44,14 @@ SOURCE_FILENAMES = ("codex_switch.py", "common.py")
 
 def source_dir() -> Path:
     return Path(__file__).resolve().parent
+
+
+def project_root() -> Path:
+    return source_dir().parent
+
+
+def placeholder_auth_template_path() -> Path:
+    return project_root() / "examples" / "account_backup" / "demo" / "auth.json.example"
 
 
 def write_codex_shim(shim_path: Path, python_executable: str) -> None:
@@ -94,6 +112,19 @@ def resolve_real_codex_path(managed_shim_path: Path) -> Path:
     )
 
 
+def ensure_placeholder_auth_files(backup_root: Path) -> list[Path]:
+    template_contents = placeholder_auth_template_path().read_text(encoding="utf-8")
+    created_files: list[Path] = []
+    for profile in DEFAULT_PROFILES:
+        auth_file = backup_root / profile / "auth.json"
+        if auth_file.exists():
+            continue
+        auth_file.parent.mkdir(parents=True, exist_ok=True)
+        auth_file.write_text(template_contents, encoding="utf-8")
+        created_files.append(auth_file)
+    return created_files
+
+
 def seed_default_profile(codex_home: Path, backup_root: Path) -> str | None:
     root_auth_file = codex_home / "auth.json"
     default_profile_auth_file = backup_root / "a" / "auth.json"
@@ -102,6 +133,21 @@ def seed_default_profile(codex_home: Path, backup_root: Path) -> str | None:
     default_profile_auth_file.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(root_auth_file, default_profile_auth_file)
     return str(default_profile_auth_file)
+
+
+def has_initialized_active_profile(backup_root: Path) -> bool:
+    current_profile = read_text_stripped(backup_root / CURRENT_PROFILE_FILENAME)
+    if current_profile and (backup_root / current_profile).is_dir():
+        return True
+    return any((profile_dir / ACTIVE_MARKER_FILE).is_file() for profile_dir in list_profile_dirs(backup_root))
+
+
+def initialize_default_active_profile(backup_root: Path) -> None:
+    (backup_root / CURRENT_PROFILE_FILENAME).write_text("a\n", encoding="utf-8")
+    (backup_root / "a" / ACTIVE_MARKER_FILE).write_text(
+        f"activated_at={utc_timestamp()}\n",
+        encoding="utf-8",
+    )
 
 
 def main() -> int:
@@ -122,7 +168,12 @@ def main() -> int:
         (backup_root / profile).mkdir(parents=True, exist_ok=True)
 
     copy_runtime_sources(runtime_dir)
+    placeholder_auth_files = ensure_placeholder_auth_files(backup_root)
     seeded_auth = seed_default_profile(codex_home, backup_root)
+    initialized_default_profile = False
+    if seeded_auth and not has_initialized_active_profile(backup_root):
+        initialize_default_active_profile(backup_root)
+        initialized_default_profile = True
     write_codex_shim(managed_shim_path, sys.executable)
 
     existing_state = load_install_state(codex_home)
@@ -143,7 +194,17 @@ def main() -> int:
     if seeded_auth:
         print(f"Backed up current login to: {seeded_auth}")
     else:
-        print(f"Warning: current auth.json not found at {codex_home / 'auth.json'}; skipped seeding profile a.", file=sys.stderr)
+        print(
+            f"Warning: current auth.json not found at {codex_home / 'auth.json'}; left profile auth files as placeholders.",
+            file=sys.stderr,
+        )
+
+    if placeholder_auth_files:
+        print("Created placeholder auth templates:")
+        for auth_file in placeholder_auth_files:
+            print(f"- {auth_file}")
+    if initialized_default_profile:
+        print("Initialized default active profile: a")
 
     print(f"Installed Windows runtime to: {runtime_dir}")
     print(f"Installed command shim to: {managed_shim_path}")

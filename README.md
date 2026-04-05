@@ -76,7 +76,9 @@ The macOS installer:
 
 - copies `macOS/codex-switch.sh` to `~/.codex/account_backup/codex-switch.sh`
 - creates `~/.codex/account_backup/a` through `~/.codex/account_backup/d`
+- writes the example auth template into any missing `~/.codex/account_backup/<profile>/auth.json`
 - copies the current `~/.codex/auth.json` to `~/.codex/account_backup/a/auth.json` when available
+- initializes profile `a` as the active profile if a real root auth file exists and no active profile is set yet
 - injects a `codex()` wrapper into `~/.zshrc`
 - leaves non-switch commands to the user's existing `codex` CLI in `PATH`
 
@@ -91,7 +93,9 @@ The Windows installer:
 
 - copies `windows/codex_switch.py` and `windows/common.py` to `%CODEX_HOME%\account_backup\windows\`
 - creates `%CODEX_HOME%\account_backup\a` through `%CODEX_HOME%\account_backup\d`
+- writes the example auth template into any missing `%CODEX_HOME%\account_backup\<profile>\auth.json`
 - copies the current `%CODEX_HOME%\auth.json` to `%CODEX_HOME%\account_backup\a\auth.json` when available
+- initializes profile `a` as the active profile if a real root auth file exists and no active profile is set yet
 - writes `%CODEX_HOME%\bin\codex.cmd`
 - ensures `%CODEX_HOME%\bin` is first in the user PATH
 - records the real Codex CLI path in `%CODEX_HOME%\account_backup\windows\install_state.json`

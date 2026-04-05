@@ -14,9 +14,14 @@
 
 - `macOS/install.sh` creates `~/.codex/account_backup` if missing
 - `macOS/install.sh` creates `~/.codex/account_backup/a` through `~/.codex/account_backup/d`
+- macOS install fills any missing `a`-`d` `auth.json` files from `examples/account_backup/demo/auth.json.example`
 - If `~/.codex/auth.json` exists during macOS install, it is copied to `~/.codex/account_backup/a/auth.json`
+- If a real root auth exists and no active profile is initialized yet, macOS install sets `a` as the active profile
 - `windows/install.py` creates the same profile layout plus `%CODEX_HOME%\account_backup\windows\` and `%CODEX_HOME%\bin\`
 - Windows install copies `windows/codex_switch.py` and `windows/common.py` into the runtime directory
+- Windows install fills any missing `a`-`d` `auth.json` files from `examples/account_backup/demo/auth.json.example`
+- If a real root `%CODEX_HOME%\auth.json` exists, Windows install overwrites `a/auth.json` with it
+- If a real root auth exists and no active profile is initialized yet, Windows install sets `a` as the active profile
 - Windows install records `real_codex_path`, `managed_bin_dir`, `app_path`, and `path_added_by_installer` in `install_state.json`
 
 ## Preconditions for switching

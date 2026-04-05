@@ -76,7 +76,9 @@ macOS 安装脚本会：
 
 - 把 `macOS/codex-switch.sh` 复制到 `~/.codex/account_backup/codex-switch.sh`
 - 创建 `~/.codex/account_backup/a` 到 `~/.codex/account_backup/d`
+- 为所有缺失的 `~/.codex/account_backup/<profile>/auth.json` 写入示例模板
 - 如果当前存在 `~/.codex/auth.json`，则默认备份到 `~/.codex/account_backup/a/auth.json`
+- 如果当前存在真实根目录 auth 且尚未设置激活账号，则初始化 `a` 为当前激活账号
 - 在 `~/.zshrc` 中注入 `codex()` wrapper
 - 非 `switch` 命令继续走用户自己环境中的 `codex` CLI
 
@@ -91,7 +93,9 @@ Windows 安装脚本会：
 
 - 把 `windows/codex_switch.py` 和 `windows/common.py` 复制到 `%CODEX_HOME%\account_backup\windows\`
 - 创建 `%CODEX_HOME%\account_backup\a` 到 `%CODEX_HOME%\account_backup\d`
+- 为所有缺失的 `%CODEX_HOME%\account_backup\<profile>\auth.json` 写入示例模板
 - 如果当前存在 `%CODEX_HOME%\auth.json`，则默认备份到 `%CODEX_HOME%\account_backup\a\auth.json`
+- 如果当前存在真实根目录 auth 且尚未设置激活账号，则初始化 `a` 为当前激活账号
 - 生成 `%CODEX_HOME%\bin\codex.cmd`
 - 确保 `%CODEX_HOME%\bin` 位于用户 PATH 的最前面
 - 将真实 Codex CLI 路径记录到 `%CODEX_HOME%\account_backup\windows\install_state.json`
