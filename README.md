@@ -93,7 +93,7 @@ The Windows installer:
 - creates `%CODEX_HOME%\account_backup\a` through `%CODEX_HOME%\account_backup\d`
 - copies the current `%CODEX_HOME%\auth.json` to `%CODEX_HOME%\account_backup\a\auth.json` when available
 - writes `%CODEX_HOME%\bin\codex.cmd`
-- appends `%CODEX_HOME%\bin` to the user PATH when needed
+- ensures `%CODEX_HOME%\bin` is first in the user PATH
 - records the real Codex CLI path in `%CODEX_HOME%\account_backup\windows\install_state.json`
 
 Open a new terminal after install so the PATH change is visible.

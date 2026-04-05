@@ -199,9 +199,11 @@ def write_user_path_value(value: str, registry_module=None) -> None:
 def ensure_dir_on_user_path(path: str | Path, registry_module=None) -> bool:
     current = read_user_path_value(registry_module=registry_module)
     entries = split_windows_path(current)
-    if _path_entries_contain(entries, path):
+    normalized_target = _normalize_windows_path_entry(path)
+    filtered_entries = [entry for entry in entries if _normalize_windows_path_entry(entry) != normalized_target]
+    new_entries = [str(path), *filtered_entries]
+    if new_entries == entries:
         return False
-    new_entries = entries + [str(path)]
     write_user_path_value(";".join(new_entries), registry_module=registry_module)
     return True
 

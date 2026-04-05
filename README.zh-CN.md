@@ -93,7 +93,7 @@ Windows 安装脚本会：
 - 创建 `%CODEX_HOME%\account_backup\a` 到 `%CODEX_HOME%\account_backup\d`
 - 如果当前存在 `%CODEX_HOME%\auth.json`，则默认备份到 `%CODEX_HOME%\account_backup\a\auth.json`
 - 生成 `%CODEX_HOME%\bin\codex.cmd`
-- 需要时把 `%CODEX_HOME%\bin` 写入用户 PATH
+- 确保 `%CODEX_HOME%\bin` 位于用户 PATH 的最前面
 - 将真实 Codex CLI 路径记录到 `%CODEX_HOME%\account_backup\windows\install_state.json`
 
 安装完成后请重新打开终端，使 PATH 更新生效。

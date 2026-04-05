@@ -56,7 +56,7 @@ The macOS installer injects a `codex()` shell wrapper into `~/.zshrc`.
 
 ## Windows shim behavior
 
-The Windows installer writes `%CODEX_HOME%\bin\codex.cmd` and appends `%CODEX_HOME%\bin` to the user PATH if needed.
+The Windows installer writes `%CODEX_HOME%\bin\codex.cmd` and ensures `%CODEX_HOME%\bin` is first in the user PATH.
 
 - `codex switch ...` routes to `%CODEX_HOME%\account_backup\windows\codex_switch.py`
 - Non-switch `codex` commands are forwarded to the previously resolved real Codex CLI path from `install_state.json`

@@ -148,9 +148,9 @@ def main() -> int:
     print(f"Installed Windows runtime to: {runtime_dir}")
     print(f"Installed command shim to: {managed_shim_path}")
     if added_to_path:
-        print(f"Added to user PATH: {managed_bin_dir}")
+        print(f"Ensured command shim directory is first in user PATH: {managed_bin_dir}")
     else:
-        print(f"Command shim directory already present in user PATH: {managed_bin_dir}")
+        print(f"Command shim directory already first in user PATH: {managed_bin_dir}")
     print("Reopen your terminal to refresh PATH.")
     return 0
 
