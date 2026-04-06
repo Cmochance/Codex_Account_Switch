@@ -11,11 +11,11 @@
     "tauri:build": "tauri build -- --bundles none"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0"
+    "@tauri-apps/api": "2.8.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
-    "typescript": "^5.6.3",
-    "vite": "^7.0.0"
+    "@tauri-apps/cli": "2.8.4",
+    "typescript": "5.9.2",
+    "vite": "7.1.4"
   }
 }
