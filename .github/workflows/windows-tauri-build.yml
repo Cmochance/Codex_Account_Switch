@@ -5,13 +5,15 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
 
 jobs:
   build-windows-portable:
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout
@@ -37,3 +39,20 @@ jobs:
         with:
           name: codex_switch-windows-portable
           path: src-tauri/target/release/codex_switch.exe
+
+      - name: Publish GitHub release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          ASSET_PATH: src-tauri/target/release/codex_switch.exe
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh --version
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "$ASSET_PATH#codex_switch.exe" --clobber
+          else
+            gh release create "$TAG_NAME" "$ASSET_PATH#codex_switch.exe" --verify-tag --generate-notes
+          fi
