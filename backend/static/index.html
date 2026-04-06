@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex Switch</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Codex Switch</p>
+          <h1>Account control panel</h1>
+          <p class="hero-subtitle">Switch backup profiles safely without touching the CLI.</p>
+        </div>
+        <div class="runtime-strip">
+          <span id="runtime-status" class="runtime-pill">Checking runtime</span>
+          <span id="runtime-autosave" class="runtime-meta">Autosave --</span>
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <div class="toolbar-copy">
+          <h2>Account Profiles</h2>
+          <p>Disabled cards need setup before switching.</p>
+        </div>
+        <div class="toolbar-actions">
+          <button id="add-profiles-button" class="ghost-button" type="button">Add Profiles</button>
+          <button id="open-codex-button" class="ghost-button" type="button">Open Codex</button>
+          <button id="contact-button" class="ghost-button" type="button">Contact Us</button>
+        </div>
+      </section>
+
+      <main class="dashboard">
+        <section class="profiles-column">
+          <div id="profiles-grid" class="profiles-grid"></div>
+          <div class="pager">
+            <button id="previous-page-button" class="ghost-button pager-button" type="button">Previous</button>
+            <button id="next-page-button" class="ghost-button pager-button" type="button">Next</button>
+          </div>
+        </section>
+
+        <aside class="summary-column">
+          <article class="summary-card">
+            <p class="summary-label">Current</p>
+            <h2 id="current-title">--</h2>
+            <p id="current-plan" class="summary-plan">--</p>
+            <div class="summary-actions">
+              <button id="open-current-folder-button" class="ghost-button wide-button" type="button">Open folder</button>
+            </div>
+          </article>
+
+          <article class="summary-card quota-card">
+            <h3>Current quota</h3>
+            <div id="current-quota-panel" class="quota-stack"></div>
+          </article>
+        </aside>
+      </main>
+    </div>
+
+    <dialog id="add-profile-dialog" class="dialog">
+      <form id="add-profile-form" class="dialog-form" method="dialog">
+        <div class="dialog-copy">
+          <h3>Add Profile</h3>
+          <p>Create a new backup folder with template <code>auth.json</code> and <code>profile.json</code>.</p>
+        </div>
+
+        <label class="field">
+          <span>Folder name</span>
+          <input id="folder-name-input" name="folder_name" type="text" autocomplete="off" required />
+        </label>
+
+        <p id="dialog-error" class="dialog-error" hidden></p>
+
+        <div class="dialog-actions">
+          <button id="cancel-add-profile-button" class="ghost-button" type="button">Cancel</button>
+          <button id="submit-add-profile-button" class="primary-button" type="submit">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
