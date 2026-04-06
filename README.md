@@ -110,6 +110,34 @@ codex switch a
 codex switch b
 ```
 
+## Native Windows app
+
+The repo now also contains a native Tauri desktop implementation for the Windows control panel:
+
+- frontend source: [`src/`](./src/)
+- native shell and Rust commands: [`src-tauri/`](./src-tauri/)
+- current Python `backend/` remains in the repo as migration reference until Tauri parity is verified on Windows
+
+Run locally on Windows:
+
+```powershell
+npm install
+npm run tauri:dev
+```
+
+Build the portable executable on Windows:
+
+```powershell
+npm install
+npm run tauri:build
+```
+
+Expected portable artifact:
+
+```text
+src-tauri\target\release\codex_switch.exe
+```
+
 ## Uninstall
 
 macOS:
