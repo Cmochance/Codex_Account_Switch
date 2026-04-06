@@ -14,7 +14,6 @@ use super::paths::{get_install_state_file, APP_NAME, APP_PROCESS_NAME};
 #[derive(Debug, Default, Deserialize)]
 pub struct InstallState {
     pub app_path: Option<String>,
-    pub real_codex_path: Option<String>,
 }
 
 pub fn load_install_state(codex_home: Option<&Path>) -> InstallState {

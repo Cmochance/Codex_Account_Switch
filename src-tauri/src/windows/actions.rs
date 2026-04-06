@@ -38,7 +38,7 @@ pub fn open_profile_folder(app: &tauri::AppHandle, profile_name: &str) -> AppRes
     }
 
     app.opener()
-        .open_path(&profile_dir, None::<&str>)
+        .open_path(profile_dir.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|error| {
             AppError::new(
                 "PROFILE_FOLDER_OPEN_FAILED",

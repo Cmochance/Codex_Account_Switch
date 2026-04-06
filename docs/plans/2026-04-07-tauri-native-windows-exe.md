@@ -465,7 +465,7 @@ The frontend should continue to consume this shape so the migration does not req
 
 **Recommended Windows build commands:**
 - `npm ci`
-- `npm run tauri build -- --bundles none`
+- `npm run tauri build --no-bundle`
 
 **Expected result:**
 - A portable `codex_switch.exe` artifact is produced from CI.

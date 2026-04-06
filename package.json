@@ -8,13 +8,13 @@
     "build": "tsc && vite build",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build -- --bundles none"
+    "tauri:build": "tauri build --no-bundle"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.8.0"
+    "@tauri-apps/api": "2.10.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2.8.4",
+    "@tauri-apps/cli": "2.10.1",
     "typescript": "5.9.2",
     "vite": "7.1.4"
   }
