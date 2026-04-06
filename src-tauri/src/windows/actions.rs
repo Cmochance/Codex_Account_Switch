@@ -1,30 +1,51 @@
 use std::fs;
-use std::process::Command;
-
 use tauri_plugin_opener::OpenerExt;
 
 use crate::errors::{AppError, AppResult};
 use crate::models::ProfileMetadata;
 
+use super::dashboard::resolve_current_profile;
+use super::fs_ops::backup_root_state_to_profile;
 use super::metadata::save_profile_metadata;
-use super::paths::{get_backup_root, validate_profile_name, CONTACT_URL};
-use super::process::resolve_codex_app_path;
+use super::paths::{get_backup_root, get_codex_home, validate_profile_name, CONTACT_URL};
+use super::process::{open_or_activate_codex_app, run_codex_login};
 
 const AUTH_TEMPLATE: &str = include_str!("../../../examples/account_backup/demo/auth.json.example");
 
 pub fn open_codex_app() -> AppResult<String> {
-    let Some(resolved_path) = resolve_codex_app_path(None) else {
-        return Err(AppError::new(
-            "APP_NOT_FOUND",
-            "Codex desktop app path could not be resolved.",
-        ));
-    };
+    open_or_activate_codex_app(None)
+}
 
-    Command::new(&resolved_path).spawn().map_err(|error| {
-        AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
+pub fn login_current_profile() -> AppResult<String> {
+    let codex_home = get_codex_home();
+    let backup_root = get_backup_root(Some(&codex_home));
+    let current_profile = resolve_current_profile(&backup_root).ok_or_else(|| {
+        AppError::new(
+            "CURRENT_PROFILE_MISSING",
+            "No active profile is selected. Switch to a profile before logging in.",
+        )
     })?;
 
-    Ok(resolved_path.to_string_lossy().into_owned())
+    let profile_dir = backup_root.join(&current_profile);
+    if !profile_dir.is_dir() {
+        return Err(AppError::new(
+            "PROFILE_NOT_FOUND",
+            format!("Profile not found: {current_profile}"),
+        ));
+    }
+
+    run_codex_login(&codex_home)?;
+
+    if !codex_home.join("auth.json").is_file() {
+        return Err(AppError::new(
+            "LOGIN_AUTH_MISSING",
+            "Login finished but no auth.json was written to CODEX_HOME.",
+        ));
+    }
+
+    backup_root_state_to_profile(&current_profile, &codex_home, &backup_root)?;
+
+    Ok(profile_dir.to_string_lossy().into_owned())
 }
 
 pub fn open_profile_folder(app: &tauri::AppHandle, profile_name: &str) -> AppResult<String> {

@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod bootstrap;
 pub mod dashboard;
 pub mod fs_ops;
 pub mod metadata;

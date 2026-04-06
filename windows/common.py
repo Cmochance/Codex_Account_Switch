@@ -137,10 +137,56 @@ def candidate_app_paths() -> list[Path]:
     candidates: list[Path] = []
     local_app_data = os.environ.get("LOCALAPPDATA")
     program_files = os.environ.get("ProgramFiles")
+
+    def add_candidate(path: Path) -> None:
+        if path not in candidates:
+            candidates.append(path)
+
+    def add_codex_children(base: Path) -> None:
+        if not base.is_dir():
+            return
+        for child in base.iterdir():
+            if not child.is_dir():
+                continue
+            child_name = child.name.casefold()
+            if "codex" in child_name:
+                add_candidate(child / APP_PROCESS_NAME)
+                continue
+            if "openai" in child_name:
+                for nested in child.iterdir():
+                    if nested.is_dir() and "codex" in nested.name.casefold():
+                        add_candidate(nested / APP_PROCESS_NAME)
+
     if local_app_data:
-        candidates.append(Path(local_app_data) / "Programs" / APP_NAME / APP_PROCESS_NAME)
+        local_root = Path(local_app_data)
+        programs_dir = local_root / "Programs"
+        add_candidate(programs_dir / APP_NAME / APP_PROCESS_NAME)
+        add_candidate(programs_dir / "OpenAI" / APP_NAME / APP_PROCESS_NAME)
+        add_candidate(local_root / APP_NAME / APP_PROCESS_NAME)
+        add_candidate(local_root / "OpenAI" / APP_NAME / APP_PROCESS_NAME)
+        add_codex_children(programs_dir)
+
     if program_files:
-        candidates.append(Path(program_files) / APP_NAME / APP_PROCESS_NAME)
+        program_root = Path(program_files)
+        add_candidate(program_root / APP_NAME / APP_PROCESS_NAME)
+        add_candidate(program_root / "OpenAI" / APP_NAME / APP_PROCESS_NAME)
+        add_codex_children(program_root)
+
+    if winreg is not None:
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                with winreg.OpenKey(
+                    hive,
+                    r"Software\Microsoft\Windows\CurrentVersion\App Paths\Codex.exe",
+                    0,
+                    winreg.KEY_READ,
+                ) as key:
+                    value, _ = winreg.QueryValueEx(key, "")
+            except OSError:
+                continue
+            if value:
+                add_candidate(Path(os.path.expandvars(str(value))))
+
     return candidates
 
 

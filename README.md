@@ -16,7 +16,8 @@ This project packages the locally used Codex account switch workflow into standa
 ## Platform support
 
 - macOS: shell scripts under [`macOS/`](./macOS)
-- Windows: Python tooling under [`windows/`](./windows)
+- Windows CLI/install tooling under [`windows/`](./windows)
+- Windows native desktop app under [`src/`](./src/) + [`src-tauri/`](./src-tauri/)
 - Runtime profile data stays under the same `CODEX_HOME`/`~/.codex` layout on both platforms
 
 ## Important behavior
@@ -49,6 +50,8 @@ If you run `codex switch x` and `~/.codex/account_backup/x/auth.json` is missing
 
 ```text
 Codex_Account_Switch/
+├── src/
+├── src-tauri/
 ├── macOS/
 │   ├── codex-switch.sh
 │   ├── install.sh
@@ -116,7 +119,6 @@ The repo now also contains a native Tauri desktop implementation for the Windows
 
 - frontend source: [`src/`](./src/)
 - native shell and Rust commands: [`src-tauri/`](./src-tauri/)
-- current Python `backend/` remains in the repo as migration reference until Tauri parity is verified on Windows
 
 Run locally on Windows:
 

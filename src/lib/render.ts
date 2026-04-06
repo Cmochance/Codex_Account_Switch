@@ -1,4 +1,5 @@
 import type { DashboardResponse, PagingInfo, QuotaSummary, RuntimeSummary } from "./types";
+import { t } from "./i18n";
 import { state } from "./state";
 
 function requiredElement<T extends HTMLElement>(id: string): T {
@@ -14,10 +15,12 @@ export const elements = {
   currentTitle: requiredElement<HTMLHeadingElement>("current-title"),
   currentPlan: requiredElement<HTMLParagraphElement>("current-plan"),
   currentQuotaPanel: requiredElement<HTMLDivElement>("current-quota-panel"),
+  currentSessionLabel: requiredElement<HTMLParagraphElement>("current-session-label"),
+  currentQuotaLabel: requiredElement<HTMLHeadingElement>("current-quota-label"),
   runtimeStatus: requiredElement<HTMLSpanElement>("runtime-status"),
-  runtimeAutosave: requiredElement<HTMLSpanElement>("runtime-autosave"),
   previousPageButton: requiredElement<HTMLButtonElement>("previous-page-button"),
   nextPageButton: requiredElement<HTMLButtonElement>("next-page-button"),
+  currentLoginButton: requiredElement<HTMLButtonElement>("current-login-button"),
   openCurrentFolderButton: requiredElement<HTMLButtonElement>("open-current-folder-button"),
   openCodexButton: requiredElement<HTMLButtonElement>("open-codex-button"),
   contactButton: requiredElement<HTMLButtonElement>("contact-button"),
@@ -25,19 +28,15 @@ export const elements = {
   dialog: document.getElementById("add-profile-dialog") as HTMLDialogElement,
   addProfileForm: requiredElement<HTMLFormElement>("add-profile-form"),
   cancelAddProfileButton: requiredElement<HTMLButtonElement>("cancel-add-profile-button"),
+  submitAddProfileButton: requiredElement<HTMLButtonElement>("submit-add-profile-button"),
+  dialogTitle: requiredElement<HTMLHeadingElement>("dialog-title"),
+  dialogCopy: requiredElement<HTMLParagraphElement>("dialog-copy"),
+  folderNameLabel: requiredElement<HTMLSpanElement>("folder-name-label"),
   folderNameInput: requiredElement<HTMLInputElement>("folder-name-input"),
   dialogError: requiredElement<HTMLParagraphElement>("dialog-error"),
   toast: requiredElement<HTMLDivElement>("toast"),
+  localeToggleButton: requiredElement<HTMLButtonElement>("locale-toggle-button"),
 };
-
-export function iconMarkup(): string {
-  return `
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M7 17L17 7"></path>
-      <path d="M9 7h8v8"></path>
-    </svg>
-  `;
-}
 
 function formatPercent(value: number | null): string {
   return value == null ? "--" : `${value}%`;
@@ -49,20 +48,20 @@ function formatRefresh(value: string | null): string {
 
 export function planLine(planName: string | null, daysLeft: number | null): string {
   if (!planName && daysLeft == null) {
-    return "Profile metadata not configured";
+    return t(state.locale, "profileMetadataMissing");
   }
 
   if (planName && daysLeft != null) {
-    return `${planName} • ${daysLeft} days left`;
+    return t(state.locale, "subscriptionDaysLeft", { plan: planName, days: daysLeft });
   }
 
-  return planName || `Subscription • ${daysLeft} days left`;
+  return planName || t(state.locale, "subscriptionFallback", { days: daysLeft ?? "--" });
 }
 
 export function buildQuotaMarkup(quota: QuotaSummary | null | undefined, statusClass = ""): string {
   const windows = [
-    { key: "five_hour", label: "5h allowance" },
-    { key: "weekly", label: "Weekly allowance" },
+    { key: "five_hour", label: t(state.locale, "fiveHourAllowance") },
+    { key: "weekly", label: t(state.locale, "weeklyAllowance") },
   ] as const;
 
   return windows
@@ -78,7 +77,7 @@ export function buildQuotaMarkup(quota: QuotaSummary | null | undefined, statusC
           <div class="quota-track">
             <div class="quota-fill" style="width: ${percent}%;"></div>
           </div>
-          <div class="quota-refresh">Refresh ${formatRefresh(entry.refresh_at)}</div>
+          <div class="quota-refresh">${t(state.locale, "refresh", { value: formatRefresh(entry.refresh_at) })}</div>
         </section>
       `;
     })
@@ -99,41 +98,42 @@ export function showToast(message: string, isError = false): void {
 export function renderCurrentCard(dashboard: DashboardResponse): void {
   const current = dashboard.current_card;
   if (!current) {
-    elements.currentTitle.textContent = "No active profile";
-    elements.currentPlan.textContent = "Switch a profile to start";
+    elements.currentTitle.textContent = t(state.locale, "noActiveProfile");
+    elements.currentPlan.textContent = t(state.locale, "switchToStart");
+    elements.currentLoginButton.disabled = true;
     elements.openCurrentFolderButton.disabled = true;
     state.currentProfile = null;
     elements.currentQuotaPanel.innerHTML =
-      '<div class="empty-state">Quota data will appear after a profile is configured.</div>';
+      `<div class="empty-state">${t(state.locale, "quotaWillAppear")}</div>`;
     return;
   }
 
   state.currentProfile = current.folder_name;
   elements.currentTitle.textContent = current.display_title;
   elements.currentPlan.textContent = planLine(current.plan_name, current.subscription_days_left);
+  elements.currentLoginButton.disabled = state.loading;
   elements.openCurrentFolderButton.disabled = false;
   elements.currentQuotaPanel.innerHTML = buildQuotaMarkup(dashboard.current_quota_card);
 }
 
 export function renderRuntime(runtime: RuntimeSummary): void {
-  elements.runtimeStatus.textContent = runtime.codex_running ? "Codex running" : "Codex not running";
+  elements.runtimeStatus.textContent = runtime.codex_running
+    ? t(state.locale, "runtimeRunning")
+    : t(state.locale, "runtimeStopped");
   elements.runtimeStatus.classList.toggle("is-running", runtime.codex_running);
   elements.runtimeStatus.classList.toggle("is-stopped", !runtime.codex_running);
-  elements.runtimeAutosave.textContent = runtime.last_autosave_at
-    ? `Autosave ${runtime.last_autosave_at}`
-    : "Autosave unavailable";
 }
 
 export function renderProfiles(dashboard: DashboardResponse, onSwitch: (profile: string) => void): void {
   if (!dashboard.profiles.length) {
     elements.profilesGrid.innerHTML =
-      '<div class="empty-state">No profiles found. Use Add Profiles to create the first backup folder.</div>';
+      `<div class="empty-state">${t(state.locale, "profilesEmpty")}</div>`;
     return;
   }
 
   elements.profilesGrid.innerHTML = dashboard.profiles
     .map((profile) => {
-      const disabled = !profile.auth_present || state.loading;
+      const disabled = !profile.auth_present || state.loading || profile.status === "current";
       const plan = planLine(profile.plan_name, profile.subscription_days_left);
       return `
         <article class="profile-card status-${profile.status}">
@@ -145,11 +145,11 @@ export function renderProfiles(dashboard: DashboardResponse, onSwitch: (profile:
             <button
               class="switch-icon-button"
               type="button"
-              title="${disabled ? "Profile is not switchable" : "Switch to this profile"}"
+              title="${disabled ? t(state.locale, "profileSwitchDisabled") : t(state.locale, "profileSwitchReady")}"
               data-switch-profile="${profile.folder_name}"
               ${disabled ? "disabled" : ""}
             >
-              ${iconMarkup()}
+              ${t(state.locale, "switch")}
             </button>
           </header>
           ${buildQuotaMarkup(profile.quota, `status-${profile.status}`)}
@@ -171,4 +171,29 @@ export function renderProfiles(dashboard: DashboardResponse, onSwitch: (profile:
 export function renderPaging(paging: Pick<PagingInfo, "has_previous" | "has_next">): void {
   elements.previousPageButton.disabled = state.loading || !paging.has_previous;
   elements.nextPageButton.disabled = state.loading || !paging.has_next;
+}
+
+export function applyLocale(): void {
+  document.documentElement.lang = state.locale;
+  document.title = t(state.locale, "appTitle");
+
+  elements.currentSessionLabel.textContent = t(state.locale, "currentSession");
+  elements.currentQuotaLabel.textContent = t(state.locale, "currentQuota");
+  elements.currentLoginButton.textContent = t(state.locale, "login");
+  elements.openCurrentFolderButton.textContent = t(state.locale, "openFolder");
+  elements.runtimeStatus.textContent = t(state.locale, "checkingRuntime");
+  elements.addProfilesButton.textContent = t(state.locale, "addProfiles");
+  elements.openCodexButton.textContent = t(state.locale, "openCodex");
+  elements.contactButton.textContent = t(state.locale, "contactUs");
+  elements.previousPageButton.textContent = t(state.locale, "previous");
+  elements.nextPageButton.textContent = t(state.locale, "next");
+  elements.dialogTitle.textContent = t(state.locale, "addProfileTitle");
+  elements.dialogCopy.innerHTML = t(state.locale, "addProfileCopy")
+    .replace("auth.json", "<code>auth.json</code>")
+    .replace("profile.json", "<code>profile.json</code>");
+  elements.folderNameLabel.textContent = t(state.locale, "folderName");
+  elements.cancelAddProfileButton.textContent = t(state.locale, "cancel");
+  elements.submitAddProfileButton.textContent = t(state.locale, "create");
+  elements.localeToggleButton.textContent =
+    state.locale === "en" ? t(state.locale, "languageChinese") : t(state.locale, "languageEnglish");
 }

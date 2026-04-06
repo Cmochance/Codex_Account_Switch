@@ -1,57 +1,54 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from windows import common
 
 
-class FakeRegistry:
-    HKEY_CURRENT_USER = object()
-    KEY_READ = 1
-    KEY_WRITE = 2
-    REG_EXPAND_SZ = 3
+def test_candidate_app_paths_scans_openai_codex_subdirectories(monkeypatch, tmp_path):
+    local_app_data = tmp_path / "LocalAppData"
+    codex_exe = local_app_data / "Programs" / "OpenAI" / "Codex" / "Codex.exe"
+    codex_exe.parent.mkdir(parents=True, exist_ok=True)
+    codex_exe.write_text("", encoding="utf-8")
 
-    def __init__(self, path_value: str | None):
-        self.path_value = path_value
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.delenv("ProgramFiles", raising=False)
+    monkeypatch.setattr(common, "winreg", None)
 
-    def OpenKey(self, *_args, **_kwargs):
-        return self
+    candidates = common.candidate_app_paths()
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
-    def QueryValueEx(self, _key, _name):
-        if self.path_value is None:
-            raise FileNotFoundError
-        return self.path_value, self.REG_EXPAND_SZ
-
-    def SetValueEx(self, _key, _name, _reserved, _kind, value):
-        self.path_value = value
+    assert codex_exe in candidates
+    assert common.detect_codex_app_path() == codex_exe
 
 
-def test_ensure_dir_on_user_path_prepends_new_entry():
-    registry = FakeRegistry(r"C:\Program Files\Codex;C:\Other")
+def test_candidate_app_paths_includes_registry_app_path(monkeypatch):
+    class FakeKey:
+        def __init__(self, value: str) -> None:
+            self.value = value
 
-    changed = common.ensure_dir_on_user_path(r"C:\Users\Alice\.codex\bin", registry_module=registry)
+        def __enter__(self) -> "FakeKey":
+            return self
 
-    assert changed is True
-    assert registry.path_value == r"C:\Users\Alice\.codex\bin;C:\Program Files\Codex;C:\Other"
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
 
+    class FakeWinReg:
+        HKEY_CURRENT_USER = "hkcu"
+        HKEY_LOCAL_MACHINE = "hklm"
+        KEY_READ = 0
 
-def test_ensure_dir_on_user_path_moves_existing_entry_to_front():
-    registry = FakeRegistry(r"C:\Program Files\Codex;C:\Users\Alice\.codex\bin;C:\Other")
+        def OpenKey(self, hive, path, reserved=0, access=0):  # noqa: N802
+            if hive == self.HKEY_CURRENT_USER:
+                return FakeKey(r"C:\Users\demo\AppData\Local\Programs\Codex\Codex.exe")
+            raise OSError("missing")
 
-    changed = common.ensure_dir_on_user_path(r"C:\Users\Alice\.codex\bin", registry_module=registry)
+        def QueryValueEx(self, key, name):  # noqa: N802
+            return key.value, None
 
-    assert changed is True
-    assert registry.path_value == r"C:\Users\Alice\.codex\bin;C:\Program Files\Codex;C:\Other"
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("ProgramFiles", raising=False)
+    monkeypatch.setattr(common, "winreg", FakeWinReg())
 
+    candidates = common.candidate_app_paths()
 
-def test_ensure_dir_on_user_path_noops_when_entry_is_already_first():
-    registry = FakeRegistry(r"C:\Users\Alice\.codex\bin;C:\Program Files\Codex;C:\Other")
-
-    changed = common.ensure_dir_on_user_path(r"C:\Users\Alice\.codex\bin", registry_module=registry)
-
-    assert changed is False
-    assert registry.path_value == r"C:\Users\Alice\.codex\bin;C:\Program Files\Codex;C:\Other"
+    assert Path(r"C:\Users\demo\AppData\Local\Programs\Codex\Codex.exe") in candidates

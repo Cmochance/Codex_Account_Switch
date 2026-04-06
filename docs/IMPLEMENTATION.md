@@ -10,6 +10,15 @@
 - Windows runtime files: `%CODEX_HOME%\account_backup\windows\`
 - Windows command shim: `%CODEX_HOME%\bin\codex.cmd`
 
+## Runtime shape
+
+- macOS uses shell entrypoints under `macOS/`
+- Windows CLI and installer tooling stay under `windows/`
+- Windows desktop UI uses Tauri:
+  - frontend under `src/`
+  - native commands under `src-tauri/`
+- The desktop app does not use a local Python backend or HTTP server at runtime
+
 ## Installation behavior
 
 - `macOS/install.sh` creates `~/.codex/account_backup` if missing
@@ -23,6 +32,15 @@
 - If a real root `%CODEX_HOME%\auth.json` exists, Windows install overwrites `a/auth.json` with it
 - If a real root auth exists and no active profile is initialized yet, Windows install sets `a` as the active profile
 - Windows install records `real_codex_path`, `managed_bin_dir`, `app_path`, and `path_added_by_installer` in `install_state.json`
+
+## Desktop app first-run bootstrap
+
+- On desktop app startup, if `account_backup` is missing, the app initializes it automatically
+- Bootstrap creates `a` through `d`
+- Bootstrap writes placeholder `auth.json` files from `examples/account_backup/demo/auth.json.example`
+- If root `auth.json` exists, it is copied into `a/auth.json`
+- If root `auth.json` exists, bootstrap marks `a` as the active profile
+- Bootstrap also writes `%CODEX_HOME%\account_backup\windows\install_state.json`
 
 ## Preconditions for switching
 
@@ -67,11 +85,23 @@ The Windows installer writes `%CODEX_HOME%\bin\codex.cmd` and ensures `%CODEX_HO
 - Non-switch `codex` commands are forwarded to the previously resolved real Codex CLI path from `install_state.json`
 - `%CODEX_HOME%\account_backup\windows` is reserved runtime state and excluded from profile listing / active-profile scans
 
+## Windows desktop app actions
+
+- `Switch` writes current root state back to the active profile, snapshots `auth.json`, overlays the target profile into root state, updates active markers, and relaunches Codex if needed
+- `Login` runs `codex login` against the current root `CODEX_HOME`, waits for login completion, then writes the refreshed root state back into the active profile
+- `Open Codex` activates the Codex desktop app if already running, or launches it if not
+- `Add Profiles` creates a new profile directory and writes template `auth.json` plus `profile.json`
+- `Contact Us` opens the project GitHub repository
+
 ## Windows app discovery
 
-Windows app relaunch uses the first existing path from:
+Windows desktop app discovery first prefers the path recorded in `install_state.json`. If that is missing or invalid, it probes common install locations including:
 
 1. `%LOCALAPPDATA%\Programs\Codex\Codex.exe`
-2. `%ProgramFiles%\Codex\Codex.exe`
-
-If the app was running before the switch but neither path exists, the switch still succeeds and prints a warning.
+2. `%LOCALAPPDATA%\Programs\OpenAI\Codex\Codex.exe`
+3. `%LOCALAPPDATA%\Codex\Codex.exe`
+4. `%LOCALAPPDATA%\OpenAI\Codex\Codex.exe`
+5. `%ProgramFiles%\Codex\Codex.exe`
+6. `%ProgramFiles%\OpenAI\Codex\Codex.exe`
+7. directories under `%LOCALAPPDATA%\Programs` or `%ProgramFiles` whose names contain `codex`
+8. Windows `App Paths\Codex.exe` registry entries

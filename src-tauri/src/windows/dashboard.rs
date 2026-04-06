@@ -14,16 +14,12 @@ use super::paths::{
 use super::process;
 
 fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
-    let folder_title = if profile_name.len() == 1 {
-        profile_name.to_uppercase()
-    } else {
-        profile_name.to_string()
-    };
+    let account_label = account_label
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("--");
 
-    match account_label {
-        Some(account_label) if !account_label.is_empty() => format!("{folder_title} / {account_label}"),
-        _ => folder_title,
-    }
+    format!("{profile_name} / {account_label}")
 }
 
 fn compute_subscription_days_left(subscription_expires_at: Option<&str>) -> Option<i64> {

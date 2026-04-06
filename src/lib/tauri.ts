@@ -45,6 +45,10 @@ export function openCodex(): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("open_codex");
 }
 
+export function loginCurrentProfile(): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("login_current_profile");
+}
+
 export function openContact(): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("open_contact");
 }

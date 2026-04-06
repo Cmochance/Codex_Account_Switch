@@ -13,6 +13,16 @@ pub fn open_codex() -> Result<ActionResponse, CommandError> {
 }
 
 #[tauri::command]
+pub fn login_current_profile() -> Result<ActionResponse, CommandError> {
+    let path = windows::actions::login_current_profile()?;
+    Ok(ActionResponse {
+        ok: true,
+        message: "Logged in current profile.".to_string(),
+        path: Some(path),
+    })
+}
+
+#[tauri::command]
 pub fn open_profile_folder(
     app: tauri::AppHandle,
     payload: ProfilePayload,

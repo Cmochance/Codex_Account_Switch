@@ -6,67 +6,50 @@
     <title>Codex Switch</title>
   </head>
   <body>
-    <div class="shell">
-      <header class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow">Codex Switch</p>
-          <h1>Account control panel</h1>
-          <p class="hero-subtitle">Switch backup profiles safely without touching the CLI.</p>
-        </div>
-        <div class="runtime-strip">
-          <span id="runtime-status" class="runtime-pill">Checking runtime</span>
-          <span id="runtime-autosave" class="runtime-meta">Autosave --</span>
-        </div>
-      </header>
-
-      <section class="toolbar">
-        <div class="toolbar-copy">
-          <h2>Account Profiles</h2>
-          <p>Disabled cards need setup before switching.</p>
-        </div>
-        <div class="toolbar-actions">
-          <button id="add-profiles-button" class="ghost-button" type="button">Add Profiles</button>
-          <button id="open-codex-button" class="ghost-button" type="button">Open Codex</button>
-          <button id="contact-button" class="ghost-button" type="button">Contact Us</button>
-        </div>
+    <main class="dashboard">
+      <section class="profiles-column">
+        <div id="profiles-grid" class="profiles-grid"></div>
       </section>
 
-      <main class="dashboard">
-        <section class="profiles-column">
-          <div id="profiles-grid" class="profiles-grid"></div>
-          <div class="pager">
-            <button id="previous-page-button" class="ghost-button pager-button" type="button">Previous</button>
-            <button id="next-page-button" class="ghost-button pager-button" type="button">Next</button>
+      <aside class="summary-column">
+        <article class="summary-card">
+          <div class="summary-card-topbar">
+            <p id="current-session-label" class="summary-label">Current session</p>
+            <button id="locale-toggle-button" class="ghost-button locale-toggle-button" type="button">中文</button>
           </div>
-        </section>
+          <h2 id="current-title">--</h2>
+          <p id="current-plan" class="summary-plan">--</p>
+          <div class="summary-actions">
+            <button id="current-login-button" class="primary-button wide-button" type="button">Login</button>
+            <button id="open-current-folder-button" class="ghost-button wide-button" type="button">Open folder</button>
+          </div>
+        </article>
 
-        <aside class="summary-column">
-          <article class="summary-card">
-            <p class="summary-label">Current</p>
-            <h2 id="current-title">--</h2>
-            <p id="current-plan" class="summary-plan">--</p>
-            <div class="summary-actions">
-              <button id="open-current-folder-button" class="ghost-button wide-button" type="button">Open folder</button>
-            </div>
-          </article>
+        <article class="summary-card quota-card">
+          <h3 id="current-quota-label">Current quota</h3>
+          <div id="current-quota-panel" class="quota-stack"></div>
+        </article>
 
-          <article class="summary-card quota-card">
-            <h3>Current quota</h3>
-            <div id="current-quota-panel" class="quota-stack"></div>
-          </article>
-        </aside>
-      </main>
-    </div>
+        <div class="control-grid">
+          <span id="runtime-status" class="runtime-pill control-cell">Checking runtime</span>
+          <button id="add-profiles-button" class="ghost-button control-button" type="button">Add Profiles</button>
+          <button id="open-codex-button" class="ghost-button control-button" type="button">Open Codex</button>
+          <button id="contact-button" class="ghost-button control-button" type="button">Contact Us</button>
+          <button id="previous-page-button" class="ghost-button pager-button" type="button">Previous</button>
+          <button id="next-page-button" class="ghost-button pager-button" type="button">Next</button>
+        </div>
+      </aside>
+    </main>
 
     <dialog id="add-profile-dialog" class="dialog">
       <form id="add-profile-form" class="dialog-form" method="dialog">
         <div class="dialog-copy">
-          <h3>Add Profile</h3>
-          <p>Create a new backup folder with template <code>auth.json</code> and <code>profile.json</code>.</p>
+          <h3 id="dialog-title">Add Profile</h3>
+          <p id="dialog-copy">Create a new backup folder with template <code>auth.json</code> and <code>profile.json</code>.</p>
         </div>
 
         <label class="field">
-          <span>Folder name</span>
+          <span id="folder-name-label">Folder name</span>
           <input id="folder-name-input" name="folder_name" type="text" autocomplete="off" required />
         </label>
 

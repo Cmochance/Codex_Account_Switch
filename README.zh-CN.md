@@ -14,7 +14,8 @@
 ## 平台支持
 
 - macOS：使用 [`macOS/`](./macOS) 下的 shell 脚本
-- Windows：使用 [`windows/`](./windows) 下的 Python 脚本
+- Windows CLI / 安装工具：使用 [`windows/`](./windows) 下的 Python 脚本
+- Windows 原生桌面端：使用 [`src/`](./src/) + [`src-tauri/`](./src-tauri/) 的 Tauri 实现
 - 两个平台共用同一套 `CODEX_HOME` / `~/.codex` 数据目录协议
 
 ## 重要说明
@@ -49,6 +50,8 @@ codex switch x
 
 ```text
 Codex_Account_Switch/
+├── src/
+├── src-tauri/
 ├── macOS/
 │   ├── codex-switch.sh
 │   ├── install.sh
@@ -108,6 +111,33 @@ Windows 安装脚本会：
 codex switch list    # 列出当前所有可用账号
 codex switch a    # 切换账号
 codex switch b
+```
+
+## Windows 原生桌面端
+
+当前仓库也包含一个基于 Tauri 的 Windows 原生控制面板：
+
+- 前端：[`src/`](./src/)
+- 原生命令和窗口层：[`src-tauri/`](./src-tauri/)
+
+在 Windows 上本地运行：
+
+```powershell
+npm install
+npm run tauri:dev
+```
+
+构建便携版 exe：
+
+```powershell
+npm install
+npm run tauri:build
+```
+
+构建产物：
+
+```text
+src-tauri\target\release\codex_switch.exe
 ```
 
 ## 卸载
