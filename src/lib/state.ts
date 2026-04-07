@@ -1,4 +1,4 @@
-import type { DashboardResponse } from "./types";
+import type { ProfilesSnapshotResponse, QuotaSummary, RuntimeSummary } from "./types";
 import type { Locale } from "./i18n";
 
 export const state = {
@@ -6,5 +6,8 @@ export const state = {
   loading: false,
   currentProfile: null as string | null,
   locale: "en" as Locale,
-  dashboard: null as DashboardResponse | null,
+  pageSize: 4,
+  snapshot: null as ProfilesSnapshotResponse | null,
+  runtime: null as RuntimeSummary | null,
+  currentQuota: null as QuotaSummary | null,
 };

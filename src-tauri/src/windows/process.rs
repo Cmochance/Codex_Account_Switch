@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 
-use super::paths::{get_codex_home, get_install_state_file, APP_NAME, APP_PROCESS_NAME};
+use super::paths::{get_codex_home, get_install_state_file, APP_PROCESS_NAME};
 
 const WINDOWS_INVOKABLE_SUFFIXES: [&str; 4] = ["cmd", "exe", "bat", "com"];
 const WINDOWS_STORE_APP_ID: &str = "OpenAI.Codex_2p2nqsd0c76g0!App";
@@ -17,13 +17,11 @@ const WINDOWS_STORE_SHELL_PREFIX: &str = r"shell:AppsFolder\";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AppLaunchTarget {
-    Filesystem(PathBuf),
     WindowsStore(String),
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct InstallState {
-    pub app_path: Option<String>,
     pub real_codex_path: Option<String>,
 }
 
@@ -79,7 +77,11 @@ pub(super) fn resolve_windows_invokable_path(path: &Path) -> Option<PathBuf> {
     None
 }
 
-fn push_real_codex_candidate(candidates: &mut Vec<PathBuf>, path: PathBuf, managed_shim_path: Option<&Path>) {
+fn push_real_codex_candidate(
+    candidates: &mut Vec<PathBuf>,
+    path: PathBuf,
+    managed_shim_path: Option<&Path>,
+) {
     let Some(resolved_path) = resolve_windows_invokable_path(&path) else {
         return;
     };
@@ -87,6 +89,12 @@ fn push_real_codex_candidate(candidates: &mut Vec<PathBuf>, path: PathBuf, manag
         return;
     }
     push_candidate(candidates, resolved_path);
+}
+
+fn push_candidate(candidates: &mut Vec<PathBuf>, path: PathBuf) {
+    if !candidates.iter().any(|existing| existing == &path) {
+        candidates.push(path);
+    }
 }
 
 fn managed_codex_shim_path(codex_home: Option<&Path>) -> PathBuf {
@@ -104,8 +112,16 @@ pub(super) fn discover_real_codex_cli_path(managed_shim_path: Option<&Path>) -> 
         if let Ok(output) = Command::new("where").arg("codex").output() {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines().map(str::trim).filter(|value| !value.is_empty()) {
-                    push_real_codex_candidate(&mut candidates, PathBuf::from(line), managed_shim_path);
+                for line in stdout
+                    .lines()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    push_real_codex_candidate(
+                        &mut candidates,
+                        PathBuf::from(line),
+                        managed_shim_path,
+                    );
                 }
             }
         }
@@ -125,96 +141,6 @@ pub(super) fn discover_real_codex_cli_path(managed_shim_path: Option<&Path>) -> 
     candidates.into_iter().next()
 }
 
-fn push_candidate(candidates: &mut Vec<PathBuf>, path: PathBuf) {
-    if !candidates.iter().any(|existing| existing == &path) {
-        candidates.push(path);
-    }
-}
-
-fn push_codex_children(base: &Path, candidates: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(base) {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-
-        if name.contains("codex") {
-            push_candidate(candidates, path.join(APP_PROCESS_NAME));
-            continue;
-        }
-
-        if name.contains("openai") {
-            let nested = match fs::read_dir(&path) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-
-            for child in nested.flatten() {
-                let child_path = child.path();
-                if !child_path.is_dir() {
-                    continue;
-                }
-
-                let child_name = child_path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-
-                if child_name.contains("codex") {
-                    push_candidate(candidates, child_path.join(APP_PROCESS_NAME));
-                }
-            }
-        }
-    }
-}
-
-fn registry_app_path_candidates() -> Vec<PathBuf> {
-    if !cfg!(target_os = "windows") {
-        return Vec::new();
-    }
-
-    let mut candidates = Vec::new();
-    for key in [
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\Codex.exe",
-        r"HKLM\Software\Microsoft\Windows\CurrentVersion\App Paths\Codex.exe",
-    ] {
-        let output = match Command::new("reg").args(["query", key, "/ve"]).output() {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-
-        if !output.status.success() {
-            continue;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            for marker in ["REG_EXPAND_SZ", "REG_SZ"] {
-                if let Some((_, value)) = line.split_once(marker) {
-                    let candidate = value.trim();
-                    if !candidate.is_empty() {
-                        push_candidate(&mut candidates, PathBuf::from(candidate));
-                    }
-                }
-            }
-        }
-    }
-
-    candidates
-}
-
 fn windows_store_shell_target(app_id: &str) -> String {
     format!("{WINDOWS_STORE_SHELL_PREFIX}{app_id}")
 }
@@ -222,12 +148,6 @@ fn windows_store_shell_target(app_id: &str) -> String {
 fn is_valid_windows_store_app_id(app_id: &str) -> bool {
     let trimmed = app_id.trim();
     trimmed.starts_with("OpenAI.Codex_") && trimmed.ends_with("!App")
-}
-
-fn is_valid_windows_store_shell_target(target: &str) -> bool {
-    target
-        .strip_prefix(WINDOWS_STORE_SHELL_PREFIX)
-        .is_some_and(is_valid_windows_store_app_id)
 }
 
 fn detect_windows_store_app_target() -> Option<String> {
@@ -254,134 +174,24 @@ fn detect_windows_store_app_target() -> Option<String> {
     is_valid_windows_store_app_id(&app_id).then(|| windows_store_shell_target(&app_id))
 }
 
-pub fn candidate_app_paths() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-
-    if cfg!(target_os = "windows") {
-        if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-            let local_app_data = PathBuf::from(local_app_data);
-            let programs_dir = local_app_data.join("Programs");
-
-            push_candidate(
-                &mut candidates,
-                programs_dir.join(APP_NAME).join(APP_PROCESS_NAME),
-            );
-            push_candidate(
-                &mut candidates,
-                programs_dir.join("OpenAI").join(APP_NAME).join(APP_PROCESS_NAME),
-            );
-            push_candidate(
-                &mut candidates,
-                local_app_data.join(APP_NAME).join(APP_PROCESS_NAME),
-            );
-            push_candidate(
-                &mut candidates,
-                local_app_data.join("OpenAI").join(APP_NAME).join(APP_PROCESS_NAME),
-            );
-
-            push_codex_children(&programs_dir, &mut candidates);
-        }
-
-        if let Some(program_files) = env::var_os("ProgramFiles") {
-            let program_files = PathBuf::from(program_files);
-            push_candidate(
-                &mut candidates,
-                program_files.join(APP_NAME).join(APP_PROCESS_NAME),
-            );
-            push_candidate(
-                &mut candidates,
-                program_files.join("OpenAI").join(APP_NAME).join(APP_PROCESS_NAME),
-            );
-            push_codex_children(&program_files, &mut candidates);
-        }
-
-        for candidate in registry_app_path_candidates() {
-            push_candidate(&mut candidates, candidate);
-        }
-    } else if cfg!(target_os = "macos") {
-        push_candidate(
-            &mut candidates,
-            PathBuf::from("/Applications").join(format!("{APP_NAME}.app")),
-        );
-
-        if let Some(home) = env::var_os("HOME") {
-            push_candidate(
-                &mut candidates,
-                PathBuf::from(home)
-                    .join("Applications")
-                    .join(format!("{APP_NAME}.app")),
-            );
-        }
-    }
-
-    candidates
+fn resolve_windows_store_shell_target() -> String {
+    detect_windows_store_app_target()
+        .unwrap_or_else(|| windows_store_shell_target(WINDOWS_STORE_APP_ID))
 }
 
-fn is_valid_app_path(path: &Path) -> bool {
-    if cfg!(target_os = "macos") {
-        path.is_dir()
-    } else {
-        path.is_file()
-    }
-}
-
-fn parse_app_launch_target(raw: &str) -> Option<AppLaunchTarget> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    if cfg!(target_os = "windows") && is_valid_windows_store_shell_target(raw) {
-        return Some(AppLaunchTarget::WindowsStore(raw.to_string()));
-    }
-
-    let path = PathBuf::from(raw);
-    is_valid_app_path(&path).then_some(AppLaunchTarget::Filesystem(path))
-}
-
-pub fn detect_codex_app_target() -> Option<String> {
-    if let Some(target) = detect_windows_store_app_target() {
-        return Some(target);
-    }
-    if cfg!(target_os = "windows") {
-        return Some(windows_store_shell_target(WINDOWS_STORE_APP_ID));
-    }
-
-    candidate_app_paths()
-        .into_iter()
-        .find(|candidate| is_valid_app_path(candidate))
-        .map(|candidate| candidate.to_string_lossy().into_owned())
-}
-
-fn resolve_codex_app_target(codex_home: Option<&Path>) -> Option<AppLaunchTarget> {
-    let mut state = load_install_state(codex_home);
-
-    if let Some(target) = state.app_path.as_deref().and_then(parse_app_launch_target) {
-        return Some(target);
-    }
-
-    let detected = detect_codex_app_target()?;
-    if state.app_path.as_deref() != Some(detected.as_str()) {
-        state.app_path = Some(detected.clone());
-        save_install_state(codex_home, &state);
-    }
-
-    parse_app_launch_target(&detected)
+fn resolve_windows_app_target() -> AppLaunchTarget {
+    AppLaunchTarget::WindowsStore(resolve_windows_store_shell_target())
 }
 
 pub fn is_codex_app_running() -> bool {
-    if cfg!(target_os = "macos") {
-        let script = format!("application \"{APP_NAME}\" is running");
-        let output = match Command::new("osascript").args(["-e", &script]).output() {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
-
-        return output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true";
-    }
-
     let output = match Command::new("tasklist")
-        .args(["/FI", &format!("IMAGENAME eq {APP_PROCESS_NAME}"), "/FO", "CSV", "/NH"])
+        .args([
+            "/FI",
+            &format!("IMAGENAME eq {APP_PROCESS_NAME}"),
+            "/FO",
+            "CSV",
+            "/NH",
+        ])
         .output()
     {
         Ok(value) => value,
@@ -392,42 +202,17 @@ pub fn is_codex_app_running() -> bool {
     stdout.contains(&APP_PROCESS_NAME.to_ascii_lowercase())
 }
 
-pub fn open_or_activate_codex_app(codex_home: Option<&Path>) -> AppResult<String> {
-    let Some(target) = resolve_codex_app_target(codex_home) else {
-        return Err(AppError::new(
-            "APP_NOT_FOUND",
-            "Codex desktop app launch target could not be resolved.",
-        ));
-    };
+pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<String> {
+    let target = resolve_windows_app_target();
 
     match target {
-        AppLaunchTarget::Filesystem(resolved_path) => {
-            if cfg!(target_os = "macos") {
-                let script = format!("tell application \"{APP_NAME}\" to activate");
-                let status = Command::new("osascript")
-                    .args(["-e", &script])
-                    .status()
-                    .map_err(|error| AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}")))?;
-
-                if !status.success() {
-                    return Err(AppError::new(
-                        "APP_OPEN_FAILED",
-                        "Failed to activate Codex.",
-                    ));
-                }
-            } else {
-                Command::new(&resolved_path).spawn().map_err(|error| {
-                    AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
-                })?;
-            }
-
-            Ok(resolved_path.to_string_lossy().into_owned())
-        }
         AppLaunchTarget::WindowsStore(shell_target) => {
             Command::new("explorer.exe")
                 .arg(&shell_target)
                 .spawn()
-                .map_err(|error| AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}")))?;
+                .map_err(|error| {
+                    AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
+                })?;
 
             Ok(shell_target)
         }
@@ -483,9 +268,12 @@ fn build_login_command(codex_home: &Path) -> Command {
 }
 
 pub fn run_codex_login(codex_home: &Path) -> AppResult<()> {
-    let output = build_login_command(codex_home)
-        .output()
-        .map_err(|error| AppError::new("LOGIN_COMMAND_FAILED", format!("Failed to start `codex login`: {error}")))?;
+    let output = build_login_command(codex_home).output().map_err(|error| {
+        AppError::new(
+            "LOGIN_COMMAND_FAILED",
+            format!("Failed to start `codex login`: {error}"),
+        )
+    })?;
 
     if output.status.success() {
         return Ok(());
@@ -509,7 +297,9 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         return Ok(false);
     }
 
-    let _ = Command::new("taskkill").args(["/IM", APP_PROCESS_NAME]).output();
+    let _ = Command::new("taskkill")
+        .args(["/IM", APP_PROCESS_NAME])
+        .output();
     for _ in 0..20 {
         if !is_codex_app_running() {
             return Ok(true);
@@ -529,28 +319,23 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
 
     Err(AppError::new(
         "APP_EXIT_FAILED",
-        format!("{APP_NAME} did not exit cleanly. Close it manually and retry."),
+        "Codex did not exit cleanly. Close it manually and retry.",
     ))
 }
 
-pub fn reopen_codex_app_if_needed(app_was_running: bool, codex_home: Option<&Path>) -> Vec<String> {
+pub fn reopen_codex_app_if_needed(app_was_running: bool, _codex_home: Option<&Path>) -> Vec<String> {
     if !app_was_running {
         return Vec::new();
     }
 
-    let Some(target) = resolve_codex_app_target(codex_home) else {
-        return vec![format!(
-            "Warning: could not relaunch {APP_NAME}. Start it manually if needed."
-        )];
-    };
+    let target = resolve_windows_app_target();
 
     let result = match target {
-        AppLaunchTarget::Filesystem(path) => Command::new(path).spawn(),
         AppLaunchTarget::WindowsStore(shell_target) => Command::new("explorer.exe").arg(shell_target).spawn(),
     };
 
     if let Err(error) = result {
-        return vec![format!("Warning: failed to relaunch {APP_NAME}: {error}")];
+        return vec![format!("Warning: failed to relaunch Codex: {error}")];
     }
 
     Vec::new()
@@ -559,10 +344,12 @@ pub fn reopen_codex_app_if_needed(app_was_running: bool, codex_home: Option<&Pat
 #[cfg(test)]
 mod tests {
     use super::{
-        discover_real_codex_cli_path, load_install_state, resolve_codex_app_target, resolve_real_codex_cli,
-        windows_store_shell_target, AppLaunchTarget, WINDOWS_STORE_APP_ID,
+        discover_real_codex_cli_path, load_install_state, resolve_windows_app_target,
+        resolve_real_codex_cli, windows_store_shell_target, AppLaunchTarget, InstallState,
+        WINDOWS_STORE_APP_ID,
     };
     use crate::windows::env_lock;
+    use serde_json::to_string_pretty;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -588,7 +375,10 @@ mod tests {
         fs::write(npm_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
 
         let original_path = std::env::var_os("PATH");
-        std::env::set_var("PATH", std::env::join_paths([managed_bin.clone(), npm_dir.clone()]).unwrap());
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths([managed_bin.clone(), npm_dir.clone()]).unwrap(),
+        );
 
         let resolved = discover_real_codex_cli_path(Some(&managed_bin.join("codex.cmd")));
 
@@ -611,43 +401,36 @@ mod tests {
         fs::create_dir_all(&npm_dir).unwrap();
         fs::write(npm_dir.join("codex"), "#!/bin/sh\n").unwrap();
         fs::write(npm_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
+        let install_state = InstallState {
+            real_codex_path: Some(npm_dir.join("codex").to_string_lossy().into_owned()),
+        };
         fs::write(
             runtime_dir.join("install_state.json"),
-            format!(
-                "{{\"real_codex_path\": \"{}\"}}\n",
-                npm_dir.join("codex").to_string_lossy()
-            ),
+            format!("{}\n", to_string_pretty(&install_state).unwrap()),
         )
         .unwrap();
 
         let resolved = resolve_real_codex_cli(Some(&codex_home));
-        let state = load_install_state(Some(&codex_home));
+        let persisted_state = load_install_state(Some(&codex_home));
 
         assert_eq!(resolved, Some(npm_dir.join("codex.cmd")));
-        assert_eq!(state.real_codex_path, Some(npm_dir.join("codex.cmd").to_string_lossy().into_owned()));
+        assert_eq!(
+            persisted_state.real_codex_path,
+            Some(npm_dir.join("codex.cmd").to_string_lossy().into_owned())
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 
     #[test]
-    fn resolve_codex_app_target_accepts_windows_store_shell_target_from_state() {
+    fn resolve_windows_app_target_returns_windows_store_target() {
         let codex_home = temp_codex_home("windows-store-app-target");
-        let runtime_dir = codex_home.join("account_backup").join("windows");
-        fs::create_dir_all(&runtime_dir).unwrap();
-        fs::write(
-            runtime_dir.join("install_state.json"),
-            format!(
-                "{{\"app_path\": \"{}\"}}\n",
-                windows_store_shell_target(WINDOWS_STORE_APP_ID)
-            ),
-        )
-        .unwrap();
 
-        let target = resolve_codex_app_target(Some(&codex_home));
+        let target = resolve_windows_app_target();
 
         assert_eq!(
             target,
-            Some(AppLaunchTarget::WindowsStore(
-                windows_store_shell_target(WINDOWS_STORE_APP_ID)
+            AppLaunchTarget::WindowsStore(windows_store_shell_target(
+                WINDOWS_STORE_APP_ID
             ))
         );
         let _ = fs::remove_dir_all(&codex_home);

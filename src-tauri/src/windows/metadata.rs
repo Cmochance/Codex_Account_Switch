@@ -5,7 +5,9 @@ use std::path::Path;
 
 use crate::models::ProfileMetadata;
 
-use super::paths::{get_backup_root, get_codex_home, get_profile_metadata_path, validate_profile_name};
+use super::paths::{
+    get_backup_root, get_codex_home, get_profile_metadata_path, validate_profile_name,
+};
 
 #[derive(Deserialize)]
 struct AuthFile {
@@ -43,7 +45,8 @@ pub struct AuthDerivedMetadata {
 fn normalized_value(value: Option<String>) -> Option<String> {
     value.and_then(|raw| {
         let trimmed = raw.trim();
-        (!trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("replace-me")).then(|| trimmed.to_string())
+        (!trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("replace-me"))
+            .then(|| trimmed.to_string())
     })
 }
 
@@ -89,8 +92,13 @@ fn load_auth_metadata_from_path(auth_path: &Path) -> Option<AuthDerivedMetadata>
     }
 }
 
-fn load_auth_metadata(profile_name: &str, codex_home: Option<&Path>) -> Option<AuthDerivedMetadata> {
-    let auth_path = get_backup_root(codex_home).join(profile_name).join("auth.json");
+fn load_auth_metadata(
+    profile_name: &str,
+    codex_home: Option<&Path>,
+) -> Option<AuthDerivedMetadata> {
+    let auth_path = get_backup_root(codex_home)
+        .join(profile_name)
+        .join("auth.json");
     load_auth_metadata_from_path(&auth_path)
 }
 
@@ -102,7 +110,11 @@ pub fn load_root_auth_metadata(codex_home: Option<&Path>) -> Option<AuthDerivedM
     load_auth_metadata_from_path(&auth_path)
 }
 
-fn hydrate_profile_metadata(mut metadata: ProfileMetadata, profile_name: &str, codex_home: Option<&Path>) -> ProfileMetadata {
+fn hydrate_profile_metadata(
+    mut metadata: ProfileMetadata,
+    profile_name: &str,
+    codex_home: Option<&Path>,
+) -> ProfileMetadata {
     if metadata.folder_name.is_none() {
         metadata.folder_name = Some(profile_name.to_string());
     }
@@ -134,7 +146,13 @@ pub fn load_profile_metadata(profile_name: &str, codex_home: Option<&Path>) -> P
     };
 
     let metadata_path = get_profile_metadata_path(&profile_name, codex_home);
-    let default_metadata = || hydrate_profile_metadata(ProfileMetadata::with_folder_name(&profile_name), &profile_name, codex_home);
+    let default_metadata = || {
+        hydrate_profile_metadata(
+            ProfileMetadata::with_folder_name(&profile_name),
+            &profile_name,
+            codex_home,
+        )
+    };
 
     let raw = match fs::read_to_string(metadata_path) {
         Ok(value) => value,
@@ -202,7 +220,9 @@ mod tests {
         let codex_home = temp_codex_home("auth-fallback-name");
         let profile_dir = codex_home.join("account_backup").join("a");
         fs::create_dir_all(&profile_dir).unwrap();
-        let id_token = encode_jwt_payload(r#"{"name":"Jane Doe","email":"jane@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"pro","chatgpt_subscription_active_until":"2030-01-15T00:00:00+00:00"}}"#);
+        let id_token = encode_jwt_payload(
+            r#"{"name":"Jane Doe","email":"jane@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"pro","chatgpt_subscription_active_until":"2030-01-15T00:00:00+00:00"}}"#,
+        );
         fs::write(
             profile_dir.join("auth.json"),
             format!(r#"{{"tokens":{{"id_token":"{id_token}","account_id":"acct_123"}}}}"#),
@@ -244,7 +264,9 @@ mod tests {
         let codex_home = temp_codex_home("explicit-label");
         let profile_dir = codex_home.join("account_backup").join("b");
         fs::create_dir_all(&profile_dir).unwrap();
-        let id_token = encode_jwt_payload(r#"{"name":"Jane Doe","email":"jane@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"plus","chatgpt_subscription_active_until":"2031-03-01T00:00:00+00:00"}}"#);
+        let id_token = encode_jwt_payload(
+            r#"{"name":"Jane Doe","email":"jane@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"plus","chatgpt_subscription_active_until":"2031-03-01T00:00:00+00:00"}}"#,
+        );
         fs::write(
             profile_dir.join("auth.json"),
             format!(r#"{{"tokens":{{"id_token":"{id_token}","account_id":"acct_123"}}}}"#),
@@ -272,7 +294,9 @@ mod tests {
         let codex_home = temp_codex_home("auth-plan-override");
         let profile_dir = codex_home.join("account_backup").join("c");
         fs::create_dir_all(&profile_dir).unwrap();
-        let id_token = encode_jwt_payload(r#"{"email":"c@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"team","chatgpt_subscription_active_until":"2032-05-20T00:00:00+00:00"}}"#);
+        let id_token = encode_jwt_payload(
+            r#"{"email":"c@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"team","chatgpt_subscription_active_until":"2032-05-20T00:00:00+00:00"}}"#,
+        );
         fs::write(
             profile_dir.join("auth.json"),
             format!(r#"{{"tokens":{{"id_token":"{id_token}","account_id":"acct_123"}}}}"#),
@@ -298,7 +322,9 @@ mod tests {
     fn load_root_auth_metadata_returns_plan_fields() {
         let codex_home = temp_codex_home("root-auth-metadata");
         fs::create_dir_all(&codex_home).unwrap();
-        let id_token = encode_jwt_payload(r#"{"email":"root@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"pro","chatgpt_subscription_active_until":"2033-07-10T00:00:00+00:00"}}"#);
+        let id_token = encode_jwt_payload(
+            r#"{"email":"root@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"pro","chatgpt_subscription_active_until":"2033-07-10T00:00:00+00:00"}}"#,
+        );
         fs::write(
             codex_home.join("auth.json"),
             format!(r#"{{"tokens":{{"id_token":"{id_token}","account_id":"acct_root"}}}}"#),

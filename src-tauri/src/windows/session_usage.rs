@@ -116,7 +116,11 @@ fn quota_startup_anchor() -> DateTime<Local> {
         .unwrap_or_else(Local::now)
 }
 
-fn next_refresh_after(mut refresh_at: DateTime<Local>, window_duration: Duration, now: DateTime<Local>) -> DateTime<Local> {
+fn next_refresh_after(
+    mut refresh_at: DateTime<Local>,
+    window_duration: Duration,
+    now: DateTime<Local>,
+) -> DateTime<Local> {
     while refresh_at <= now {
         refresh_at += window_duration;
     }
@@ -214,7 +218,11 @@ fn slot_from_window(window: &SessionRateLimitWindow, fallback: QuotaSlot) -> Quo
     }
 }
 
-fn apply_rate_limit_window(summary: &mut QuotaSummary, window: Option<SessionRateLimitWindow>, fallback: QuotaSlot) {
+fn apply_rate_limit_window(
+    summary: &mut QuotaSummary,
+    window: Option<SessionRateLimitWindow>,
+    fallback: QuotaSlot,
+) {
     let Some(window) = window else {
         return;
     };
@@ -295,7 +303,11 @@ mod tests {
     #[test]
     fn load_latest_local_quota_uses_latest_token_count_event() {
         let codex_home = temp_codex_home("latest-token-count");
-        let session_dir = codex_home.join("sessions").join("2026").join("04").join("07");
+        let session_dir = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("07");
         fs::create_dir_all(&session_dir).unwrap();
         fs::write(
             session_dir.join("rollout-2026-04-07T11-48-31.jsonl"),
@@ -322,8 +334,16 @@ mod tests {
     #[test]
     fn load_latest_local_quota_prefers_lexically_latest_session_file() {
         let codex_home = temp_codex_home("latest-file");
-        let old_dir = codex_home.join("sessions").join("2026").join("04").join("06");
-        let new_dir = codex_home.join("sessions").join("2026").join("04").join("07");
+        let old_dir = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("06");
+        let new_dir = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("07");
         fs::create_dir_all(&old_dir).unwrap();
         fs::create_dir_all(&new_dir).unwrap();
         fs::write(
@@ -370,16 +390,20 @@ mod tests {
 
     #[test]
     fn normalize_quota_summary_restores_expired_windows_to_full_allowance() {
-        let quota = normalize_quota_summary(Some(QuotaSummary {
-            five_hour: QuotaWindow {
-                remaining_percent: Some(12),
-                refresh_at: Some("2000-01-01 00:00".to_string()),
-            },
-            weekly: QuotaWindow {
-                remaining_percent: Some(34),
-                refresh_at: Some("2000-01-02 00:00".to_string()),
-            },
-        }), Some("plus"), true);
+        let quota = normalize_quota_summary(
+            Some(QuotaSummary {
+                five_hour: QuotaWindow {
+                    remaining_percent: Some(12),
+                    refresh_at: Some("2000-01-01 00:00".to_string()),
+                },
+                weekly: QuotaWindow {
+                    remaining_percent: Some(34),
+                    refresh_at: Some("2000-01-02 00:00".to_string()),
+                },
+            }),
+            Some("plus"),
+            true,
+        );
 
         assert_eq!(quota.five_hour.remaining_percent, Some(100));
         assert_eq!(quota.weekly.remaining_percent, Some(100));
@@ -428,7 +452,11 @@ mod tests {
     #[test]
     fn load_latest_local_quota_maps_weekly_only_free_limit_from_primary_slot() {
         let codex_home = temp_codex_home("weekly-only-primary");
-        let session_dir = codex_home.join("sessions").join("2026").join("04").join("07");
+        let session_dir = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("07");
         fs::create_dir_all(&session_dir).unwrap();
         fs::write(
             session_dir.join("rollout-2026-04-07T16-00-00.jsonl"),

@@ -2,7 +2,7 @@
 
 中文文档: [README.zh-CN.md](./README.zh-CN.md)
 
-This project packages the locally used Codex account switch workflow into standalone tooling for both macOS and Windows.
+This project packages the locally used Codex account switch workflow into standalone tooling.
 
 ## Features
 
@@ -19,6 +19,12 @@ This project packages the locally used Codex account switch workflow into standa
 - Windows CLI/install tooling under [`windows/`](./windows)
 - Windows native desktop app under [`src/`](./src/) + [`src-tauri/`](./src-tauri/)
 - Runtime profile data stays under the same `CODEX_HOME`/`~/.codex` layout on both platforms
+
+Current desktop scope:
+
+- The Tauri desktop client is Windows-only
+- Windows desktop launch is resolved through the Microsoft Store shell target
+- macOS desktop behavior is intentionally not implemented in `src-tauri/`; future direction is documented in [`macOS/WINDOWS_SPLIT_NOTE.md`](./macOS/WINDOWS_SPLIT_NOTE.md)
 
 ## Important behavior
 
@@ -101,7 +107,7 @@ The Windows installer:
 - initializes profile `a` as the active profile if a real root auth file exists and no active profile is set yet
 - writes `%CODEX_HOME%\bin\codex.cmd`
 - ensures `%CODEX_HOME%\bin` is first in the user PATH
-- records the real Codex CLI path in `%CODEX_HOME%\account_backup\windows\install_state.json`
+- records the real Codex CLI path in `%CODEX_HOME%\account_backup\windows\install_state.json` for login command resolution
 
 Open a new terminal after install so the PATH change is visible.
 

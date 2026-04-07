@@ -9,10 +9,10 @@ pub const ACTIVE_MARKER_FILE: &str = ".active_profile";
 pub const CURRENT_PROFILE_FILENAME: &str = ".current_profile";
 pub const DEFAULT_PROFILES: [&str; 4] = ["a", "b", "c", "d"];
 pub const INSTALL_STATE_FILENAME: &str = "install_state.json";
+pub const PROFILES_INDEX_FILENAME: &str = "profiles.json";
 pub const PROFILE_METADATA_FILENAME: &str = "profile.json";
 pub const SWITCH_LOCK_FILENAME: &str = ".switch.lock";
 pub const WINDOWS_RUNTIME_DIRNAME: &str = "windows";
-pub const APP_NAME: &str = "Codex";
 pub const APP_PROCESS_NAME: &str = "Codex.exe";
 pub const CONTACT_URL: &str = "https://github.com/Cmochance/Codex_Account_Switch";
 pub const DEFAULT_PAGE_SIZE: u32 = 4;
@@ -64,6 +64,10 @@ pub fn get_profile_metadata_path(profile_name: &str, codex_home: Option<&Path>) 
     get_backup_root(codex_home)
         .join(profile_name)
         .join(PROFILE_METADATA_FILENAME)
+}
+
+pub fn get_profiles_index_path(codex_home: Option<&Path>) -> PathBuf {
+    get_backup_root(codex_home).join(PROFILES_INDEX_FILENAME)
 }
 
 pub fn get_switch_lock_path(codex_home: Option<&Path>) -> PathBuf {

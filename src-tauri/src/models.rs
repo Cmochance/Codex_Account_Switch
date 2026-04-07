@@ -99,6 +99,46 @@ pub struct DashboardResponse {
     pub runtime: RuntimeSummary,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ProfileIndexEntry {
+    pub folder_name: String,
+    pub account_label: Option<String>,
+    pub has_account_identity: bool,
+    pub plan_name: Option<String>,
+    pub subscription_expires_at: Option<String>,
+    pub auth_present: bool,
+    pub stored_quota: QuotaSummary,
+    pub auth_mtime_ms: Option<u64>,
+    pub auth_size: Option<u64>,
+    pub profile_mtime_ms: Option<u64>,
+    pub profile_size: Option<u64>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ProfilesIndex {
+    pub schema_version: u32,
+    pub updated_at: String,
+    pub current_profile: Option<String>,
+    pub profiles: Vec<ProfileIndexEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfilesSnapshotResponse {
+    pub page_size: u32,
+    pub profiles: Vec<ProfileCard>,
+    pub current_card: Option<CurrentCard>,
+    pub current_quota_card: Option<QuotaSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrentQuotaResponse {
+    pub profile: Option<String>,
+    pub quota: Option<QuotaSummary>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfilePayload {
     pub profile: String,

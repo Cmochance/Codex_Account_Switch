@@ -2,7 +2,9 @@ import { persistLocale, resolveInitialLocale, t, type Locale } from "./i18n";
 import { state } from "./state";
 import {
   addProfile,
-  getDashboard,
+  getCurrentLiveQuota,
+  getProfilesSnapshot,
+  getRuntimeStatus,
   loginCurrentProfile,
   openCodex,
   openContact,
@@ -18,19 +20,31 @@ import {
   renderRuntime,
   showToast,
 } from "./render";
+import type {
+  CurrentQuotaResponse,
+  DashboardResponse,
+  PagingInfo,
+  ProfilesSnapshotResponse,
+} from "./types";
 
 function rerenderDashboard(): void {
   applyLocale();
 
-  if (!state.dashboard) {
+  const dashboard = buildDashboardPage();
+  if (!dashboard) {
     renderPaging({ has_previous: false, has_next: false });
+    if (state.runtime) {
+      renderRuntime(state.runtime);
+    }
     return;
   }
 
-  renderRuntime(state.dashboard.runtime);
-  renderProfiles(state.dashboard, handleSwitchProfile);
-  renderCurrentCard(state.dashboard);
-  renderPaging(state.dashboard.paging);
+  renderProfiles(dashboard, handleSwitchProfile);
+  renderCurrentCard(dashboard);
+  renderPaging(dashboard.paging);
+  if (state.runtime) {
+    renderRuntime(state.runtime);
+  }
 }
 
 function setLocale(locale: Locale): void {
@@ -43,38 +57,140 @@ function setLocale(locale: Locale): void {
   rerenderDashboard();
 }
 
-async function loadDashboard(page = state.page): Promise<void> {
-  state.loading = true;
-  renderPaging({ has_previous: false, has_next: false });
+function buildPaging(totalProfiles: number, pageSize: number, page: number): PagingInfo {
+  const totalPages = Math.max(1, Math.ceil(totalProfiles / pageSize));
+  const nextPage = Math.min(Math.max(1, page), totalPages);
+
+  return {
+    page: nextPage,
+    page_size: pageSize,
+    total_profiles: totalProfiles,
+    total_pages: totalPages,
+    has_previous: nextPage > 1,
+    has_next: nextPage < totalPages,
+  };
+}
+
+function buildDashboardPage(): DashboardResponse | null {
+  if (!state.snapshot) {
+    return null;
+  }
+
+  const paging = buildPaging(state.snapshot.profiles.length, state.pageSize, state.page);
+  const start = (paging.page - 1) * paging.page_size;
+  const end = start + paging.page_size;
+  state.page = paging.page;
+
+  return {
+    paging,
+    profiles: state.snapshot.profiles.slice(start, end),
+    current_card: state.snapshot.current_card,
+    current_quota_card: state.currentQuota ?? state.snapshot.current_quota_card,
+    runtime: state.runtime ?? { codex_running: false, last_autosave_at: null },
+  };
+}
+
+function applySnapshot(snapshot: ProfilesSnapshotResponse): void {
+  state.snapshot = snapshot;
+  state.pageSize = snapshot.page_size;
+  state.currentProfile = snapshot.current_card?.folder_name ?? null;
+  state.currentQuota = snapshot.current_quota_card;
+  state.page = buildPaging(snapshot.profiles.length, snapshot.page_size, state.page).page;
+}
+
+function applyCurrentQuota(response: CurrentQuotaResponse): void {
+  const currentProfile = state.snapshot?.current_card?.folder_name ?? null;
+
+  if (!response.profile) {
+    if (!currentProfile) {
+      state.currentQuota = null;
+    }
+    return;
+  }
+
+  if (response.profile === currentProfile) {
+    state.currentQuota = response.quota;
+  }
+}
+
+async function refreshProfilesSnapshot(showError = false): Promise<void> {
+  if (state.loading) {
+    return;
+  }
 
   try {
-    const dashboard = await getDashboard(page);
-    state.loading = false;
-    state.page = dashboard.paging.page;
-    state.dashboard = dashboard;
-    renderRuntime(dashboard.runtime);
-    renderProfiles(dashboard, handleSwitchProfile);
-    renderCurrentCard(dashboard);
-    renderPaging(dashboard.paging);
+    applySnapshot(await getProfilesSnapshot());
+    rerenderDashboard();
   } catch (error) {
-    state.loading = false;
-    showToast(error instanceof Error ? error.message : "Failed to load dashboard.", true);
-    renderPaging({ has_previous: false, has_next: false });
-  } finally {
-    elements.openCurrentFolderButton.disabled = !state.currentProfile;
+    if (showError) {
+      showToast(error instanceof Error ? error.message : "Failed to load profiles.", true);
+    }
+  }
+}
+
+async function refreshRuntime(showError = false): Promise<void> {
+  if (state.loading) {
+    return;
+  }
+
+  try {
+    state.runtime = await getRuntimeStatus();
+    if (state.runtime) {
+      renderRuntime(state.runtime);
+    }
+  } catch (error) {
+    if (showError) {
+      showToast(error instanceof Error ? error.message : "Failed to refresh runtime.", true);
+    }
+  }
+}
+
+async function refreshCurrentQuota(showError = false): Promise<void> {
+  if (state.loading || !state.snapshot) {
+    return;
+  }
+
+  try {
+    applyCurrentQuota(await getCurrentLiveQuota());
+    rerenderDashboard();
+  } catch (error) {
+    if (showError) {
+      showToast(error instanceof Error ? error.message : "Failed to refresh quota.", true);
+    }
+  }
+}
+
+async function refreshAllData(showError = true): Promise<void> {
+  try {
+    const [snapshot, runtime, currentQuota] = await Promise.all([
+      getProfilesSnapshot(),
+      getRuntimeStatus(),
+      getCurrentLiveQuota(),
+    ]);
+
+    applySnapshot(snapshot);
+    state.runtime = runtime;
+    applyCurrentQuota(currentQuota);
+    rerenderDashboard();
+  } catch (error) {
+    if (showError) {
+      showToast(error instanceof Error ? error.message : "Failed to load dashboard.", true);
+    }
   }
 }
 
 async function handleSwitchProfile(profile: string): Promise<void> {
   try {
     state.loading = true;
+    rerenderDashboard();
     await switchProfile(profile);
     showToast(t(state.locale, "switchedTo", { profile }));
-    await loadDashboard(state.page);
+    await refreshAllData();
   } catch (error) {
     showToast(error instanceof Error ? error.message : t(state.locale, "failedToSwitchProfile"), true);
   } finally {
     state.loading = false;
+    rerenderDashboard();
   }
 }
 
@@ -107,14 +223,15 @@ async function handleLoginCurrentProfile(): Promise<void> {
 
   try {
     state.loading = true;
-    renderPaging({ has_previous: false, has_next: false });
+    rerenderDashboard();
     await loginCurrentProfile();
     showToast(t(state.locale, "loggedIn", { profile: state.currentProfile }));
-    await loadDashboard(state.page);
+    await refreshAllData();
   } catch (error) {
     showToast(error instanceof Error ? error.message : t(state.locale, "failedToLogin"), true);
   } finally {
     state.loading = false;
+    rerenderDashboard();
   }
 }
 
@@ -148,13 +265,18 @@ async function handleSubmitAddProfile(event: SubmitEvent): Promise<void> {
   }
 
   try {
+    state.loading = true;
+    rerenderDashboard();
     await addProfile(folderName);
     elements.dialog.close();
     showToast(t(state.locale, "createdProfile", { profile: folderName }));
-    await loadDashboard(state.page);
+    await refreshAllData();
   } catch (error) {
     elements.dialogError.hidden = false;
     elements.dialogError.textContent = error instanceof Error ? error.message : t(state.locale, "failedToCreateProfile");
+  } finally {
+    state.loading = false;
+    rerenderDashboard();
   }
 }
 
@@ -163,10 +285,12 @@ export function bootstrap(): void {
   applyLocale();
 
   elements.previousPageButton.addEventListener("click", () => {
-    void loadDashboard(state.page - 1);
+    state.page -= 1;
+    rerenderDashboard();
   });
   elements.nextPageButton.addEventListener("click", () => {
-    void loadDashboard(state.page + 1);
+    state.page += 1;
+    rerenderDashboard();
   });
   elements.openCurrentFolderButton.addEventListener("click", () => {
     void handleOpenCurrentFolder();
@@ -190,6 +314,23 @@ export function bootstrap(): void {
   elements.localeToggleButton.addEventListener("click", () => {
     setLocale(state.locale === "en" ? "zh-CN" : "en");
   });
+  window.addEventListener("focus", () => {
+    void refreshProfilesSnapshot();
+    void refreshRuntime();
+    void refreshCurrentQuota();
+  });
+  window.setInterval(() => {
+    void refreshRuntime();
+    void refreshCurrentQuota();
+  }, 15_000);
+  window.setInterval(() => {
+    void refreshProfilesSnapshot();
+  }, 60_000);
 
-  void loadDashboard();
+  state.loading = true;
+  rerenderDashboard();
+  void refreshAllData().finally(() => {
+    state.loading = false;
+    rerenderDashboard();
+  });
 }

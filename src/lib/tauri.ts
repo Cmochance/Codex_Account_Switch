@@ -1,6 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { ActionResponse, CommandError, DashboardResponse, SwitchResponse } from "./types";
+import type {
+  ActionResponse,
+  CommandError,
+  CurrentQuotaResponse,
+  DashboardResponse,
+  ProfilesSnapshotResponse,
+  RuntimeSummary,
+  SwitchResponse,
+} from "./types";
 
 function toError(error: unknown): Error {
   if (typeof error === "string") {
@@ -27,6 +35,18 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
 
 export function getDashboard(page: number): Promise<DashboardResponse> {
   return invokeCommand<DashboardResponse>("get_dashboard", { page });
+}
+
+export function getProfilesSnapshot(): Promise<ProfilesSnapshotResponse> {
+  return invokeCommand<ProfilesSnapshotResponse>("get_profiles_snapshot");
+}
+
+export function getRuntimeStatus(): Promise<RuntimeSummary> {
+  return invokeCommand<RuntimeSummary>("get_runtime_status");
+}
+
+export function getCurrentLiveQuota(): Promise<CurrentQuotaResponse> {
+  return invokeCommand<CurrentQuotaResponse>("get_current_live_quota");
 }
 
 export function switchProfile(profile: string): Promise<SwitchResponse> {

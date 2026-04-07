@@ -3,13 +3,16 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
 
 use crate::errors::AppResult;
-use crate::models::{CurrentCard, DashboardResponse, PagingInfo, ProfileCard, ProfileMetadata, QuotaSummary, RuntimeSummary};
+use crate::models::{
+    CurrentCard, DashboardResponse, PagingInfo, ProfileCard, ProfileMetadata, QuotaSummary,
+    RuntimeSummary,
+};
 
 use super::fs_ops::read_text_stripped;
 use super::metadata::{load_profile_metadata, load_root_auth_metadata};
 use super::paths::{
-    get_auto_save_root, get_backup_root, get_current_profile_file, list_profile_dirs, ACTIVE_MARKER_FILE,
-    DEFAULT_PAGE_SIZE,
+    get_auto_save_root, get_backup_root, get_current_profile_file, list_profile_dirs,
+    ACTIVE_MARKER_FILE, DEFAULT_PAGE_SIZE,
 };
 use super::process;
 use super::session_usage::{load_latest_local_quota, normalize_quota_summary};
@@ -37,6 +40,26 @@ fn compute_subscription_days_left(subscription_expires_at: Option<&str>) -> Opti
     Some((parsed - today).num_days().max(0))
 }
 
+fn build_paging(total_profiles: u32, requested_page: u32) -> PagingInfo {
+    let total_pages = ((total_profiles + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE).max(1);
+    let page = requested_page.clamp(1, total_pages);
+
+    PagingInfo {
+        page,
+        page_size: DEFAULT_PAGE_SIZE,
+        total_profiles,
+        total_pages,
+        has_previous: page > 1,
+        has_next: page < total_pages,
+    }
+}
+
+fn page_bounds(paging: &PagingInfo, total_items: usize) -> (usize, usize) {
+    let start = ((paging.page - 1) * paging.page_size) as usize;
+    let end = (start + paging.page_size as usize).min(total_items);
+    (start, end)
+}
+
 fn latest_autosave_timestamp(codex_home: Option<&Path>) -> Option<String> {
     let auto_save_root = get_auto_save_root(codex_home);
     if !auto_save_root.is_dir() {
@@ -49,7 +72,11 @@ fn latest_autosave_timestamp(codex_home: Option<&Path>) -> Option<String> {
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
-        .filter_map(|path| path.file_name().and_then(|name| name.to_str()).map(str::to_string))
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
         .max()?;
 
     NaiveDateTime::parse_from_str(&latest, "%Y%m%d-%H%M%S")
@@ -58,20 +85,37 @@ fn latest_autosave_timestamp(codex_home: Option<&Path>) -> Option<String> {
         .or(Some(latest))
 }
 
+pub fn build_runtime_summary(codex_home: Option<&Path>) -> RuntimeSummary {
+    RuntimeSummary {
+        codex_running: process::is_codex_app_running(),
+        last_autosave_at: latest_autosave_timestamp(codex_home),
+    }
+}
+
 fn build_profile_card(
     profile_dir: &Path,
     current_profile: Option<&str>,
     codex_home: Option<&Path>,
     live_quota: Option<&QuotaSummary>,
 ) -> ProfileCard {
-    let metadata = load_profile_metadata(profile_dir.file_name().and_then(|name| name.to_str()).unwrap_or_default(), codex_home);
+    let metadata = load_profile_metadata(
+        profile_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default(),
+        codex_home,
+    );
     let has_account_identity = metadata
         .account_label
         .as_deref()
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
     let auth_present = profile_dir.join("auth.json").is_file();
-    let folder_name = profile_dir.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_string();
+    let folder_name = profile_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string();
 
     let mut status = if current_profile == Some(folder_name.as_str()) {
         "current"
@@ -85,7 +129,9 @@ fn build_profile_card(
     }
 
     let raw_quota = if current_profile == Some(folder_name.as_str()) {
-        live_quota.cloned().unwrap_or_else(|| metadata.quota.clone())
+        live_quota
+            .cloned()
+            .unwrap_or_else(|| metadata.quota.clone())
     } else {
         metadata.quota.clone()
     };
@@ -102,7 +148,9 @@ fn build_profile_card(
         auth_present,
         has_account_identity,
         plan_name: metadata.plan_name.clone(),
-        subscription_days_left: compute_subscription_days_left(metadata.subscription_expires_at.as_deref()),
+        subscription_days_left: compute_subscription_days_left(
+            metadata.subscription_expires_at.as_deref(),
+        ),
         quota,
     }
 }
@@ -126,12 +174,16 @@ pub fn resolve_current_profile(backup_root: &Path) -> Option<String> {
 }
 
 pub fn build_dashboard(page: u32, codex_home: Option<&Path>) -> AppResult<DashboardResponse> {
-    let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(super::paths::get_codex_home);
+    let codex_home = codex_home
+        .map(PathBuf::from)
+        .unwrap_or_else(super::paths::get_codex_home);
     let backup_root = get_backup_root(Some(&codex_home));
     let all_profile_dirs = list_profile_dirs(&backup_root);
     let current_profile = resolve_current_profile(&backup_root);
     let live_quota = load_latest_local_quota(Some(&codex_home));
-    let all_cards = all_profile_dirs
+    let paging = build_paging(all_profile_dirs.len() as u32, page);
+    let (start, end) = page_bounds(&paging, all_profile_dirs.len());
+    let profiles = all_profile_dirs[start..end]
         .iter()
         .map(|profile_dir| {
             build_profile_card(
@@ -143,15 +195,10 @@ pub fn build_dashboard(page: u32, codex_home: Option<&Path>) -> AppResult<Dashbo
         })
         .collect::<Vec<_>>();
 
-    let total_profiles = all_cards.len() as u32;
-    let total_pages = ((total_profiles + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE).max(1);
-    let page = page.clamp(1, total_pages);
-    let start = ((page - 1) * DEFAULT_PAGE_SIZE) as usize;
-    let end = (start + DEFAULT_PAGE_SIZE as usize).min(all_cards.len());
-
     let (current_card, current_quota_card) = match current_profile {
         Some(ref current_profile) if backup_root.join(current_profile).is_dir() => {
-            let mut metadata: ProfileMetadata = load_profile_metadata(current_profile, Some(&codex_home));
+            let mut metadata: ProfileMetadata =
+                load_profile_metadata(current_profile, Some(&codex_home));
             let current_profile_dir = backup_root.join(current_profile);
             if let Some(root_auth_metadata) = load_root_auth_metadata(Some(&codex_home)) {
                 if let Some(account_label) = root_auth_metadata.account_label {
@@ -170,47 +217,45 @@ pub fn build_dashboard(page: u32, codex_home: Option<&Path>) -> AppResult<Dashbo
             (
                 Some(CurrentCard {
                     folder_name: current_profile.clone(),
-                    display_title: build_display_title(current_profile, metadata.account_label.as_deref()),
+                    display_title: build_display_title(
+                        current_profile,
+                        metadata.account_label.as_deref(),
+                    ),
                     has_account_identity,
                     plan_name: metadata.plan_name.clone(),
-                    subscription_days_left: compute_subscription_days_left(metadata.subscription_expires_at.as_deref()),
+                    subscription_days_left: compute_subscription_days_left(
+                        metadata.subscription_expires_at.as_deref(),
+                    ),
                     profile_folder_path: current_profile_dir.to_string_lossy().into_owned(),
                 }),
-                Some(normalize_quota_summary(Some(
-                    live_quota.clone().unwrap_or(metadata.quota),
-                ), metadata.plan_name.as_deref(), has_account_identity)),
+                Some(normalize_quota_summary(
+                    Some(live_quota.clone().unwrap_or(metadata.quota)),
+                    metadata.plan_name.as_deref(),
+                    has_account_identity,
+                )),
             )
         }
         _ => (None, None),
     };
 
     Ok(DashboardResponse {
-        paging: PagingInfo {
-            page,
-            page_size: DEFAULT_PAGE_SIZE,
-            total_profiles,
-            total_pages,
-            has_previous: page > 1,
-            has_next: page < total_pages,
-        },
-        profiles: all_cards[start..end].to_vec(),
+        paging,
+        profiles,
         current_card,
         current_quota_card,
-        runtime: RuntimeSummary {
-            codex_running: process::is_codex_app_running(),
-            last_autosave_at: latest_autosave_timestamp(Some(&codex_home)),
-        },
+        runtime: build_runtime_summary(Some(&codex_home)),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::build_profile_card;
+    use super::{build_dashboard, build_paging, build_profile_card, page_bounds};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::models::QuotaSummary;
+    use crate::windows::paths::get_current_profile_file;
 
     fn temp_codex_home(name: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -220,12 +265,60 @@ mod tests {
         std::env::temp_dir().join(format!("codex-switch-dashboard-{name}-{unique}"))
     }
 
+    fn write_profile(codex_home: &PathBuf, profile_name: &str) {
+        let profile_dir = codex_home.join("account_backup").join(profile_name);
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(
+            profile_dir.join("auth.json"),
+            format!(r#"{{"tokens":{{"account_id":"acct_{profile_name}"}}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn build_paging_clamps_requested_page_and_bounds() {
+        let paging = build_paging(5, 9);
+        let bounds = page_bounds(&paging, 5);
+
+        assert_eq!(paging.page, 2);
+        assert_eq!(paging.total_pages, 2);
+        assert_eq!(bounds, (4, 5));
+    }
+
+    #[test]
+    fn build_dashboard_returns_only_requested_page_profiles() {
+        let codex_home = temp_codex_home("paged-dashboard");
+        for profile_name in ["a", "b", "c", "d", "e"] {
+            write_profile(&codex_home, profile_name);
+        }
+        fs::write(get_current_profile_file(Some(&codex_home)), "a").unwrap();
+
+        let dashboard = build_dashboard(2, Some(&codex_home)).unwrap();
+
+        assert_eq!(dashboard.paging.page, 2);
+        assert_eq!(dashboard.paging.total_pages, 2);
+        assert_eq!(dashboard.profiles.len(), 1);
+        assert_eq!(dashboard.profiles[0].folder_name, "e");
+        assert_eq!(
+            dashboard
+                .current_card
+                .as_ref()
+                .map(|card| card.folder_name.as_str()),
+            Some("a")
+        );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
     #[test]
     fn build_profile_card_prefers_live_quota_for_current_profile() {
         let codex_home = temp_codex_home("live-quota");
         let profile_dir = codex_home.join("account_backup").join("a");
         fs::create_dir_all(&profile_dir).unwrap();
-        fs::write(profile_dir.join("auth.json"), r#"{"tokens":{"account_id":"acct_a"}}"#).unwrap();
+        fs::write(
+            profile_dir.join("auth.json"),
+            r#"{"tokens":{"account_id":"acct_a"}}"#,
+        )
+        .unwrap();
         fs::write(
             profile_dir.join("profile.json"),
             r#"{
@@ -241,15 +334,20 @@ mod tests {
         let live_quota = QuotaSummary {
             five_hour: crate::models::QuotaWindow {
                 remaining_percent: Some(88),
-                refresh_at: Some("2026-04-07 12:00".to_string()),
+                refresh_at: Some("2099-04-07 12:00".to_string()),
             },
             weekly: crate::models::QuotaWindow {
                 remaining_percent: Some(77),
-                refresh_at: Some("2026-04-10 12:00".to_string()),
+                refresh_at: Some("2099-04-10 12:00".to_string()),
             },
         };
 
-        let card = build_profile_card(&profile_dir, Some("a"), Some(&codex_home), Some(&live_quota));
+        let card = build_profile_card(
+            &profile_dir,
+            Some("a"),
+            Some(&codex_home),
+            Some(&live_quota),
+        );
 
         assert_eq!(card.quota.five_hour.remaining_percent, Some(88));
         assert_eq!(card.quota.weekly.remaining_percent, Some(77));
@@ -261,7 +359,11 @@ mod tests {
         let codex_home = temp_codex_home("stored-quota");
         let profile_dir = codex_home.join("account_backup").join("b");
         fs::create_dir_all(&profile_dir).unwrap();
-        fs::write(profile_dir.join("auth.json"), r#"{"tokens":{"account_id":"acct_b"}}"#).unwrap();
+        fs::write(
+            profile_dir.join("auth.json"),
+            r#"{"tokens":{"account_id":"acct_b"}}"#,
+        )
+        .unwrap();
         fs::write(
             profile_dir.join("profile.json"),
             r#"{
@@ -285,7 +387,12 @@ mod tests {
             },
         };
 
-        let card = build_profile_card(&profile_dir, Some("a"), Some(&codex_home), Some(&live_quota));
+        let card = build_profile_card(
+            &profile_dir,
+            Some("a"),
+            Some(&codex_home),
+            Some(&live_quota),
+        );
 
         assert_eq!(card.quota.five_hour.remaining_percent, Some(21));
         assert_eq!(card.quota.weekly.remaining_percent, Some(43));
@@ -297,7 +404,11 @@ mod tests {
         let codex_home = temp_codex_home("default-quota");
         let profile_dir = codex_home.join("account_backup").join("a");
         fs::create_dir_all(&profile_dir).unwrap();
-        fs::write(profile_dir.join("auth.json"), r#"{"tokens":{"account_id":"acct_a"}}"#).unwrap();
+        fs::write(
+            profile_dir.join("auth.json"),
+            r#"{"tokens":{"account_id":"acct_a"}}"#,
+        )
+        .unwrap();
 
         let card = build_profile_card(&profile_dir, Some("a"), Some(&codex_home), None);
 
@@ -332,7 +443,11 @@ mod tests {
         let codex_home = temp_codex_home("free-plan-quota");
         let profile_dir = codex_home.join("account_backup").join("f");
         fs::create_dir_all(&profile_dir).unwrap();
-        fs::write(profile_dir.join("auth.json"), r#"{"tokens":{"account_id":"acct_f"}}"#).unwrap();
+        fs::write(
+            profile_dir.join("auth.json"),
+            r#"{"tokens":{"account_id":"acct_f"}}"#,
+        )
+        .unwrap();
         fs::write(
             profile_dir.join("profile.json"),
             r#"{

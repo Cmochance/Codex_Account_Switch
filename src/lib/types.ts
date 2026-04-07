@@ -50,6 +50,18 @@ export interface DashboardResponse {
   runtime: RuntimeSummary;
 }
 
+export interface ProfilesSnapshotResponse {
+  page_size: number;
+  profiles: ProfileCard[];
+  current_card: CurrentCard | null;
+  current_quota_card: QuotaSummary | null;
+}
+
+export interface CurrentQuotaResponse {
+  profile: string | null;
+  quota: QuotaSummary | null;
+}
+
 export interface SwitchResponse {
   ok: boolean;
   profile: string;

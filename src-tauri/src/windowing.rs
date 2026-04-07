@@ -69,7 +69,12 @@ fn apply_window_size(window: &WebviewWindow, width: f64, height: f64) -> AppResu
     let height = height.max(MIN_HEIGHT);
     window
         .set_size(LogicalSize::new(width, height))
-        .map_err(|error| AppError::new("WINDOW_SIZE_FAILED", format!("Failed to resize window: {error}")))
+        .map_err(|error| {
+            AppError::new(
+                "WINDOW_SIZE_FAILED",
+                format!("Failed to resize window: {error}"),
+            )
+        })
 }
 
 fn enforce_aspect_ratio(window: &WebviewWindow, state: &WindowSizingState) {
@@ -102,9 +107,15 @@ fn enforce_aspect_ratio(window: &WebviewWindow, state: &WindowSizingState) {
     let width_delta = (width - last_width).abs();
     let height_delta = (height - last_height).abs();
     let (target_width, target_height) = if width_delta >= height_delta {
-        (width.max(MIN_WIDTH), (width / ratio).round().max(MIN_HEIGHT))
+        (
+            width.max(MIN_WIDTH),
+            (width / ratio).round().max(MIN_HEIGHT),
+        )
     } else {
-        ((height * ratio).round().max(MIN_WIDTH), height.max(MIN_HEIGHT))
+        (
+            (height * ratio).round().max(MIN_WIDTH),
+            height.max(MIN_HEIGHT),
+        )
     };
 
     if (target_width - width).abs() < 1.0 && (target_height - height).abs() < 1.0 {
@@ -131,17 +142,15 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
     }
 
     let window_for_events = window.clone();
-    window.on_window_event(move |event| {
-        match event {
-            WindowEvent::Resized(_) => {
-                let state = app_handle.state::<WindowSizingState>();
-                enforce_aspect_ratio(&window_for_events, &state);
-            }
-            WindowEvent::CloseRequested { .. } => {
-                let _ = crate::windows::bootstrap::sync_root_state_to_current_profile(None);
-            }
-            _ => {}
+    window.on_window_event(move |event| match event {
+        WindowEvent::Resized(_) => {
+            let state = app_handle.state::<WindowSizingState>();
+            enforce_aspect_ratio(&window_for_events, &state);
         }
+        WindowEvent::CloseRequested { .. } => {
+            let _ = crate::windows::bootstrap::sync_root_state_to_current_profile(None);
+        }
+        _ => {}
     });
 
     Ok(())

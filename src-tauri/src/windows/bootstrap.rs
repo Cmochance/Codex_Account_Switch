@@ -1,6 +1,6 @@
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde_json::json;
 
 use crate::errors::{AppError, AppResult};
 
@@ -10,7 +10,7 @@ use super::paths::{
     get_backup_root, get_codex_home, get_runtime_dir, ACTIVE_MARKER_FILE, CURRENT_PROFILE_FILENAME,
     DEFAULT_PROFILES,
 };
-use super::process::{detect_codex_app_target, discover_real_codex_cli_path};
+use super::process::discover_real_codex_cli_path;
 
 const AUTH_TEMPLATE: &str = include_str!("../../../examples/account_backup/demo/auth.json.example");
 
@@ -24,14 +24,15 @@ fn write_install_state(codex_home: &Path) -> AppResult<()> {
     fs::create_dir_all(&runtime_dir).map_err(|error| {
         AppError::new(
             "FS_CREATE_FAILED",
-            format!("Failed to create runtime directory {}: {error}", runtime_dir.display()),
+            format!(
+                "Failed to create runtime directory {}: {error}",
+                runtime_dir.display()
+            ),
         )
     })?;
 
     let state_path = runtime_dir.join("install_state.json");
     let payload = json!({
-        "app_path": detect_codex_app_target()
-            .unwrap_or_default(),
         "real_codex_path": resolve_real_codex_cli(codex_home)
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default(),
@@ -47,7 +48,10 @@ fn write_install_state(codex_home: &Path) -> AppResult<()> {
     fs::write(&state_path, format!("{serialized}\n")).map_err(|error| {
         AppError::new(
             "INSTALL_STATE_WRITE_FAILED",
-            format!("Failed to write install state {}: {error}", state_path.display()),
+            format!(
+                "Failed to write install state {}: {error}",
+                state_path.display()
+            ),
         )
     })
 }
@@ -65,10 +69,17 @@ fn initialize_default_active_profile(backup_root: &Path) -> AppResult<()> {
     })?;
 
     let marker_path = backup_root.join("a").join(ACTIVE_MARKER_FILE);
-    fs::write(&marker_path, format!("activated_at={}\n", super::paths::utc_timestamp())).map_err(|error| {
+    fs::write(
+        &marker_path,
+        format!("activated_at={}\n", super::paths::utc_timestamp()),
+    )
+    .map_err(|error| {
         AppError::new(
             "FS_WRITE_FAILED",
-            format!("Failed to write active marker {}: {error}", marker_path.display()),
+            format!(
+                "Failed to write active marker {}: {error}",
+                marker_path.display()
+            ),
         )
     })
 }
@@ -81,6 +92,7 @@ pub fn sync_root_state_to_current_profile(codex_home: Option<&Path>) -> AppResul
     };
 
     backup_root_state_to_profile(&current_profile, &codex_home, &backup_root)?;
+    super::profiles_index::load_profiles_index(Some(&codex_home))?;
     Ok(Some(current_profile))
 }
 
@@ -94,7 +106,10 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
     fs::create_dir_all(&backup_root).map_err(|error| {
         AppError::new(
             "FS_CREATE_FAILED",
-            format!("Failed to create backup root {}: {error}", backup_root.display()),
+            format!(
+                "Failed to create backup root {}: {error}",
+                backup_root.display()
+            ),
         )
     })?;
 
@@ -103,7 +118,10 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
         fs::create_dir_all(&profile_dir).map_err(|error| {
             AppError::new(
                 "FS_CREATE_FAILED",
-                format!("Failed to create profile directory {}: {error}", profile_dir.display()),
+                format!(
+                    "Failed to create profile directory {}: {error}",
+                    profile_dir.display()
+                ),
             )
         })?;
     }
@@ -116,7 +134,10 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
         fs::write(&auth_path, AUTH_TEMPLATE).map_err(|error| {
             AppError::new(
                 "AUTH_TEMPLATE_WRITE_FAILED",
-                format!("Failed to write placeholder auth {}: {error}", auth_path.display()),
+                format!(
+                    "Failed to write placeholder auth {}: {error}",
+                    auth_path.display()
+                ),
             )
         })?;
     }
@@ -138,12 +159,14 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
     }
 
     write_install_state(&codex_home)?;
+    super::profiles_index::load_profiles_index(Some(&codex_home))?;
     Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::ensure_backup_initialized;
+    use crate::windows::process::load_install_state;
     use crate::windows::env_lock;
     use std::fs;
     use std::path::PathBuf;
@@ -206,28 +229,25 @@ mod tests {
         fs::write(npm_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
 
         let original_path = std::env::var_os("PATH");
-        std::env::set_var("PATH", std::env::join_paths([bin_dir.clone(), npm_dir.clone()]).unwrap());
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths([bin_dir.clone(), npm_dir.clone()]).unwrap(),
+        );
 
         let initialized = ensure_backup_initialized(Some(&codex_home)).unwrap();
-        let install_state = fs::read_to_string(
-            codex_home
-                .join("account_backup")
-                .join("windows")
-                .join("install_state.json"),
-        )
-        .unwrap();
-
         if let Some(path) = original_path {
             std::env::set_var("PATH", path);
         } else {
             std::env::remove_var("PATH");
         }
 
+        let install_state = load_install_state(Some(&codex_home));
+
         assert!(initialized);
-        assert!(install_state.contains(&format!(
-            "\"real_codex_path\": \"{}\"",
-            npm_dir.join("codex.cmd").to_string_lossy()
-        )));
+        assert_eq!(
+            install_state.real_codex_path,
+            Some(npm_dir.join("codex.cmd").to_string_lossy().into_owned())
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 }

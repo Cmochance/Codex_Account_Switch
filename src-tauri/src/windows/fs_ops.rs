@@ -5,8 +5,8 @@ use std::path::Path;
 use crate::errors::{AppError, AppResult};
 
 use super::paths::{
-    autosave_timestamp, get_auto_save_root, get_current_profile_file, list_profile_dirs, utc_timestamp,
-    ACTIVE_MARKER_FILE,
+    autosave_timestamp, get_auto_save_root, get_current_profile_file, list_profile_dirs,
+    utc_timestamp, ACTIVE_MARKER_FILE,
 };
 
 fn should_ignore_entry(name: &str) -> bool {
@@ -26,11 +26,17 @@ pub fn remove_path(path: &Path) -> AppResult<()> {
 
     if path.is_dir() && !path.is_symlink() {
         fs::remove_dir_all(path).map_err(|error| {
-            AppError::new("FS_REMOVE_FAILED", format!("Failed to remove directory {}: {error}", path.display()))
+            AppError::new(
+                "FS_REMOVE_FAILED",
+                format!("Failed to remove directory {}: {error}", path.display()),
+            )
         })
     } else {
         fs::remove_file(path).map_err(|error| {
-            AppError::new("FS_REMOVE_FAILED", format!("Failed to remove file {}: {error}", path.display()))
+            AppError::new(
+                "FS_REMOVE_FAILED",
+                format!("Failed to remove file {}: {error}", path.display()),
+            )
         })
     }
 }
@@ -44,7 +50,10 @@ pub fn copy_entry(src: &Path, dst: &Path) -> AppResult<()> {
             fs::create_dir_all(parent).map_err(|error| {
                 AppError::new(
                     "FS_CREATE_FAILED",
-                    format!("Failed to create parent directory {}: {error}", parent.display()),
+                    format!(
+                        "Failed to create parent directory {}: {error}",
+                        parent.display()
+                    ),
                 )
             })?;
         }
@@ -52,7 +61,11 @@ pub fn copy_entry(src: &Path, dst: &Path) -> AppResult<()> {
         fs::copy(src, dst).map_err(|error| {
             AppError::new(
                 "FS_COPY_FAILED",
-                format!("Failed to copy {} -> {}: {error}", src.display(), dst.display()),
+                format!(
+                    "Failed to copy {} -> {}: {error}",
+                    src.display(),
+                    dst.display()
+                ),
             )
         })?;
         Ok(())
@@ -92,7 +105,10 @@ pub fn overlay_directory_contents(source_dir: &Path, target_dir: &Path) -> AppRe
     fs::create_dir_all(target_dir).map_err(|error| {
         AppError::new(
             "FS_CREATE_FAILED",
-            format!("Failed to create directory {}: {error}", target_dir.display()),
+            format!(
+                "Failed to create directory {}: {error}",
+                target_dir.display()
+            ),
         )
     })?;
 
@@ -105,7 +121,10 @@ pub fn overlay_directory_contents(source_dir: &Path, target_dir: &Path) -> AppRe
         let entry = entry.map_err(|error| {
             AppError::new(
                 "FS_READ_FAILED",
-                format!("Failed to read directory entry {}: {error}", source_dir.display()),
+                format!(
+                    "Failed to read directory entry {}: {error}",
+                    source_dir.display()
+                ),
             )
         })?;
         let name = entry.file_name();
@@ -122,7 +141,11 @@ pub fn overlay_directory_contents(source_dir: &Path, target_dir: &Path) -> AppRe
     Ok(())
 }
 
-pub fn backup_root_state_to_profile(profile: &str, codex_home: &Path, backup_root: &Path) -> AppResult<()> {
+pub fn backup_root_state_to_profile(
+    profile: &str,
+    codex_home: &Path,
+    backup_root: &Path,
+) -> AppResult<()> {
     let profile_dir = backup_root.join(profile);
     if !profile_dir.is_dir() {
         return Ok(());
@@ -132,13 +155,19 @@ pub fn backup_root_state_to_profile(profile: &str, codex_home: &Path, backup_roo
     for entry in fs::read_dir(&profile_dir).map_err(|error| {
         AppError::new(
             "FS_READ_FAILED",
-            format!("Failed to read directory {}: {error}", profile_dir.display()),
+            format!(
+                "Failed to read directory {}: {error}",
+                profile_dir.display()
+            ),
         )
     })? {
         let entry = entry.map_err(|error| {
             AppError::new(
                 "FS_READ_FAILED",
-                format!("Failed to read directory entry {}: {error}", profile_dir.display()),
+                format!(
+                    "Failed to read directory entry {}: {error}",
+                    profile_dir.display()
+                ),
             )
         })?;
         let name = entry.file_name();
@@ -174,7 +203,10 @@ pub fn autosave_auth(codex_home: &Path) -> AppResult<()> {
     fs::create_dir_all(&snapshot_dir).map_err(|error| {
         AppError::new(
             "FS_CREATE_FAILED",
-            format!("Failed to create autosave directory {}: {error}", snapshot_dir.display()),
+            format!(
+                "Failed to create autosave directory {}: {error}",
+                snapshot_dir.display()
+            ),
         )
     })?;
     copy_entry(&auth_file, &snapshot_dir.join("auth.json"))
@@ -189,7 +221,10 @@ pub fn set_active_marker(profile: &str, backup_root: &Path) -> AppResult<()> {
     fs::write(&marker, format!("activated_at={}\n", utc_timestamp())).map_err(|error| {
         AppError::new(
             "FS_WRITE_FAILED",
-            format!("Failed to write active marker {}: {error}", marker.display()),
+            format!(
+                "Failed to write active marker {}: {error}",
+                marker.display()
+            ),
         )
     })?;
 

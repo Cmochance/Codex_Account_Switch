@@ -11,10 +11,14 @@ pub fn run() {
         .setup(|app| {
             windows::bootstrap::ensure_backup_initialized(None)?;
             windows::bootstrap::sync_root_state_to_current_profile(None)?;
+            windows::profiles_index::load_profiles_index(None)?;
             Ok(windowing::install(app)?)
         })
         .invoke_handler(tauri::generate_handler![
             commands::dashboard::get_dashboard,
+            commands::dashboard::get_profiles_snapshot,
+            commands::dashboard::get_runtime_status,
+            commands::dashboard::get_current_live_quota,
             commands::actions::open_codex,
             commands::actions::login_current_profile,
             commands::actions::open_profile_folder,

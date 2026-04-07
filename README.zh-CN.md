@@ -1,6 +1,6 @@
 # Codex 账号切换工具
 
-这是一个将本地实际使用中的 Codex 账号切换流程整理成独立项目的跨平台工具，目前支持 macOS 和 Windows。
+这是一个将本地实际使用中的 Codex 账号切换流程整理成独立项目的工具。
 
 ## 功能
 
@@ -17,6 +17,12 @@
 - Windows CLI / 安装工具：使用 [`windows/`](./windows) 下的 Python 脚本
 - Windows 原生桌面端：使用 [`src/`](./src/) + [`src-tauri/`](./src-tauri/) 的 Tauri 实现
 - 两个平台共用同一套 `CODEX_HOME` / `~/.codex` 数据目录协议
+
+当前桌面端范围：
+
+- Tauri 桌面端目前只服务 Windows
+- Windows 桌面端启动目标统一收敛到微软商店 shell target
+- `src-tauri/` 中不再保留 macOS 桌面端兼容逻辑；后续方向记录在 [`macOS/WINDOWS_SPLIT_NOTE.md`](./macOS/WINDOWS_SPLIT_NOTE.md)
 
 ## 重要说明
 
@@ -101,7 +107,7 @@ Windows 安装脚本会：
 - 如果当前存在真实根目录 auth 且尚未设置激活账号，则初始化 `a` 为当前激活账号
 - 生成 `%CODEX_HOME%\bin\codex.cmd`
 - 确保 `%CODEX_HOME%\bin` 位于用户 PATH 的最前面
-- 将真实 Codex CLI 路径记录到 `%CODEX_HOME%\account_backup\windows\install_state.json`
+- 将真实 Codex CLI 路径记录到 `%CODEX_HOME%\account_backup\windows\install_state.json`，用于登录命令解析
 
 安装完成后请重新打开终端，使 PATH 更新生效。
 

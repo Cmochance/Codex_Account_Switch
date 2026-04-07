@@ -44,6 +44,7 @@ pub fn login_current_profile() -> AppResult<String> {
     }
 
     backup_root_state_to_profile(&current_profile, &codex_home, &backup_root)?;
+    super::profiles_index::load_profiles_index(Some(&codex_home))?;
 
     Ok(profile_dir.to_string_lossy().into_owned())
 }
@@ -83,7 +84,10 @@ pub fn add_profile(folder_name: &str) -> AppResult<String> {
     fs::create_dir_all(&profile_dir).map_err(|error| {
         AppError::new(
             "PROFILE_CREATE_FAILED",
-            format!("Failed to create profile directory {}: {error}", profile_dir.display()),
+            format!(
+                "Failed to create profile directory {}: {error}",
+                profile_dir.display()
+            ),
         )
     })?;
     fs::write(profile_dir.join("auth.json"), AUTH_TEMPLATE).map_err(|error| {
@@ -95,6 +99,7 @@ pub fn add_profile(folder_name: &str) -> AppResult<String> {
 
     let metadata = ProfileMetadata::with_folder_name(&folder_name);
     save_profile_metadata(&folder_name, &metadata, None)?;
+    super::profiles_index::load_profiles_index(None)?;
 
     Ok(profile_dir.to_string_lossy().into_owned())
 }
