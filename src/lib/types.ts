@@ -13,6 +13,7 @@ export interface ProfileCard {
   display_title: string;
   status: "current" | "available" | "missing_auth";
   auth_present: boolean;
+  has_account_identity: boolean;
   plan_name: string | null;
   subscription_days_left: number | null;
   quota: QuotaSummary;
@@ -21,6 +22,7 @@ export interface ProfileCard {
 export interface CurrentCard {
   folder_name: string;
   display_title: string;
+  has_account_identity: boolean;
   plan_name: string | null;
   subscription_days_left: number | null;
   profile_folder_path: string;

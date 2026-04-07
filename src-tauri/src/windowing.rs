@@ -132,9 +132,15 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
 
     let window_for_events = window.clone();
     window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Resized(_)) {
-            let state = app_handle.state::<WindowSizingState>();
-            enforce_aspect_ratio(&window_for_events, &state);
+        match event {
+            WindowEvent::Resized(_) => {
+                let state = app_handle.state::<WindowSizingState>();
+                enforce_aspect_ratio(&window_for_events, &state);
+            }
+            WindowEvent::CloseRequested { .. } => {
+                let _ = crate::windows::bootstrap::sync_root_state_to_current_profile(None);
+            }
+            _ => {}
         }
     });
 

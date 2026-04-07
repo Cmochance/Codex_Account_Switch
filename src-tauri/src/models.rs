@@ -58,6 +58,7 @@ pub struct ProfileCard {
     pub display_title: String,
     pub status: String,
     pub auth_present: bool,
+    pub has_account_identity: bool,
     pub plan_name: Option<String>,
     pub subscription_days_left: Option<i64>,
     pub quota: QuotaSummary,
@@ -67,6 +68,7 @@ pub struct ProfileCard {
 pub struct CurrentCard {
     pub folder_name: String,
     pub display_title: String,
+    pub has_account_identity: bool,
     pub plan_name: Option<String>,
     pub subscription_days_left: Option<i64>,
     pub profile_folder_path: String,

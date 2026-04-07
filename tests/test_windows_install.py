@@ -91,3 +91,25 @@ def test_install_fails_when_real_codex_cannot_be_resolved(monkeypatch, tmp_path,
     assert exit_code == 1
     assert "unable to resolve the real Codex CLI" in captured.err
     assert not (codex_home / "bin" / "codex.cmd").exists()
+
+
+def test_resolve_real_codex_path_prefers_windows_shim_over_extensionless_script(monkeypatch, tmp_path):
+    managed_shim_path = tmp_path / ".codex" / "bin" / "codex.cmd"
+    managed_shim_path.parent.mkdir(parents=True)
+    managed_shim_path.write_text("@echo off\r\n", encoding="utf-8")
+
+    npm_dir = tmp_path / "Roaming" / "npm"
+    npm_dir.mkdir(parents=True)
+    (npm_dir / "codex").write_text("#!/bin/sh\n", encoding="utf-8")
+    cmd_shim = npm_dir / "codex.cmd"
+    cmd_shim.write_text("@echo off\r\n", encoding="utf-8")
+
+    class Result:
+        stdout = f"{managed_shim_path}\n{npm_dir / 'codex'}\n{cmd_shim}\n"
+        stderr = ""
+
+    monkeypatch.setattr(install, "load_install_state", lambda codex_home=None: {})
+    monkeypatch.setattr(install.subprocess, "run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr(install.shutil, "which", lambda name: None)
+
+    assert install.resolve_real_codex_path(managed_shim_path) == cmd_shim

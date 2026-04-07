@@ -10,6 +10,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             windows::bootstrap::ensure_backup_initialized(None)?;
+            windows::bootstrap::sync_root_state_to_current_profile(None)?;
             Ok(windowing::install(app)?)
         })
         .invoke_handler(tauri::generate_handler![

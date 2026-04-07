@@ -244,10 +244,25 @@ input {
 
 .profile-title {
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-title-folder {
   font-size: 2.05rem;
   letter-spacing: -0.04em;
+  line-height: 1.05;
   color: #163a57;
   font-weight: 700;
+}
+
+.profile-title-account {
+  color: #48657d;
+  font-size: 1.1rem;
+  font-weight: 520;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .profile-plan {
@@ -289,6 +304,10 @@ input {
 
 .quota-group + .quota-group {
   margin-top: 18px;
+}
+
+.quota-group.is-unavailable {
+  opacity: 0.8;
 }
 
 .quota-row {
@@ -335,6 +354,21 @@ input {
 
 .status-missing_auth .quota-fill {
   background: linear-gradient(90deg, #abc5dc, #86abc9);
+}
+
+.quota-group.is-unavailable .quota-track {
+  background: rgba(205, 211, 218, 0.72);
+}
+
+.quota-group.is-unavailable .quota-fill {
+  background: linear-gradient(90deg, #c8ced5, #b5bcc4);
+  box-shadow: none;
+}
+
+.quota-group.is-unavailable .quota-title,
+.quota-group.is-unavailable .quota-value,
+.quota-group.is-unavailable .quota-refresh {
+  color: #8a96a3;
 }
 
 .quota-refresh {

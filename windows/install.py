@@ -18,6 +18,7 @@ if __package__ in {None, ""}:
         list_profile_dirs,
         load_install_state,
         read_text_stripped,
+        resolve_windows_invokable_path,
         save_install_state,
         utc_timestamp,
     )
@@ -34,6 +35,7 @@ else:
         list_profile_dirs,
         load_install_state,
         read_text_stripped,
+        resolve_windows_invokable_path,
         save_install_state,
         utc_timestamp,
     )
@@ -99,13 +101,14 @@ def resolve_real_codex_path(managed_shim_path: Path) -> Path:
     managed_norm = str(managed_shim_path.resolve()).casefold() if managed_shim_path.exists() else str(managed_shim_path).casefold()
     seen: set[str] = set()
     for candidate in candidates:
-        candidate_path = Path(candidate)
-        normalized = str(candidate_path).casefold()
+        resolved_candidate = resolve_windows_invokable_path(candidate)
+        if resolved_candidate is None:
+            continue
+        normalized = str(resolved_candidate).casefold()
         if normalized == managed_norm or normalized in seen:
             continue
         seen.add(normalized)
-        if candidate_path.exists():
-            return candidate_path
+        return resolved_candidate
 
     raise RuntimeError(
         "Error: unable to resolve the real Codex CLI. Make sure `codex` is installed before running windows/install.py."

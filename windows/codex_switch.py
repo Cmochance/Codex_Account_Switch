@@ -24,6 +24,8 @@ if __package__ in {None, ""}:
         overlay_directory_contents,
         read_text_stripped,
         remove_path,
+        resolve_windows_invokable_path,
+        save_install_state,
         utc_timestamp,
     )
 else:
@@ -44,6 +46,8 @@ else:
         overlay_directory_contents,
         read_text_stripped,
         remove_path,
+        resolve_windows_invokable_path,
+        save_install_state,
         utc_timestamp,
     )
 
@@ -187,11 +191,21 @@ def forward_to_real_codex(argv: Sequence[str], codex_home: Path, stderr: TextIO)
     if not target:
         print("Error: real Codex CLI path not found. Re-run python windows/install.py.", file=stderr)
         return 1
+    resolved_target = resolve_windows_invokable_path(str(target))
+    if resolved_target is None:
+        print(
+            f"Error: real Codex CLI path is not invokable on Windows: {target}. Re-run python windows/install.py.",
+            file=stderr,
+        )
+        return 1
+    if str(resolved_target) != str(target):
+        state["real_codex_path"] = str(resolved_target)
+        save_install_state(state, codex_home=codex_home)
 
     try:
-        return subprocess.call([str(target), *argv])
+        return subprocess.call([str(resolved_target), *argv])
     except OSError as exc:
-        print(f"Error: failed to launch Codex CLI at {target}: {exc}", file=stderr)
+        print(f"Error: failed to launch Codex CLI at {resolved_target}: {exc}", file=stderr)
         return 1
 
 

@@ -156,3 +156,28 @@ def test_main_passthrough_uses_real_codex(monkeypatch, tmp_path):
 
     assert exit_code == 0
     assert called == [["C:/Codex/bin/codex.exe", "login", "--device"]]
+
+
+def test_main_passthrough_recovers_legacy_extensionless_real_codex_path(monkeypatch, tmp_path):
+    codex_home = tmp_path / ".codex"
+    runtime_dir = codex_home / "account_backup" / "windows"
+    npm_dir = tmp_path / "Roaming" / "npm"
+    runtime_dir.mkdir(parents=True)
+    npm_dir.mkdir(parents=True)
+    (npm_dir / "codex").write_text("#!/bin/sh\n", encoding="utf-8")
+    cmd_shim = npm_dir / "codex.cmd"
+    cmd_shim.write_text("@echo off\r\n", encoding="utf-8")
+    (runtime_dir / "install_state.json").write_text(
+        f'{{"real_codex_path": "{npm_dir / "codex"}"}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    called: list[list[str]] = []
+    monkeypatch.setattr(codex_switch.subprocess, "call", lambda args: called.append(args) or 0)
+
+    exit_code = codex_switch.main(["--version"])
+
+    assert exit_code == 0
+    assert called == [[str(cmd_shim), "--version"]]
+    assert f'"real_codex_path": "{cmd_shim}"' in (runtime_dir / "install_state.json").read_text(encoding="utf-8")

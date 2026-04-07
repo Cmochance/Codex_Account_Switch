@@ -46,6 +46,35 @@ function formatRefresh(value: string | null): string {
   return value || "--";
 }
 
+function isFreePlan(planName: string | null | undefined): boolean {
+  return (planName || "").trim().toLowerCase() === "free";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildProfileTitleMarkup(folderName: string, displayTitle: string): string {
+  const prefix = `${folderName} / `;
+  let accountLabel = "--";
+
+  if (displayTitle.startsWith(prefix)) {
+    accountLabel = displayTitle.slice(prefix.length).trim() || "--";
+  } else if (displayTitle.trim() && displayTitle.trim() !== folderName) {
+    accountLabel = displayTitle.trim();
+  }
+
+  return `
+    <span class="profile-title-folder">${escapeHtml(folderName)} /</span>
+    <span class="profile-title-account">${escapeHtml(accountLabel)}</span>
+  `;
+}
+
 export function planLine(planName: string | null, daysLeft: number | null): string {
   if (!planName && daysLeft == null) {
     return t(state.locale, "profileMetadataMissing");
@@ -58,26 +87,35 @@ export function planLine(planName: string | null, daysLeft: number | null): stri
   return planName || t(state.locale, "subscriptionFallback", { days: daysLeft ?? "--" });
 }
 
-export function buildQuotaMarkup(quota: QuotaSummary | null | undefined, statusClass = ""): string {
+export function buildQuotaMarkup(
+  quota: QuotaSummary | null | undefined,
+  statusClass = "",
+  planName: string | null | undefined = null,
+  hasAccountIdentity = true,
+): string {
   const windows = [
     { key: "five_hour", label: t(state.locale, "fiveHourAllowance") },
     { key: "weekly", label: t(state.locale, "weeklyAllowance") },
   ] as const;
+  const freePlan = isFreePlan(planName);
+  const accountUnavailable = !hasAccountIdentity;
 
   return windows
     .map(({ key, label }) => {
       const entry = quota?.[key] ?? { remaining_percent: null, refresh_at: null };
-      const percent = entry.remaining_percent ?? 0;
+      const unavailable = accountUnavailable || (freePlan && key === "five_hour");
+      const percent = unavailable ? 0 : (entry.remaining_percent ?? 0);
+      const quotaClass = unavailable ? "is-unavailable" : "";
       return `
-        <section class="quota-group ${statusClass}">
+        <section class="quota-group ${statusClass} ${quotaClass}">
           <div class="quota-row">
             <span class="quota-title">${label}</span>
-            <span class="quota-value">${formatPercent(entry.remaining_percent)}</span>
+            <span class="quota-value">${formatPercent(unavailable ? null : entry.remaining_percent)}</span>
           </div>
           <div class="quota-track">
             <div class="quota-fill" style="width: ${percent}%;"></div>
           </div>
-          <div class="quota-refresh">${t(state.locale, "refresh", { value: formatRefresh(entry.refresh_at) })}</div>
+          <div class="quota-refresh">${t(state.locale, "refresh", { value: formatRefresh(unavailable ? null : entry.refresh_at) })}</div>
         </section>
       `;
     })
@@ -113,7 +151,12 @@ export function renderCurrentCard(dashboard: DashboardResponse): void {
   elements.currentPlan.textContent = planLine(current.plan_name, current.subscription_days_left);
   elements.currentLoginButton.disabled = state.loading;
   elements.openCurrentFolderButton.disabled = false;
-  elements.currentQuotaPanel.innerHTML = buildQuotaMarkup(dashboard.current_quota_card);
+  elements.currentQuotaPanel.innerHTML = buildQuotaMarkup(
+    dashboard.current_quota_card,
+    "",
+    current.plan_name,
+    current.has_account_identity,
+  );
 }
 
 export function renderRuntime(runtime: RuntimeSummary): void {
@@ -139,7 +182,7 @@ export function renderProfiles(dashboard: DashboardResponse, onSwitch: (profile:
         <article class="profile-card status-${profile.status}">
           <header class="profile-card-header">
             <div>
-              <h3 class="profile-title">${profile.display_title}</h3>
+              <h3 class="profile-title">${buildProfileTitleMarkup(profile.folder_name, profile.display_title)}</h3>
               <p class="profile-plan">${plan}</p>
             </div>
             <button
@@ -152,7 +195,12 @@ export function renderProfiles(dashboard: DashboardResponse, onSwitch: (profile:
               ${t(state.locale, "switch")}
             </button>
           </header>
-          ${buildQuotaMarkup(profile.quota, `status-${profile.status}`)}
+          ${buildQuotaMarkup(
+            profile.quota,
+            `status-${profile.status}`,
+            profile.plan_name,
+            profile.has_account_identity,
+          )}
         </article>
       `;
     })

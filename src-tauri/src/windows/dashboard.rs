@@ -3,15 +3,16 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
 
 use crate::errors::AppResult;
-use crate::models::{CurrentCard, DashboardResponse, PagingInfo, ProfileCard, ProfileMetadata, RuntimeSummary};
+use crate::models::{CurrentCard, DashboardResponse, PagingInfo, ProfileCard, ProfileMetadata, QuotaSummary, RuntimeSummary};
 
 use super::fs_ops::read_text_stripped;
-use super::metadata::load_profile_metadata;
+use super::metadata::{load_profile_metadata, load_root_auth_metadata};
 use super::paths::{
     get_auto_save_root, get_backup_root, get_current_profile_file, list_profile_dirs, ACTIVE_MARKER_FILE,
     DEFAULT_PAGE_SIZE,
 };
 use super::process;
+use super::session_usage::{load_latest_local_quota, normalize_quota_summary};
 
 fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
     let account_label = account_label
@@ -57,8 +58,18 @@ fn latest_autosave_timestamp(codex_home: Option<&Path>) -> Option<String> {
         .or(Some(latest))
 }
 
-fn build_profile_card(profile_dir: &Path, current_profile: Option<&str>, codex_home: Option<&Path>) -> ProfileCard {
+fn build_profile_card(
+    profile_dir: &Path,
+    current_profile: Option<&str>,
+    codex_home: Option<&Path>,
+    live_quota: Option<&QuotaSummary>,
+) -> ProfileCard {
     let metadata = load_profile_metadata(profile_dir.file_name().and_then(|name| name.to_str()).unwrap_or_default(), codex_home);
+    let has_account_identity = metadata
+        .account_label
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
     let auth_present = profile_dir.join("auth.json").is_file();
     let folder_name = profile_dir.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_string();
 
@@ -73,14 +84,26 @@ fn build_profile_card(profile_dir: &Path, current_profile: Option<&str>, codex_h
         status = "missing_auth".to_string();
     }
 
+    let raw_quota = if current_profile == Some(folder_name.as_str()) {
+        live_quota.cloned().unwrap_or_else(|| metadata.quota.clone())
+    } else {
+        metadata.quota.clone()
+    };
+    let quota = normalize_quota_summary(
+        Some(raw_quota),
+        metadata.plan_name.as_deref(),
+        has_account_identity,
+    );
+
     ProfileCard {
         folder_name: folder_name.clone(),
         display_title: build_display_title(&folder_name, metadata.account_label.as_deref()),
         status,
         auth_present,
+        has_account_identity,
         plan_name: metadata.plan_name.clone(),
         subscription_days_left: compute_subscription_days_left(metadata.subscription_expires_at.as_deref()),
-        quota: metadata.quota.clone(),
+        quota,
     }
 }
 
@@ -107,9 +130,17 @@ pub fn build_dashboard(page: u32, codex_home: Option<&Path>) -> AppResult<Dashbo
     let backup_root = get_backup_root(Some(&codex_home));
     let all_profile_dirs = list_profile_dirs(&backup_root);
     let current_profile = resolve_current_profile(&backup_root);
+    let live_quota = load_latest_local_quota(Some(&codex_home));
     let all_cards = all_profile_dirs
         .iter()
-        .map(|profile_dir| build_profile_card(profile_dir, current_profile.as_deref(), Some(&codex_home)))
+        .map(|profile_dir| {
+            build_profile_card(
+                profile_dir,
+                current_profile.as_deref(),
+                Some(&codex_home),
+                live_quota.as_ref(),
+            )
+        })
         .collect::<Vec<_>>();
 
     let total_profiles = all_cards.len() as u32;
@@ -120,17 +151,34 @@ pub fn build_dashboard(page: u32, codex_home: Option<&Path>) -> AppResult<Dashbo
 
     let (current_card, current_quota_card) = match current_profile {
         Some(ref current_profile) if backup_root.join(current_profile).is_dir() => {
-            let metadata: ProfileMetadata = load_profile_metadata(current_profile, Some(&codex_home));
+            let mut metadata: ProfileMetadata = load_profile_metadata(current_profile, Some(&codex_home));
             let current_profile_dir = backup_root.join(current_profile);
+            if let Some(root_auth_metadata) = load_root_auth_metadata(Some(&codex_home)) {
+                if let Some(account_label) = root_auth_metadata.account_label {
+                    metadata.account_label = Some(account_label);
+                }
+                if root_auth_metadata.has_plan_claims {
+                    metadata.plan_name = root_auth_metadata.plan_name;
+                    metadata.subscription_expires_at = root_auth_metadata.subscription_expires_at;
+                }
+            }
+            let has_account_identity = metadata
+                .account_label
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
             (
                 Some(CurrentCard {
                     folder_name: current_profile.clone(),
                     display_title: build_display_title(current_profile, metadata.account_label.as_deref()),
+                    has_account_identity,
                     plan_name: metadata.plan_name.clone(),
                     subscription_days_left: compute_subscription_days_left(metadata.subscription_expires_at.as_deref()),
                     profile_folder_path: current_profile_dir.to_string_lossy().into_owned(),
                 }),
-                Some(metadata.quota),
+                Some(normalize_quota_summary(Some(
+                    live_quota.clone().unwrap_or(metadata.quota),
+                ), metadata.plan_name.as_deref(), has_account_identity)),
             )
         }
         _ => (None, None),
@@ -153,4 +201,157 @@ pub fn build_dashboard(page: u32, codex_home: Option<&Path>) -> AppResult<Dashbo
             last_autosave_at: latest_autosave_timestamp(Some(&codex_home)),
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_profile_card;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::models::QuotaSummary;
+
+    fn temp_codex_home(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("codex-switch-dashboard-{name}-{unique}"))
+    }
+
+    #[test]
+    fn build_profile_card_prefers_live_quota_for_current_profile() {
+        let codex_home = temp_codex_home("live-quota");
+        let profile_dir = codex_home.join("account_backup").join("a");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(profile_dir.join("auth.json"), r#"{"tokens":{"account_id":"acct_a"}}"#).unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{
+                "folder_name":"a",
+                "quota":{
+                    "five_hour":{"remaining_percent":12,"refresh_at":"old-5h"},
+                    "weekly":{"remaining_percent":34,"refresh_at":"old-week"}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let live_quota = QuotaSummary {
+            five_hour: crate::models::QuotaWindow {
+                remaining_percent: Some(88),
+                refresh_at: Some("2026-04-07 12:00".to_string()),
+            },
+            weekly: crate::models::QuotaWindow {
+                remaining_percent: Some(77),
+                refresh_at: Some("2026-04-10 12:00".to_string()),
+            },
+        };
+
+        let card = build_profile_card(&profile_dir, Some("a"), Some(&codex_home), Some(&live_quota));
+
+        assert_eq!(card.quota.five_hour.remaining_percent, Some(88));
+        assert_eq!(card.quota.weekly.remaining_percent, Some(77));
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn build_profile_card_keeps_stored_quota_for_non_current_profile() {
+        let codex_home = temp_codex_home("stored-quota");
+        let profile_dir = codex_home.join("account_backup").join("b");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(profile_dir.join("auth.json"), r#"{"tokens":{"account_id":"acct_b"}}"#).unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{
+                "folder_name":"b",
+                "quota":{
+                    "five_hour":{"remaining_percent":21,"refresh_at":"stored-5h"},
+                    "weekly":{"remaining_percent":43,"refresh_at":"stored-week"}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let live_quota = QuotaSummary {
+            five_hour: crate::models::QuotaWindow {
+                remaining_percent: Some(88),
+                refresh_at: Some("2026-04-07 12:00".to_string()),
+            },
+            weekly: crate::models::QuotaWindow {
+                remaining_percent: Some(77),
+                refresh_at: Some("2026-04-10 12:00".to_string()),
+            },
+        };
+
+        let card = build_profile_card(&profile_dir, Some("a"), Some(&codex_home), Some(&live_quota));
+
+        assert_eq!(card.quota.five_hour.remaining_percent, Some(21));
+        assert_eq!(card.quota.weekly.remaining_percent, Some(43));
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn build_profile_card_defaults_missing_quota_to_full_allowance() {
+        let codex_home = temp_codex_home("default-quota");
+        let profile_dir = codex_home.join("account_backup").join("a");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(profile_dir.join("auth.json"), r#"{"tokens":{"account_id":"acct_a"}}"#).unwrap();
+
+        let card = build_profile_card(&profile_dir, Some("a"), Some(&codex_home), None);
+
+        assert_eq!(card.quota.five_hour.remaining_percent, Some(100));
+        assert_eq!(card.quota.weekly.remaining_percent, Some(100));
+        assert!(card.quota.five_hour.refresh_at.is_some());
+        assert!(card.quota.weekly.refresh_at.is_some());
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn build_profile_card_disables_quota_when_account_identity_is_missing() {
+        let codex_home = temp_codex_home("missing-identity");
+        let profile_dir = codex_home.join("account_backup").join("x");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(
+            profile_dir.join("auth.json"),
+            r#"{"tokens":{"id_token":"replace-me","account_id":"replace-me"}}"#,
+        )
+        .unwrap();
+
+        let card = build_profile_card(&profile_dir, Some("x"), Some(&codex_home), None);
+
+        assert!(!card.has_account_identity);
+        assert_eq!(card.quota.five_hour.remaining_percent, None);
+        assert_eq!(card.quota.weekly.remaining_percent, None);
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn build_profile_card_disables_five_hour_quota_for_free_plan() {
+        let codex_home = temp_codex_home("free-plan-quota");
+        let profile_dir = codex_home.join("account_backup").join("f");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(profile_dir.join("auth.json"), r#"{"tokens":{"account_id":"acct_f"}}"#).unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{
+                "folder_name":"f",
+                "plan_name":"free",
+                "quota":{
+                    "five_hour":{"remaining_percent":55,"refresh_at":"2099-01-01 00:00"},
+                    "weekly":{"remaining_percent":81,"refresh_at":"2099-01-08 00:00"}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let card = build_profile_card(&profile_dir, Some("f"), Some(&codex_home), None);
+
+        assert_eq!(card.quota.five_hour.remaining_percent, None);
+        assert_eq!(card.quota.five_hour.refresh_at, None);
+        assert_eq!(card.quota.weekly.remaining_percent, Some(81));
+        assert!(card.quota.weekly.refresh_at.is_some());
+        let _ = fs::remove_dir_all(&codex_home);
+    }
 }

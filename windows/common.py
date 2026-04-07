@@ -22,6 +22,7 @@ IGNORED_ENTRY_NAMES = {".DS_Store", ACTIVE_MARKER_FILE}
 INSTALL_STATE_FILENAME = "install_state.json"
 SPECIAL_PROFILE_DIRS = {"_autosave", "windows"}
 WINDOWS_RUNTIME_DIRNAME = "windows"
+WINDOWS_INVOKABLE_SUFFIXES = (".cmd", ".exe", ".bat", ".com")
 
 
 def get_codex_home() -> Path:
@@ -131,6 +132,24 @@ def save_install_state(state: dict[str, object], codex_home: Path | None = None)
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return state_file
+
+
+def resolve_windows_invokable_path(path: str | Path) -> Path | None:
+    candidate = Path(path)
+    suffix = candidate.suffix.casefold()
+
+    if suffix in WINDOWS_INVOKABLE_SUFFIXES and candidate.is_file():
+        return candidate
+
+    if suffix:
+        return None
+
+    for invokable_suffix in WINDOWS_INVOKABLE_SUFFIXES:
+        sibling = candidate.with_suffix(invokable_suffix)
+        if sibling.is_file():
+            return sibling
+
+    return None
 
 
 def candidate_app_paths() -> list[Path]:

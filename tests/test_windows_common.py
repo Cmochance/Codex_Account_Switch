@@ -52,3 +52,14 @@ def test_candidate_app_paths_includes_registry_app_path(monkeypatch):
     candidates = common.candidate_app_paths()
 
     assert Path(r"C:\Users\demo\AppData\Local\Programs\Codex\Codex.exe") in candidates
+
+
+def test_resolve_windows_invokable_path_prefers_cmd_for_extensionless_candidate(tmp_path):
+    npm_dir = tmp_path / "npm"
+    npm_dir.mkdir()
+    extensionless = npm_dir / "codex"
+    cmd_shim = npm_dir / "codex.cmd"
+    extensionless.write_text("#!/bin/sh\n", encoding="utf-8")
+    cmd_shim.write_text("@echo off\r\n", encoding="utf-8")
+
+    assert common.resolve_windows_invokable_path(extensionless) == cmd_shim

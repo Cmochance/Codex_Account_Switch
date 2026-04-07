@@ -1,51 +1,22 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use serde_json::json;
 
 use crate::errors::{AppError, AppResult};
 
+use super::dashboard::resolve_current_profile;
+use super::fs_ops::backup_root_state_to_profile;
 use super::paths::{
     get_backup_root, get_codex_home, get_runtime_dir, ACTIVE_MARKER_FILE, CURRENT_PROFILE_FILENAME,
     DEFAULT_PROFILES,
 };
-use super::process::detect_codex_app_path;
+use super::process::{detect_codex_app_target, discover_real_codex_cli_path};
 
 const AUTH_TEMPLATE: &str = include_str!("../../../examples/account_backup/demo/auth.json.example");
 
-fn resolve_real_codex_cli() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-
-    if cfg!(target_os = "windows") {
-        if let Ok(output) = Command::new("where").arg("codex").output() {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                candidates.extend(
-                    stdout
-                        .lines()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(PathBuf::from),
-                );
-            }
-        }
-    }
-
-    if let Some(path) = std::env::var_os("PATH") {
-        for entry in std::env::split_paths(&path) {
-            let candidate = if cfg!(target_os = "windows") {
-                entry.join("codex.cmd")
-            } else {
-                entry.join("codex")
-            };
-            if candidate.is_file() {
-                candidates.push(candidate);
-            }
-        }
-    }
-
-    candidates.into_iter().find(|path| path.is_file())
+fn resolve_real_codex_cli(codex_home: &Path) -> Option<PathBuf> {
+    let managed_shim_path = codex_home.join("bin").join("codex.cmd");
+    discover_real_codex_cli_path(Some(&managed_shim_path))
 }
 
 fn write_install_state(codex_home: &Path) -> AppResult<()> {
@@ -59,10 +30,9 @@ fn write_install_state(codex_home: &Path) -> AppResult<()> {
 
     let state_path = runtime_dir.join("install_state.json");
     let payload = json!({
-        "app_path": detect_codex_app_path()
-            .map(|path| path.to_string_lossy().into_owned())
+        "app_path": detect_codex_app_target()
             .unwrap_or_default(),
-        "real_codex_path": resolve_real_codex_cli()
+        "real_codex_path": resolve_real_codex_cli(codex_home)
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default(),
     });
@@ -101,6 +71,17 @@ fn initialize_default_active_profile(backup_root: &Path) -> AppResult<()> {
             format!("Failed to write active marker {}: {error}", marker_path.display()),
         )
     })
+}
+
+pub fn sync_root_state_to_current_profile(codex_home: Option<&Path>) -> AppResult<Option<String>> {
+    let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
+    let backup_root = get_backup_root(Some(&codex_home));
+    let Some(current_profile) = resolve_current_profile(&backup_root) else {
+        return Ok(None);
+    };
+
+    backup_root_state_to_profile(&current_profile, &codex_home, &backup_root)?;
+    Ok(Some(current_profile))
 }
 
 pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
@@ -163,6 +144,7 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::ensure_backup_initialized;
+    use crate::windows::env_lock;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -208,6 +190,44 @@ mod tests {
         let initialized = ensure_backup_initialized(Some(&codex_home)).unwrap();
 
         assert!(!initialized);
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn bootstrap_records_windows_cmd_path_in_install_state() {
+        let _guard = env_lock().lock().unwrap();
+        let codex_home = temp_codex_home("bootstrap-real-cli");
+        let bin_dir = codex_home.join("bin");
+        let npm_dir = codex_home.join("npm");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&npm_dir).unwrap();
+        fs::write(bin_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
+        fs::write(npm_dir.join("codex"), "#!/bin/sh\n").unwrap();
+        fs::write(npm_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", std::env::join_paths([bin_dir.clone(), npm_dir.clone()]).unwrap());
+
+        let initialized = ensure_backup_initialized(Some(&codex_home)).unwrap();
+        let install_state = fs::read_to_string(
+            codex_home
+                .join("account_backup")
+                .join("windows")
+                .join("install_state.json"),
+        )
+        .unwrap();
+
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+
+        assert!(initialized);
+        assert!(install_state.contains(&format!(
+            "\"real_codex_path\": \"{}\"",
+            npm_dir.join("codex.cmd").to_string_lossy()
+        )));
         let _ = fs::remove_dir_all(&codex_home);
     }
 }
