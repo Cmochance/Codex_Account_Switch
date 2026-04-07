@@ -1,7 +1,5 @@
 use crate::errors::CommandError;
-use crate::models::{
-    CurrentQuotaResponse, DashboardResponse, ProfilesSnapshotResponse, RuntimeSummary,
-};
+use crate::models::{CurrentQuotaResponse, DashboardResponse, ProfilesSnapshotResponse};
 use crate::windows;
 
 #[tauri::command]
@@ -12,11 +10,6 @@ pub fn get_dashboard(page: Option<u32>) -> Result<DashboardResponse, CommandErro
 #[tauri::command]
 pub fn get_profiles_snapshot() -> Result<ProfilesSnapshotResponse, CommandError> {
     windows::profiles_index::load_profiles_snapshot(None).map_err(Into::into)
-}
-
-#[tauri::command]
-pub fn get_runtime_status() -> Result<RuntimeSummary, CommandError> {
-    Ok(windows::dashboard::build_runtime_summary(None))
 }
 
 #[tauri::command]

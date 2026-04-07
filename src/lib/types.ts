@@ -37,17 +37,11 @@ export interface PagingInfo {
   has_next: boolean;
 }
 
-export interface RuntimeSummary {
-  codex_running: boolean;
-  last_autosave_at: string | null;
-}
-
 export interface DashboardResponse {
   paging: PagingInfo;
   profiles: ProfileCard[];
   current_card: CurrentCard | null;
   current_quota_card: QuotaSummary | null;
-  runtime: RuntimeSummary;
 }
 
 export interface ProfilesSnapshotResponse {

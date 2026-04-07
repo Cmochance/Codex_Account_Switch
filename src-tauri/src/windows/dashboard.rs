@@ -1,20 +1,18 @@
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
+use chrono::{DateTime, Local, NaiveDate};
 
 use crate::errors::AppResult;
 use crate::models::{
     CurrentCard, DashboardResponse, PagingInfo, ProfileCard, ProfileMetadata, QuotaSummary,
-    RuntimeSummary,
 };
 
 use super::fs_ops::read_text_stripped;
 use super::metadata::{load_profile_metadata, load_root_auth_metadata};
 use super::paths::{
-    get_auto_save_root, get_backup_root, get_current_profile_file, list_profile_dirs,
-    ACTIVE_MARKER_FILE, DEFAULT_PAGE_SIZE,
+    get_backup_root, get_current_profile_file, list_profile_dirs, ACTIVE_MARKER_FILE,
+    DEFAULT_PAGE_SIZE,
 };
-use super::process;
 use super::session_usage::{load_latest_local_quota, normalize_quota_summary};
 
 fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
@@ -58,38 +56,6 @@ fn page_bounds(paging: &PagingInfo, total_items: usize) -> (usize, usize) {
     let start = ((paging.page - 1) * paging.page_size) as usize;
     let end = (start + paging.page_size as usize).min(total_items);
     (start, end)
-}
-
-fn latest_autosave_timestamp(codex_home: Option<&Path>) -> Option<String> {
-    let auto_save_root = get_auto_save_root(codex_home);
-    if !auto_save_root.is_dir() {
-        return None;
-    }
-
-    let latest = auto_save_root
-        .read_dir()
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .filter_map(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_string)
-        })
-        .max()?;
-
-    NaiveDateTime::parse_from_str(&latest, "%Y%m%d-%H%M%S")
-        .map(|datetime| datetime.format("%Y-%m-%dT%H:%M:%S").to_string())
-        .ok()
-        .or(Some(latest))
-}
-
-pub fn build_runtime_summary(codex_home: Option<&Path>) -> RuntimeSummary {
-    RuntimeSummary {
-        codex_running: process::is_codex_app_running(),
-        last_autosave_at: latest_autosave_timestamp(codex_home),
-    }
 }
 
 fn build_profile_card(
@@ -243,7 +209,6 @@ pub fn build_dashboard(page: u32, codex_home: Option<&Path>) -> AppResult<Dashbo
         profiles,
         current_card,
         current_quota_card,
-        runtime: build_runtime_summary(Some(&codex_home)),
     })
 }
 

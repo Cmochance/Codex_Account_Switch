@@ -6,7 +6,6 @@ import type {
   CurrentQuotaResponse,
   DashboardResponse,
   ProfilesSnapshotResponse,
-  RuntimeSummary,
   SwitchResponse,
 } from "./types";
 
@@ -39,10 +38,6 @@ export function getDashboard(page: number): Promise<DashboardResponse> {
 
 export function getProfilesSnapshot(): Promise<ProfilesSnapshotResponse> {
   return invokeCommand<ProfilesSnapshotResponse>("get_profiles_snapshot");
-}
-
-export function getRuntimeStatus(): Promise<RuntimeSummary> {
-  return invokeCommand<RuntimeSummary>("get_runtime_status");
 }
 
 export function getCurrentLiveQuota(): Promise<CurrentQuotaResponse> {

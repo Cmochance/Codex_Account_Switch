@@ -6,9 +6,6 @@ type MessageKey =
   | "currentQuota"
   | "login"
   | "openFolder"
-  | "checkingRuntime"
-  | "runtimeRunning"
-  | "runtimeStopped"
   | "addProfiles"
   | "openCodex"
   | "contactUs"
@@ -57,9 +54,6 @@ const messages: Record<Locale, Messages> = {
     currentQuota: "Current quota",
     login: "Login",
     openFolder: "Open folder",
-    checkingRuntime: "Checking runtime",
-    runtimeRunning: "Codex running",
-    runtimeStopped: "Codex not running",
     addProfiles: "Add Profiles",
     openCodex: "Open Codex",
     contactUs: "Contact Us",
@@ -105,9 +99,6 @@ const messages: Record<Locale, Messages> = {
     currentQuota: "当前额度",
     login: "登录",
     openFolder: "打开文件夹",
-    checkingRuntime: "检查运行状态中",
-    runtimeRunning: "Codex 运行中",
-    runtimeStopped: "Codex 未运行",
     addProfiles: "添加账号",
     openCodex: "打开 Codex",
     contactUs: "联系我们",

@@ -1,4 +1,4 @@
-import type { DashboardResponse, PagingInfo, QuotaSummary, RuntimeSummary } from "./types";
+import type { DashboardResponse, PagingInfo, QuotaSummary } from "./types";
 import { t } from "./i18n";
 import { state } from "./state";
 
@@ -17,7 +17,6 @@ export const elements = {
   currentQuotaPanel: requiredElement<HTMLDivElement>("current-quota-panel"),
   currentSessionLabel: requiredElement<HTMLParagraphElement>("current-session-label"),
   currentQuotaLabel: requiredElement<HTMLHeadingElement>("current-quota-label"),
-  runtimeStatus: requiredElement<HTMLSpanElement>("runtime-status"),
   previousPageButton: requiredElement<HTMLButtonElement>("previous-page-button"),
   nextPageButton: requiredElement<HTMLButtonElement>("next-page-button"),
   currentLoginButton: requiredElement<HTMLButtonElement>("current-login-button"),
@@ -159,14 +158,6 @@ export function renderCurrentCard(dashboard: DashboardResponse): void {
   );
 }
 
-export function renderRuntime(runtime: RuntimeSummary): void {
-  elements.runtimeStatus.textContent = runtime.codex_running
-    ? t(state.locale, "runtimeRunning")
-    : t(state.locale, "runtimeStopped");
-  elements.runtimeStatus.classList.toggle("is-running", runtime.codex_running);
-  elements.runtimeStatus.classList.toggle("is-stopped", !runtime.codex_running);
-}
-
 export function renderProfiles(dashboard: DashboardResponse, onSwitch: (profile: string) => void): void {
   if (!dashboard.profiles.length) {
     elements.profilesGrid.innerHTML =
@@ -229,7 +220,6 @@ export function applyLocale(): void {
   elements.currentQuotaLabel.textContent = t(state.locale, "currentQuota");
   elements.currentLoginButton.textContent = t(state.locale, "login");
   elements.openCurrentFolderButton.textContent = t(state.locale, "openFolder");
-  elements.runtimeStatus.textContent = t(state.locale, "checkingRuntime");
   elements.addProfilesButton.textContent = t(state.locale, "addProfiles");
   elements.openCodexButton.textContent = t(state.locale, "openCodex");
   elements.contactButton.textContent = t(state.locale, "contactUs");

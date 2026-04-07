@@ -432,43 +432,12 @@ input {
 }
 
 .control-button,
-.control-cell,
 .pager-button {
   width: 100%;
   min-width: 0;
   height: 44px;
   padding: 0 18px;
   border-radius: 18px;
-}
-
-.control-cell {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.76);
-  color: #244560;
-  background: rgba(255, 255, 255, 0.42);
-  font-size: 0.98rem;
-  font-weight: 500;
-  box-shadow:
-    0 16px 30px rgba(118, 142, 166, 0.18),
-    0 4px 10px rgba(255, 255, 255, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 -10px 18px rgba(214, 228, 241, 0.26);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
-}
-
-.runtime-pill.is-running {
-  color: #24724b;
-  border-color: rgba(178, 225, 193, 0.88);
-  background: rgba(234, 249, 239, 0.64);
-}
-
-.runtime-pill.is-stopped {
-  color: #a05a52;
-  border-color: rgba(241, 198, 191, 0.9);
-  background: rgba(255, 241, 237, 0.68);
 }
 
 .dialog {

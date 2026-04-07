@@ -4,7 +4,6 @@ import {
   addProfile,
   getCurrentLiveQuota,
   getProfilesSnapshot,
-  getRuntimeStatus,
   loginCurrentProfile,
   openCodex,
   openContact,
@@ -17,7 +16,6 @@ import {
   renderCurrentCard,
   renderPaging,
   renderProfiles,
-  renderRuntime,
   showToast,
 } from "./render";
 import type {
@@ -33,18 +31,12 @@ function rerenderDashboard(): void {
   const dashboard = buildDashboardPage();
   if (!dashboard) {
     renderPaging({ has_previous: false, has_next: false });
-    if (state.runtime) {
-      renderRuntime(state.runtime);
-    }
     return;
   }
 
   renderProfiles(dashboard, handleSwitchProfile);
   renderCurrentCard(dashboard);
   renderPaging(dashboard.paging);
-  if (state.runtime) {
-    renderRuntime(state.runtime);
-  }
 }
 
 function setLocale(locale: Locale): void {
@@ -86,7 +78,6 @@ function buildDashboardPage(): DashboardResponse | null {
     profiles: state.snapshot.profiles.slice(start, end),
     current_card: state.snapshot.current_card,
     current_quota_card: state.currentQuota ?? state.snapshot.current_quota_card,
-    runtime: state.runtime ?? { codex_running: false, last_autosave_at: null },
   };
 }
 
@@ -128,23 +119,6 @@ async function refreshProfilesSnapshot(showError = false): Promise<void> {
   }
 }
 
-async function refreshRuntime(showError = false): Promise<void> {
-  if (state.loading) {
-    return;
-  }
-
-  try {
-    state.runtime = await getRuntimeStatus();
-    if (state.runtime) {
-      renderRuntime(state.runtime);
-    }
-  } catch (error) {
-    if (showError) {
-      showToast(error instanceof Error ? error.message : "Failed to refresh runtime.", true);
-    }
-  }
-}
-
 async function refreshCurrentQuota(showError = false): Promise<void> {
   if (state.loading || !state.snapshot) {
     return;
@@ -162,14 +136,12 @@ async function refreshCurrentQuota(showError = false): Promise<void> {
 
 async function refreshAllData(showError = true): Promise<void> {
   try {
-    const [snapshot, runtime, currentQuota] = await Promise.all([
+    const [snapshot, currentQuota] = await Promise.all([
       getProfilesSnapshot(),
-      getRuntimeStatus(),
       getCurrentLiveQuota(),
     ]);
 
     applySnapshot(snapshot);
-    state.runtime = runtime;
     applyCurrentQuota(currentQuota);
     rerenderDashboard();
   } catch (error) {
@@ -316,11 +288,9 @@ export function bootstrap(): void {
   });
   window.addEventListener("focus", () => {
     void refreshProfilesSnapshot();
-    void refreshRuntime();
     void refreshCurrentQuota();
   });
   window.setInterval(() => {
-    void refreshRuntime();
     void refreshCurrentQuota();
   }, 15_000);
   window.setInterval(() => {

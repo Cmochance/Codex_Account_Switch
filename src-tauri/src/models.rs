@@ -85,18 +85,11 @@ pub struct PagingInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeSummary {
-    pub codex_running: bool,
-    pub last_autosave_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardResponse {
     pub paging: PagingInfo,
     pub profiles: Vec<ProfileCard>,
     pub current_card: Option<CurrentCard>,
     pub current_quota_card: Option<QuotaSummary>,
-    pub runtime: RuntimeSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

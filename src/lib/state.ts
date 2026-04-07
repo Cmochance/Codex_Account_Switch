@@ -1,4 +1,4 @@
-import type { ProfilesSnapshotResponse, QuotaSummary, RuntimeSummary } from "./types";
+import type { ProfilesSnapshotResponse, QuotaSummary } from "./types";
 import type { Locale } from "./i18n";
 
 export const state = {
@@ -8,6 +8,5 @@ export const state = {
   locale: "en" as Locale,
   pageSize: 4,
   snapshot: null as ProfilesSnapshotResponse | null,
-  runtime: null as RuntimeSummary | null,
   currentQuota: null as QuotaSummary | null,
 };
