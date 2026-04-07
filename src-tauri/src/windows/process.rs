@@ -1,7 +1,10 @@
 use std::env;
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
@@ -14,6 +17,9 @@ use super::paths::{get_codex_home, get_install_state_file, APP_PROCESS_NAME};
 const WINDOWS_INVOKABLE_SUFFIXES: [&str; 4] = ["cmd", "exe", "bat", "com"];
 const WINDOWS_STORE_APP_ID: &str = "OpenAI.Codex_2p2nqsd0c76g0!App";
 const WINDOWS_STORE_SHELL_PREFIX: &str = r"shell:AppsFolder\";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+static WINDOWS_APP_TARGET_CACHE: OnceLock<String> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AppLaunchTarget {
@@ -105,11 +111,22 @@ fn managed_codex_shim_path(codex_home: Option<&Path>) -> PathBuf {
         .join("codex.cmd")
 }
 
+fn hide_console_window(command: &mut Command) -> &mut Command {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
+}
+
 pub(super) fn discover_real_codex_cli_path(managed_shim_path: Option<&Path>) -> Option<PathBuf> {
     let mut candidates = Vec::new();
 
     if cfg!(target_os = "windows") {
-        if let Ok(output) = Command::new("where").arg("codex").output() {
+        let mut command = Command::new("where");
+        command.arg("codex");
+        if let Ok(output) = hide_console_window(&mut command).output() {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout
@@ -162,10 +179,9 @@ fn detect_windows_store_app_target() -> Option<String> {
            if ($appId) {{ $appId }} else {{ '{WINDOWS_STORE_APP_ID}' }} \
          }}"
     );
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .ok()?;
+    let mut command = Command::new("powershell");
+    command.args(["-NoProfile", "-Command", &script]);
+    let output = hide_console_window(&mut command).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -175,8 +191,12 @@ fn detect_windows_store_app_target() -> Option<String> {
 }
 
 fn resolve_windows_store_shell_target() -> String {
-    detect_windows_store_app_target()
-        .unwrap_or_else(|| windows_store_shell_target(WINDOWS_STORE_APP_ID))
+    WINDOWS_APP_TARGET_CACHE
+        .get_or_init(|| {
+            detect_windows_store_app_target()
+                .unwrap_or_else(|| windows_store_shell_target(WINDOWS_STORE_APP_ID))
+        })
+        .clone()
 }
 
 fn resolve_windows_app_target() -> AppLaunchTarget {
@@ -184,16 +204,16 @@ fn resolve_windows_app_target() -> AppLaunchTarget {
 }
 
 pub fn is_codex_app_running() -> bool {
-    let output = match Command::new("tasklist")
-        .args([
-            "/FI",
-            &format!("IMAGENAME eq {APP_PROCESS_NAME}"),
-            "/FO",
-            "CSV",
-            "/NH",
-        ])
-        .output()
-    {
+    let mut command = Command::new("tasklist");
+    command.args([
+        "/FI",
+        &format!("IMAGENAME eq {APP_PROCESS_NAME}"),
+        "/FO",
+        "CSV",
+        "/NH",
+    ]);
+
+    let output = match hide_console_window(&mut command).output() {
         Ok(value) => value,
         Err(_) => return false,
     };
@@ -207,8 +227,9 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
 
     match target {
         AppLaunchTarget::WindowsStore(shell_target) => {
-            Command::new("explorer.exe")
-                .arg(&shell_target)
+            let mut command = Command::new("explorer.exe");
+            command.arg(&shell_target);
+            hide_console_window(&mut command)
                 .spawn()
                 .map_err(|error| {
                     AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
@@ -262,6 +283,7 @@ fn build_login_command(codex_home: &Path) -> Command {
         command
     };
 
+    hide_console_window(&mut command);
     command.current_dir(codex_home);
     command.env("CODEX_HOME", codex_home);
     command
@@ -297,9 +319,9 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         return Ok(false);
     }
 
-    let _ = Command::new("taskkill")
-        .args(["/IM", APP_PROCESS_NAME])
-        .output();
+    let mut taskkill = Command::new("taskkill");
+    taskkill.args(["/IM", APP_PROCESS_NAME]);
+    let _ = hide_console_window(&mut taskkill).output();
     for _ in 0..20 {
         if !is_codex_app_running() {
             return Ok(true);
@@ -307,9 +329,9 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         thread::sleep(Duration::from_millis(200));
     }
 
-    let _ = Command::new("taskkill")
-        .args(["/F", "/IM", APP_PROCESS_NAME])
-        .output();
+    let mut force_taskkill = Command::new("taskkill");
+    force_taskkill.args(["/F", "/IM", APP_PROCESS_NAME]);
+    let _ = hide_console_window(&mut force_taskkill).output();
     for _ in 0..10 {
         if !is_codex_app_running() {
             return Ok(true);
@@ -331,7 +353,11 @@ pub fn reopen_codex_app_if_needed(app_was_running: bool, _codex_home: Option<&Pa
     let target = resolve_windows_app_target();
 
     let result = match target {
-        AppLaunchTarget::WindowsStore(shell_target) => Command::new("explorer.exe").arg(shell_target).spawn(),
+        AppLaunchTarget::WindowsStore(shell_target) => {
+            let mut command = Command::new("explorer.exe");
+            command.arg(shell_target);
+            hide_console_window(&mut command).spawn()
+        }
     };
 
     if let Err(error) = result {
