@@ -49,8 +49,10 @@ fn acquire_switch_lock(codex_home: Option<&Path>) -> AppResult<SwitchGuard> {
     Ok(SwitchGuard { lock_path })
 }
 
-pub fn switch_profile(profile_name: &str) -> AppResult<SwitchResponse> {
-    let codex_home = super::paths::get_codex_home();
+pub fn switch_profile_with_home(profile_name: &str, codex_home: Option<&Path>) -> AppResult<SwitchResponse> {
+    let codex_home = codex_home
+        .map(PathBuf::from)
+        .unwrap_or_else(super::paths::get_codex_home);
     let backup_root = get_backup_root(Some(&codex_home));
     if !backup_root.is_dir() {
         return Err(AppError::new(
@@ -96,4 +98,8 @@ pub fn switch_profile(profile_name: &str) -> AppResult<SwitchResponse> {
         message: format!("Switched to profile: {profile_name}"),
         warnings,
     })
+}
+
+pub fn switch_profile(profile_name: &str) -> AppResult<SwitchResponse> {
+    switch_profile_with_home(profile_name, None)
 }

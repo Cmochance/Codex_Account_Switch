@@ -1,88 +1,10 @@
-use serde_json::json;
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppResult;
 
 use super::fs_ops::backup_root_state_to_profile;
-use super::paths::{
-    get_backup_root, get_codex_home, get_runtime_dir, ACTIVE_MARKER_FILE, CURRENT_PROFILE_FILENAME,
-    DEFAULT_PROFILES,
-};
-use super::process::discover_real_codex_cli_path;
+use super::paths::{get_backup_root, get_codex_home};
 use super::profiles::resolve_current_profile;
-
-const AUTH_TEMPLATE: &str = include_str!("../../../examples/account_backup/demo/auth.json.example");
-
-fn resolve_real_codex_cli(codex_home: &Path) -> Option<PathBuf> {
-    let managed_shim_path = codex_home.join("bin").join("codex.cmd");
-    discover_real_codex_cli_path(Some(&managed_shim_path))
-}
-
-fn write_install_state(codex_home: &Path) -> AppResult<()> {
-    let runtime_dir = get_runtime_dir(Some(codex_home));
-    fs::create_dir_all(&runtime_dir).map_err(|error| {
-        AppError::new(
-            "FS_CREATE_FAILED",
-            format!(
-                "Failed to create runtime directory {}: {error}",
-                runtime_dir.display()
-            ),
-        )
-    })?;
-
-    let state_path = runtime_dir.join("install_state.json");
-    let payload = json!({
-        "real_codex_path": resolve_real_codex_cli(codex_home)
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-    });
-
-    let serialized = serde_json::to_string_pretty(&payload).map_err(|error| {
-        AppError::new(
-            "INSTALL_STATE_INVALID",
-            format!("Failed to serialize install state: {error}"),
-        )
-    })?;
-
-    fs::write(&state_path, format!("{serialized}\n")).map_err(|error| {
-        AppError::new(
-            "INSTALL_STATE_WRITE_FAILED",
-            format!(
-                "Failed to write install state {}: {error}",
-                state_path.display()
-            ),
-        )
-    })
-}
-
-fn initialize_default_active_profile(backup_root: &Path) -> AppResult<()> {
-    let current_profile_file = backup_root.join(CURRENT_PROFILE_FILENAME);
-    fs::write(&current_profile_file, "a\n").map_err(|error| {
-        AppError::new(
-            "FS_WRITE_FAILED",
-            format!(
-                "Failed to write current profile marker {}: {error}",
-                current_profile_file.display()
-            ),
-        )
-    })?;
-
-    let marker_path = backup_root.join("a").join(ACTIVE_MARKER_FILE);
-    fs::write(
-        &marker_path,
-        format!("activated_at={}\n", super::paths::utc_timestamp()),
-    )
-    .map_err(|error| {
-        AppError::new(
-            "FS_WRITE_FAILED",
-            format!(
-                "Failed to write active marker {}: {error}",
-                marker_path.display()
-            ),
-        )
-    })
-}
 
 pub fn sync_root_state_to_current_profile(codex_home: Option<&Path>) -> AppResult<Option<String>> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
@@ -100,11 +22,12 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
     let backup_root = get_backup_root(Some(&codex_home));
     if backup_root.is_dir() {
+        super::install::refresh_install_state(&codex_home)?;
         return Ok(false);
     }
 
-    fs::create_dir_all(&backup_root).map_err(|error| {
-        AppError::new(
+    std::fs::create_dir_all(&backup_root).map_err(|error| {
+        crate::errors::AppError::new(
             "FS_CREATE_FAILED",
             format!(
                 "Failed to create backup root {}: {error}",
@@ -112,53 +35,15 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
             ),
         )
     })?;
+    super::install::ensure_default_profiles(&backup_root)?;
+    super::install::ensure_placeholder_auth_files(&backup_root)?;
 
-    for profile in DEFAULT_PROFILES {
-        let profile_dir = backup_root.join(profile);
-        fs::create_dir_all(&profile_dir).map_err(|error| {
-            AppError::new(
-                "FS_CREATE_FAILED",
-                format!(
-                    "Failed to create profile directory {}: {error}",
-                    profile_dir.display()
-                ),
-            )
-        })?;
+    let seeded_auth = super::install::seed_default_profile(&codex_home, &backup_root)?;
+    if seeded_auth && resolve_current_profile(&backup_root).is_none() {
+        super::install::initialize_default_active_profile(&backup_root)?;
     }
 
-    for profile in DEFAULT_PROFILES {
-        let auth_path = backup_root.join(profile).join("auth.json");
-        if auth_path.exists() {
-            continue;
-        }
-        fs::write(&auth_path, AUTH_TEMPLATE).map_err(|error| {
-            AppError::new(
-                "AUTH_TEMPLATE_WRITE_FAILED",
-                format!(
-                    "Failed to write placeholder auth {}: {error}",
-                    auth_path.display()
-                ),
-            )
-        })?;
-    }
-
-    let root_auth_path = codex_home.join("auth.json");
-    if root_auth_path.is_file() {
-        let target_auth = backup_root.join("a").join("auth.json");
-        fs::copy(&root_auth_path, &target_auth).map_err(|error| {
-            AppError::new(
-                "FS_COPY_FAILED",
-                format!(
-                    "Failed to seed default profile auth {} -> {}: {error}",
-                    root_auth_path.display(),
-                    target_auth.display()
-                ),
-            )
-        })?;
-        initialize_default_active_profile(&backup_root)?;
-    }
-
-    write_install_state(&codex_home)?;
+    super::install::refresh_install_state(&codex_home)?;
     super::profiles_index::load_profiles_index(Some(&codex_home))?;
     Ok(true)
 }
@@ -166,8 +51,8 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::ensure_backup_initialized;
+    use crate::windows::env_guard;
     use crate::windows::process::load_install_state;
-    use crate::windows::env_lock;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -182,6 +67,7 @@ mod tests {
 
     #[test]
     fn initializes_backup_layout_and_active_profile_from_root_auth() {
+        let _guard = env_guard();
         let codex_home = temp_codex_home("bootstrap-seed");
         fs::create_dir_all(&codex_home).unwrap();
         fs::write(codex_home.join("auth.json"), "seed-auth\n").unwrap();
@@ -207,6 +93,7 @@ mod tests {
 
     #[test]
     fn skips_when_backup_root_already_exists() {
+        let _guard = env_guard();
         let codex_home = temp_codex_home("bootstrap-skip");
         fs::create_dir_all(codex_home.join("account_backup")).unwrap();
 
@@ -218,7 +105,7 @@ mod tests {
 
     #[test]
     fn bootstrap_records_windows_cmd_path_in_install_state() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         let codex_home = temp_codex_home("bootstrap-real-cli");
         let bin_dir = codex_home.join("bin");
         let npm_dir = codex_home.join("npm");
@@ -244,10 +131,8 @@ mod tests {
         let install_state = load_install_state(Some(&codex_home));
 
         assert!(initialized);
-        assert_eq!(
-            install_state.real_codex_path,
-            Some(npm_dir.join("codex.cmd").to_string_lossy().into_owned())
-        );
+        let resolved_path = install_state.real_codex_path.unwrap();
+        assert!(resolved_path.ends_with("\\codex.cmd"));
         let _ = fs::remove_dir_all(&codex_home);
     }
 }

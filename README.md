@@ -16,8 +16,7 @@ This project packages the locally used Codex account switch workflow into standa
 ## Platform support
 
 - macOS: shell scripts under [`macOS/`](./macOS)
-- Windows CLI/install tooling under [`windows/`](./windows)
-- Windows native desktop app under [`src/`](./src/) + [`src-tauri/`](./src-tauri/)
+- Windows native app and CLI under [`src/`](./src/) + [`src-tauri/`](./src-tauri/)
 - Runtime profile data stays under the same `CODEX_HOME`/`~/.codex` layout on both platforms
 
 Current desktop scope:
@@ -57,16 +56,16 @@ If you run `codex switch x` and `~/.codex/account_backup/x/auth.json` is missing
 ```text
 Codex_Account_Switch/
 ├── src/
+│   └── lib/
+│       ├── actions.ts
+│       ├── dashboard-view-model.ts
+│       └── tauri.ts
 ├── src-tauri/
+├── windows/
 ├── macOS/
 │   ├── codex-switch.sh
 │   ├── install.sh
 │   └── uninstall.sh
-├── windows/
-│   ├── codex_switch.py
-│   ├── install.py
-│   ├── uninstall.py
-│   └── common.py
 ├── tests/
 ├── docs/
 ├── examples/
@@ -95,19 +94,21 @@ The macOS installer:
 
 ```powershell
 cd C:\...\Codex_Account_Switch
-python windows\install.py
+npm install
+npm run tauri:build
+.\src-tauri\target\release\codex_switch.exe install
 ```
 
 The Windows installer:
 
-- copies `windows/codex_switch.py` and `windows/common.py` to `%CODEX_HOME%\account_backup\windows\`
+- copies the built Rust CLI to `%CODEX_HOME%\account_backup\windows\codex_switch_cli.exe`
 - creates `%CODEX_HOME%\account_backup\a` through `%CODEX_HOME%\account_backup\d`
 - writes the example auth template into any missing `%CODEX_HOME%\account_backup\<profile>\auth.json`
 - copies the current `%CODEX_HOME%\auth.json` to `%CODEX_HOME%\account_backup\a\auth.json` when available
 - initializes profile `a` as the active profile if a real root auth file exists and no active profile is set yet
 - writes `%CODEX_HOME%\bin\codex.cmd`
 - ensures `%CODEX_HOME%\bin` is first in the user PATH
-- records the real Codex CLI path in `%CODEX_HOME%\account_backup\windows\install_state.json` for login command resolution
+- records the real Codex CLI path in `%CODEX_HOME%\account_backup\windows\install_state.json` for shim/login command resolution
 
 Open a new terminal after install so the PATH change is visible.
 
@@ -124,6 +125,9 @@ codex switch b
 The repo now also contains a native Tauri desktop implementation for the Windows control panel:
 
 - frontend source: [`src/`](./src/)
+  - controller/orchestration: [`src/lib/actions.ts`](./src/lib/actions.ts)
+  - local dashboard view-model: [`src/lib/dashboard-view-model.ts`](./src/lib/dashboard-view-model.ts)
+  - native invoke wrapper: [`src/lib/tauri.ts`](./src/lib/tauri.ts)
 - native shell and Rust commands: [`src-tauri/`](./src-tauri/)
 
 Run locally on Windows:
@@ -146,6 +150,26 @@ Expected portable artifact:
 src-tauri\target\release\codex_switch.exe
 ```
 
+## Testing
+
+Primary regression baseline:
+
+```powershell
+npm test
+```
+
+Equivalent explicit Rust command:
+
+```powershell
+npm run test:rust
+```
+
+Legacy compatibility checks remain available while the historical Python coverage is still kept in the repo. They require `pytest` to be installed in the local Python environment:
+
+```powershell
+npm run test:python
+```
+
 ## Uninstall
 
 macOS:
@@ -159,8 +183,8 @@ source ~/.zshrc
 Windows:
 
 ```powershell
-python windows\uninstall.py
-python windows\uninstall.py --remove-script
+.\src-tauri\target\release\codex_switch.exe uninstall
+.\src-tauri\target\release\codex_switch.exe uninstall --remove-script
 ```
 
 The default uninstall removes only the managed command hook. It does not delete your account folders unless you remove them manually.

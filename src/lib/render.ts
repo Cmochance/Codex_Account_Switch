@@ -1,4 +1,4 @@
-import type { DashboardResponse, PagingInfo, QuotaSummary } from "./types";
+import type { DashboardViewModel, PagingInfo, QuotaSummary } from "./types";
 import { t } from "./i18n";
 import { state } from "./state";
 
@@ -132,7 +132,7 @@ export function showToast(message: string, isError = false): void {
   }, 3200);
 }
 
-export function renderCurrentCard(dashboard: DashboardResponse): void {
+export function renderCurrentCard(dashboard: DashboardViewModel): void {
   const current = dashboard.current_card;
   if (!current) {
     elements.currentTitle.textContent = t(state.locale, "noActiveProfile");
@@ -158,7 +158,7 @@ export function renderCurrentCard(dashboard: DashboardResponse): void {
   );
 }
 
-export function renderProfiles(dashboard: DashboardResponse, onSwitch: (profile: string) => void): void {
+export function renderProfiles(dashboard: DashboardViewModel, onSwitch: (profile: string) => void): void {
   if (!dashboard.profiles.length) {
     elements.profilesGrid.innerHTML =
       `<div class="empty-state">${t(state.locale, "profilesEmpty")}</div>`;

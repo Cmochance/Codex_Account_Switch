@@ -37,7 +37,7 @@ export interface PagingInfo {
   has_next: boolean;
 }
 
-export interface DashboardResponse {
+export interface DashboardViewModel {
   paging: PagingInfo;
   profiles: ProfileCard[];
   current_card: CurrentCard | null;

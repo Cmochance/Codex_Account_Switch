@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod bootstrap;
 pub mod fs_ops;
+pub mod install;
 pub mod metadata;
 pub mod paths;
 pub mod process;
@@ -15,4 +16,9 @@ pub(crate) fn env_lock() -> &'static std::sync::Mutex<()> {
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     ENV_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
+pub(crate) fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+    env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }

@@ -102,6 +102,7 @@ fn load_auth_metadata(
     load_auth_metadata_from_path(&auth_path)
 }
 
+#[allow(dead_code)]
 pub fn load_root_auth_metadata(codex_home: Option<&Path>) -> Option<AuthDerivedMetadata> {
     let auth_path = codex_home
         .map(Path::to_path_buf)

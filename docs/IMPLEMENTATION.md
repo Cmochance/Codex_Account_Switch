@@ -13,11 +13,14 @@
 ## Runtime shape
 
 - macOS uses shell entrypoints under `macOS/`
-- Windows CLI and installer tooling stay under `windows/`
-- Windows desktop UI uses Tauri:
+- Windows desktop UI and CLI both use Rust/Tauri:
   - frontend under `src/`
-  - native commands under `src-tauri/`
+    - controller/orchestration in `src/lib/actions.ts`
+    - dashboard view-model shaping in `src/lib/dashboard-view-model.ts`
+    - native invoke wrapper in `src/lib/tauri.ts`
+  - native commands and CLI runtime under `src-tauri/`
 - The desktop app does not use a local Python backend or HTTP server at runtime
+- `windows/` and `tests/` remain in the repository as legacy compatibility assets while the Rust path is the primary runtime and regression target
 
 ## Installation behavior
 
@@ -26,12 +29,12 @@
 - macOS install fills any missing `a`-`d` `auth.json` files from `examples/account_backup/demo/auth.json.example`
 - If `~/.codex/auth.json` exists during macOS install, it is copied to `~/.codex/account_backup/a/auth.json`
 - If a real root auth exists and no active profile is initialized yet, macOS install sets `a` as the active profile
-- `windows/install.py` creates the same profile layout plus `%CODEX_HOME%\account_backup\windows\` and `%CODEX_HOME%\bin\`
-- Windows install copies `windows/codex_switch.py` and `windows/common.py` into the runtime directory
+- `codex_switch.exe install` creates the same profile layout plus `%CODEX_HOME%\account_backup\windows\` and `%CODEX_HOME%\bin\`
+- Windows install copies `codex_switch_cli.exe` into the runtime directory
 - Windows install fills any missing `a`-`d` `auth.json` files from `examples/account_backup/demo/auth.json.example`
 - If a real root `%CODEX_HOME%\auth.json` exists, Windows install overwrites `a/auth.json` with it
 - If a real root auth exists and no active profile is initialized yet, Windows install sets `a` as the active profile
-- Windows install records `real_codex_path`, `managed_bin_dir`, `app_path`, and `path_added_by_installer` in `install_state.json`
+- Windows install records `real_codex_path` and `path_added_by_installer` in `install_state.json`
 
 ## Desktop app first-run bootstrap
 
@@ -40,7 +43,7 @@
 - Bootstrap writes placeholder `auth.json` files from `examples/account_backup/demo/auth.json.example`
 - If root `auth.json` exists, it is copied into `a/auth.json`
 - If root `auth.json` exists, bootstrap marks `a` as the active profile
-- Bootstrap also writes `%CODEX_HOME%\account_backup\windows\install_state.json`
+- Bootstrap also refreshes `%CODEX_HOME%\account_backup\windows\install_state.json`
 
 ## Preconditions for switching
 
@@ -68,7 +71,7 @@ The switch script itself does not create profile folders or generate missing aut
 - Files absent from the target profile are not automatically removed from the root state.
 - `.active_profile` and `.DS_Store` are excluded from copy operations.
 - macOS prefers `rsync` when available; otherwise `cp -R` is used.
-- Windows uses Python `shutil` and replaces copied directories so the profile copy matches the current root state.
+- Windows uses Rust filesystem operations and replaces copied directories so the profile copy matches the current root state.
 
 ## macOS wrapper behavior
 
@@ -81,7 +84,7 @@ The macOS installer injects a `codex()` shell wrapper into `~/.zshrc`.
 
 The Windows installer writes `%CODEX_HOME%\bin\codex.cmd` and ensures `%CODEX_HOME%\bin` is first in the user PATH.
 
-- `codex switch ...` routes to `%CODEX_HOME%\account_backup\windows\codex_switch.py`
+- `codex switch ...` routes to `%CODEX_HOME%\account_backup\windows\codex_switch_cli.exe shim switch ...`
 - Non-switch `codex` commands are forwarded to the previously resolved real Codex CLI path from `install_state.json`
 - `%CODEX_HOME%\account_backup\windows` is reserved runtime state and excluded from profile listing / active-profile scans
 
@@ -105,3 +108,10 @@ Windows desktop app discovery first prefers the path recorded in `install_state.
 6. `%ProgramFiles%\OpenAI\Codex\Codex.exe`
 7. directories under `%LOCALAPPDATA%\Programs` or `%ProgramFiles` whose names contain `codex`
 8. Windows `App Paths\Codex.exe` registry entries
+
+## Validation strategy
+
+- Primary regression baseline is the Rust suite under `src-tauri/`
+- Root command: `npm test`
+- Equivalent direct command: `cargo test --manifest-path src-tauri/Cargo.toml`
+- Python tests under `tests/` are supplemental legacy compatibility coverage and are not the default regression gate

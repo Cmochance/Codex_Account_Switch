@@ -14,8 +14,7 @@
 ## 平台支持
 
 - macOS：使用 [`macOS/`](./macOS) 下的 shell 脚本
-- Windows CLI / 安装工具：使用 [`windows/`](./windows) 下的 Python 脚本
-- Windows 原生桌面端：使用 [`src/`](./src/) + [`src-tauri/`](./src-tauri/) 的 Tauri 实现
+- Windows 原生桌面端和 CLI：使用 [`src/`](./src/) + [`src-tauri/`](./src-tauri/) 的 Rust / Tauri 实现
 - 两个平台共用同一套 `CODEX_HOME` / `~/.codex` 数据目录协议
 
 当前桌面端范围：
@@ -57,16 +56,16 @@ codex switch x
 ```text
 Codex_Account_Switch/
 ├── src/
+│   └── lib/
+│       ├── actions.ts
+│       ├── dashboard-view-model.ts
+│       └── tauri.ts
 ├── src-tauri/
+├── windows/
 ├── macOS/
 │   ├── codex-switch.sh
 │   ├── install.sh
 │   └── uninstall.sh
-├── windows/
-│   ├── codex_switch.py
-│   ├── install.py
-│   ├── uninstall.py
-│   └── common.py
 ├── tests/
 ├── docs/
 ├── examples/
@@ -95,19 +94,21 @@ macOS 安装脚本会：
 
 ```powershell
 cd C:\...\Codex_Account_Switch
-python windows\install.py
+npm install
+npm run tauri:build
+.\src-tauri\target\release\codex_switch.exe install
 ```
 
 Windows 安装脚本会：
 
-- 把 `windows/codex_switch.py` 和 `windows/common.py` 复制到 `%CODEX_HOME%\account_backup\windows\`
+- 把 Rust CLI 复制到 `%CODEX_HOME%\account_backup\windows\codex_switch_cli.exe`
 - 创建 `%CODEX_HOME%\account_backup\a` 到 `%CODEX_HOME%\account_backup\d`
 - 为所有缺失的 `%CODEX_HOME%\account_backup\<profile>\auth.json` 写入示例模板
 - 如果当前存在 `%CODEX_HOME%\auth.json`，则默认备份到 `%CODEX_HOME%\account_backup\a\auth.json`
 - 如果当前存在真实根目录 auth 且尚未设置激活账号，则初始化 `a` 为当前激活账号
 - 生成 `%CODEX_HOME%\bin\codex.cmd`
 - 确保 `%CODEX_HOME%\bin` 位于用户 PATH 的最前面
-- 将真实 Codex CLI 路径记录到 `%CODEX_HOME%\account_backup\windows\install_state.json`，用于登录命令解析
+- 将真实 Codex CLI 路径记录到 `%CODEX_HOME%\account_backup\windows\install_state.json`，用于 shim 和登录命令解析
 
 安装完成后请重新打开终端，使 PATH 更新生效。
 
@@ -124,6 +125,9 @@ codex switch b
 当前仓库也包含一个基于 Tauri 的 Windows 原生控制面板：
 
 - 前端：[`src/`](./src/)
+  - 控制器和事件编排：[`src/lib/actions.ts`](./src/lib/actions.ts)
+  - 本地仪表盘 view-model：[`src/lib/dashboard-view-model.ts`](./src/lib/dashboard-view-model.ts)
+  - 原生命令封装：[`src/lib/tauri.ts`](./src/lib/tauri.ts)
 - 原生命令和窗口层：[`src-tauri/`](./src-tauri/)
 
 在 Windows 上本地运行：
@@ -146,6 +150,26 @@ npm run tauri:build
 src-tauri\target\release\codex_switch.exe
 ```
 
+## 测试
+
+默认回归基线：
+
+```powershell
+npm test
+```
+
+等价的显式 Rust 测试命令：
+
+```powershell
+npm run test:rust
+```
+
+仓库里仍保留了一组历史 Python 兼容性测试，必要时可以单独执行，但前提是本地 Python 环境已经安装 `pytest`：
+
+```powershell
+npm run test:python
+```
+
 ## 卸载
 
 macOS：
@@ -159,8 +183,8 @@ source ~/.zshrc
 Windows：
 
 ```powershell
-python windows\uninstall.py
-python windows\uninstall.py --remove-script
+.\src-tauri\target\release\codex_switch.exe uninstall
+.\src-tauri\target\release\codex_switch.exe uninstall --remove-script
 ```
 
 默认情况下，卸载脚本只删除受管理的命令接入层，不会删除你的账号目录。账号目录如果要清理，需要你手动删除。

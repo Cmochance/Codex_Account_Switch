@@ -1,3 +1,4 @@
+mod cli;
 mod commands;
 mod errors;
 mod models;
@@ -26,4 +27,8 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+pub fn run_cli(args: &[String]) -> i32 {
+    cli::run(args, None)
 }

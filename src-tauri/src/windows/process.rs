@@ -26,9 +26,11 @@ enum AppLaunchTarget {
     WindowsStore(String),
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct InstallState {
     pub real_codex_path: Option<String>,
+    #[serde(default)]
+    pub path_added_by_installer: bool,
 }
 
 pub fn load_install_state(codex_home: Option<&Path>) -> InstallState {
@@ -41,7 +43,7 @@ pub fn load_install_state(codex_home: Option<&Path>) -> InstallState {
     serde_json::from_str(&raw).unwrap_or_default()
 }
 
-fn save_install_state(codex_home: Option<&Path>, state: &InstallState) {
+pub(super) fn save_install_state(codex_home: Option<&Path>, state: &InstallState) {
     let path = get_install_state_file(codex_home);
     let Some(parent) = path.parent() else {
         return;
@@ -111,7 +113,7 @@ fn managed_codex_shim_path(codex_home: Option<&Path>) -> PathBuf {
         .join("codex.cmd")
 }
 
-fn hide_console_window(command: &mut Command) -> &mut Command {
+pub(super) fn hide_console_window(command: &mut Command) -> &mut Command {
     #[cfg(target_os = "windows")]
     {
         command.creation_flags(CREATE_NO_WINDOW);
@@ -268,6 +270,26 @@ fn resolve_real_codex_cli(codex_home: Option<&Path>) -> Option<PathBuf> {
     discovered_path
 }
 
+pub fn forward_to_real_codex(args: &[String], codex_home: Option<&Path>) -> AppResult<i32> {
+    let Some(real_codex_path) = resolve_real_codex_cli(codex_home) else {
+        return Err(AppError::new(
+            "REAL_CODEX_NOT_FOUND",
+            "Real Codex CLI path not found. Run `codex_switch_cli.exe install` first.",
+        ));
+    };
+
+    let mut command = Command::new(real_codex_path);
+    command.args(args);
+    let status = hide_console_window(&mut command).status().map_err(|error| {
+        AppError::new(
+            "REAL_CODEX_LAUNCH_FAILED",
+            format!("Failed to launch real Codex CLI: {error}"),
+        )
+    })?;
+
+    Ok(status.code().unwrap_or(1))
+}
+
 fn build_login_command(codex_home: &Path) -> Command {
     let mut command = if let Some(real_codex_path) = resolve_real_codex_cli(Some(codex_home)) {
         let mut command = Command::new(real_codex_path);
@@ -374,7 +396,7 @@ mod tests {
         resolve_real_codex_cli, windows_store_shell_target, AppLaunchTarget, InstallState,
         WINDOWS_STORE_APP_ID,
     };
-    use crate::windows::env_lock;
+    use crate::windows::env_guard;
     use serde_json::to_string_pretty;
     use std::fs;
     use std::path::PathBuf;
@@ -390,7 +412,7 @@ mod tests {
 
     #[test]
     fn discover_real_codex_cli_path_prefers_cmd_and_skips_managed_shim() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         let codex_home = temp_codex_home("discover-real-cli");
         let managed_bin = codex_home.join("bin");
         let npm_dir = codex_home.join("npm");
@@ -429,6 +451,7 @@ mod tests {
         fs::write(npm_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
         let install_state = InstallState {
             real_codex_path: Some(npm_dir.join("codex").to_string_lossy().into_owned()),
+            path_added_by_installer: false,
         };
         fs::write(
             runtime_dir.join("install_state.json"),
