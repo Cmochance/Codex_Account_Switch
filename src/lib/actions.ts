@@ -286,16 +286,9 @@ export function bootstrap(): void {
   elements.localeToggleButton.addEventListener("click", () => {
     setLocale(state.locale === "en" ? "zh-CN" : "en");
   });
-  window.addEventListener("focus", () => {
-    void refreshProfilesSnapshot();
-    void refreshCurrentQuota();
-  });
   window.setInterval(() => {
     void refreshCurrentQuota();
   }, 15_000);
-  window.setInterval(() => {
-    void refreshProfilesSnapshot();
-  }, 60_000);
 
   state.loading = true;
   rerenderDashboard();
