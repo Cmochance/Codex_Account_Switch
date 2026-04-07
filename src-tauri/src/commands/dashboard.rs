@@ -1,11 +1,6 @@
 use crate::errors::CommandError;
-use crate::models::{CurrentQuotaResponse, DashboardResponse, ProfilesSnapshotResponse};
+use crate::models::{CurrentQuotaResponse, ProfilesSnapshotResponse};
 use crate::windows;
-
-#[tauri::command]
-pub fn get_dashboard(page: Option<u32>) -> Result<DashboardResponse, CommandError> {
-    windows::dashboard::build_dashboard(page.unwrap_or(1), None).map_err(Into::into)
-}
 
 #[tauri::command]
 pub fn get_profiles_snapshot() -> Result<ProfilesSnapshotResponse, CommandError> {

@@ -15,7 +15,6 @@ pub fn run() {
             Ok(windowing::install(app)?)
         })
         .invoke_handler(tauri::generate_handler![
-            commands::dashboard::get_dashboard,
             commands::dashboard::get_profiles_snapshot,
             commands::dashboard::get_current_live_quota,
             commands::actions::open_codex,

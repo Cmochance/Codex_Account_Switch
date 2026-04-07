@@ -4,11 +4,11 @@ use tauri_plugin_opener::OpenerExt;
 use crate::errors::{AppError, AppResult};
 use crate::models::ProfileMetadata;
 
-use super::dashboard::resolve_current_profile;
 use super::fs_ops::backup_root_state_to_profile;
 use super::metadata::save_profile_metadata;
 use super::paths::{get_backup_root, get_codex_home, validate_profile_name, CONTACT_URL};
 use super::process::{open_or_activate_codex_app, run_codex_login};
+use super::profiles::resolve_current_profile;
 
 const AUTH_TEMPLATE: &str = include_str!("../../../examples/account_backup/demo/auth.json.example");
 

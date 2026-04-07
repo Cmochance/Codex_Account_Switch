@@ -2,46 +2,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use chrono::{DateTime, Local, NaiveDate};
-
 use crate::errors::{AppError, AppResult};
 use crate::models::{
     CurrentCard, CurrentQuotaResponse, ProfileCard, ProfileIndexEntry, ProfilesIndex,
     ProfilesSnapshotResponse,
 };
 
-use super::dashboard::resolve_current_profile;
 use super::metadata::load_profile_metadata;
 use super::paths::{
     get_backup_root, get_codex_home, get_profiles_index_path, list_profile_dirs, utc_timestamp,
     DEFAULT_PAGE_SIZE,
 };
+use super::profiles::{
+    build_display_title, compute_subscription_days_left, resolve_current_profile,
+};
 use super::session_usage::{load_latest_local_quota, normalize_quota_summary};
 
 const PROFILES_INDEX_SCHEMA_VERSION: u32 = 1;
-
-fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
-    let account_label = account_label
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("--");
-
-    format!("{profile_name} / {account_label}")
-}
-
-fn compute_subscription_days_left(subscription_expires_at: Option<&str>) -> Option<i64> {
-    let value = subscription_expires_at?;
-    let parsed = NaiveDate::parse_from_str(value, "%Y-%m-%d")
-        .ok()
-        .or_else(|| {
-            DateTime::parse_from_rfc3339(value)
-                .ok()
-                .map(|datetime| datetime.with_timezone(&Local).date_naive())
-        })?;
-
-    let today = Local::now().date_naive();
-    Some((parsed - today).num_days().max(0))
-}
 
 fn file_signature(path: &Path) -> (Option<u64>, Option<u64>) {
     let metadata = match fs::metadata(path) {

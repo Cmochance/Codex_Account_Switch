@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use crate::errors::{AppError, AppResult};
 use crate::models::SwitchResponse;
 
-use super::dashboard::resolve_current_profile;
 use super::fs_ops::{
     autosave_auth, backup_root_state_to_profile, overlay_directory_contents, set_active_marker,
 };
 use super::paths::{get_backup_root, get_switch_lock_path, validate_profile_name};
 use super::process;
+use super::profiles::resolve_current_profile;
 
 struct SwitchGuard {
     lock_path: PathBuf,

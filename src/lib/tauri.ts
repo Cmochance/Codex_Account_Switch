@@ -4,7 +4,6 @@ import type {
   ActionResponse,
   CommandError,
   CurrentQuotaResponse,
-  DashboardResponse,
   ProfilesSnapshotResponse,
   SwitchResponse,
 } from "./types";
@@ -30,10 +29,6 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
   } catch (error) {
     throw toError(error);
   }
-}
-
-export function getDashboard(page: number): Promise<DashboardResponse> {
-  return invokeCommand<DashboardResponse>("get_dashboard", { page });
 }
 
 export function getProfilesSnapshot(): Promise<ProfilesSnapshotResponse> {

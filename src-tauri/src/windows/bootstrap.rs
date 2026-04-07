@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::{AppError, AppResult};
 
-use super::dashboard::resolve_current_profile;
 use super::fs_ops::backup_root_state_to_profile;
 use super::paths::{
     get_backup_root, get_codex_home, get_runtime_dir, ACTIVE_MARKER_FILE, CURRENT_PROFILE_FILENAME,
     DEFAULT_PROFILES,
 };
 use super::process::discover_real_codex_cli_path;
+use super::profiles::resolve_current_profile;
 
 const AUTH_TEMPLATE: &str = include_str!("../../../examples/account_backup/demo/auth.json.example");
 

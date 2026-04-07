@@ -1,10 +1,10 @@
 pub mod actions;
 pub mod bootstrap;
-pub mod dashboard;
 pub mod fs_ops;
 pub mod metadata;
 pub mod paths;
 pub mod process;
+pub mod profiles;
 pub mod profiles_index;
 pub mod session_usage;
 pub mod switch;

@@ -74,24 +74,6 @@ pub struct CurrentCard {
     pub profile_folder_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PagingInfo {
-    pub page: u32,
-    pub page_size: u32,
-    pub total_profiles: u32,
-    pub total_pages: u32,
-    pub has_previous: bool,
-    pub has_next: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DashboardResponse {
-    pub paging: PagingInfo,
-    pub profiles: Vec<ProfileCard>,
-    pub current_card: Option<CurrentCard>,
-    pub current_quota_card: Option<QuotaSummary>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ProfileIndexEntry {
