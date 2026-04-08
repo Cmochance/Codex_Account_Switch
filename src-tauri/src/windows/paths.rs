@@ -11,6 +11,7 @@ pub const DEFAULT_PROFILES: [&str; 4] = ["a", "b", "c", "d"];
 pub const INSTALL_STATE_FILENAME: &str = "install_state.json";
 pub const PROFILES_INDEX_FILENAME: &str = "profiles.json";
 pub const PROFILE_METADATA_FILENAME: &str = "profile.json";
+pub const REFRESH_RUNTIME_DIRNAME: &str = "refresh_runtime";
 pub const SWITCH_LOCK_FILENAME: &str = ".switch.lock";
 pub const WINDOWS_RUNTIME_DIRNAME: &str = "windows";
 pub const APP_PROCESS_NAME: &str = "Codex.exe";
@@ -44,6 +45,13 @@ pub fn get_backup_root(codex_home: Option<&Path>) -> PathBuf {
         .join("account_backup")
 }
 
+pub fn get_root_config_path(codex_home: Option<&Path>) -> PathBuf {
+    codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home)
+        .join("config.toml")
+}
+
 pub fn get_auto_save_root(codex_home: Option<&Path>) -> PathBuf {
     get_backup_root(codex_home).join("_autosave")
 }
@@ -54,6 +62,10 @@ pub fn get_current_profile_file(codex_home: Option<&Path>) -> PathBuf {
 
 pub fn get_runtime_dir(codex_home: Option<&Path>) -> PathBuf {
     get_backup_root(codex_home).join(WINDOWS_RUNTIME_DIRNAME)
+}
+
+pub fn get_refresh_runtime_dir(codex_home: Option<&Path>) -> PathBuf {
+    get_runtime_dir(codex_home).join(REFRESH_RUNTIME_DIRNAME)
 }
 
 pub fn get_install_state_file(codex_home: Option<&Path>) -> PathBuf {

@@ -47,8 +47,13 @@ export function openProfileFolder(profile: string): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("open_profile_folder", { payload: { profile } });
 }
 
-export function addProfile(folderName: string): Promise<ActionResponse> {
-  return invokeCommand<ActionResponse>("add_profile", { payload: { folder_name: folderName } });
+export function addProfile(folderName: string, openaiBaseUrl: string | null): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("add_profile", {
+    payload: {
+      folder_name: folderName,
+      openai_base_url: openaiBaseUrl,
+    },
+  });
 }
 
 export function openCodex(): Promise<ActionResponse> {
@@ -57,6 +62,22 @@ export function openCodex(): Promise<ActionResponse> {
 
 export function loginCurrentProfile(): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("login_current_profile");
+}
+
+export function refreshProfile(profile: string): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("refresh_profile", { payload: { profile } });
+}
+
+export function renameProfile(profile: string, newFolderName: string): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("rename_profile", {
+    payload: { profile, new_folder_name: newFolderName },
+  });
+}
+
+export function updateProfileBaseUrl(profile: string, openaiBaseUrl: string): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("update_profile_base_url", {
+    payload: { profile, openai_base_url: openaiBaseUrl },
+  });
 }
 
 export function openContact(): Promise<ActionResponse> {

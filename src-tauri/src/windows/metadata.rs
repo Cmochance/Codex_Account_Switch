@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
-use crate::models::ProfileMetadata;
+use crate::models::{ProfileMetadata, QuotaSummary};
 
 use super::paths::{
     get_backup_root, get_codex_home, get_profile_metadata_path, validate_profile_name,
@@ -111,6 +111,54 @@ pub fn load_root_auth_metadata(codex_home: Option<&Path>) -> Option<AuthDerivedM
     load_auth_metadata_from_path(&auth_path)
 }
 
+fn load_stored_profile_metadata(
+    profile_name: &str,
+    codex_home: Option<&Path>,
+) -> Option<ProfileMetadata> {
+    let metadata_path = get_profile_metadata_path(profile_name, codex_home);
+    let raw = fs::read_to_string(metadata_path).ok()?;
+    serde_json::from_str::<ProfileMetadata>(&raw)
+        .ok()
+        .and_then(ProfileMetadata::validate)
+}
+
+fn load_or_init_profile_metadata(profile_name: &str, codex_home: Option<&Path>) -> ProfileMetadata {
+    load_stored_profile_metadata(profile_name, codex_home)
+        .unwrap_or_else(|| ProfileMetadata::with_folder_name(profile_name))
+}
+
+fn apply_auth_metadata(
+    metadata: &mut ProfileMetadata,
+    auth_metadata: AuthDerivedMetadata,
+    overwrite_account_label: bool,
+) {
+    let AuthDerivedMetadata {
+        account_label,
+        plan_name,
+        subscription_expires_at,
+        has_plan_claims,
+    } = auth_metadata;
+
+    if overwrite_account_label {
+        if let Some(account_label) = account_label {
+            metadata.account_label = Some(account_label);
+        }
+    } else if metadata
+        .account_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        metadata.account_label = account_label;
+    }
+
+    if has_plan_claims {
+        metadata.plan_name = plan_name;
+        metadata.subscription_expires_at = subscription_expires_at;
+    }
+}
+
 fn hydrate_profile_metadata(
     mut metadata: ProfileMetadata,
     profile_name: &str,
@@ -121,23 +169,26 @@ fn hydrate_profile_metadata(
     }
 
     if let Some(auth_metadata) = load_auth_metadata(profile_name, codex_home) {
-        if metadata
-            .account_label
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_none()
-        {
-            metadata.account_label = auth_metadata.account_label;
-        }
-
-        if auth_metadata.has_plan_claims {
-            metadata.plan_name = auth_metadata.plan_name;
-            metadata.subscription_expires_at = auth_metadata.subscription_expires_at;
-        }
+        apply_auth_metadata(&mut metadata, auth_metadata, false);
     }
 
     metadata
+}
+
+fn update_profile_metadata<F>(
+    profile_name: &str,
+    codex_home: Option<&Path>,
+    updater: F,
+) -> Result<ProfileMetadata, crate::errors::AppError>
+where
+    F: FnOnce(&mut ProfileMetadata),
+{
+    let profile_name = validate_profile_name(profile_name)?;
+    let mut metadata = load_or_init_profile_metadata(&profile_name, codex_home);
+    metadata.folder_name = Some(profile_name.clone());
+    updater(&mut metadata);
+    save_profile_metadata(&profile_name, &metadata, codex_home)?;
+    Ok(hydrate_profile_metadata(metadata, &profile_name, codex_home))
 }
 
 pub fn load_profile_metadata(profile_name: &str, codex_home: Option<&Path>) -> ProfileMetadata {
@@ -146,29 +197,45 @@ pub fn load_profile_metadata(profile_name: &str, codex_home: Option<&Path>) -> P
         Err(_) => return ProfileMetadata::with_folder_name(profile_name),
     };
 
-    let metadata_path = get_profile_metadata_path(&profile_name, codex_home);
-    let default_metadata = || {
-        hydrate_profile_metadata(
-            ProfileMetadata::with_folder_name(&profile_name),
-            &profile_name,
-            codex_home,
-        )
-    };
-
-    let raw = match fs::read_to_string(metadata_path) {
-        Ok(value) => value,
-        Err(_) => return default_metadata(),
-    };
-
-    let metadata = match serde_json::from_str::<ProfileMetadata>(&raw)
-        .ok()
-        .and_then(ProfileMetadata::validate)
-    {
-        Some(value) => value,
-        None => return default_metadata(),
-    };
+    let metadata = load_or_init_profile_metadata(&profile_name, codex_home);
 
     hydrate_profile_metadata(metadata, &profile_name, codex_home)
+}
+
+pub fn sync_profile_metadata_from_auth(
+    profile_name: &str,
+    codex_home: Option<&Path>,
+) -> Result<ProfileMetadata, crate::errors::AppError> {
+    let auth_metadata = validate_profile_name(profile_name)
+        .ok()
+        .and_then(|profile_name| load_auth_metadata(&profile_name, codex_home));
+    update_profile_metadata(profile_name, codex_home, |metadata| {
+        if let Some(auth_metadata) = auth_metadata {
+            apply_auth_metadata(metadata, auth_metadata, true);
+        }
+    })
+}
+
+pub fn sync_profile_quota(
+    profile_name: &str,
+    quota: QuotaSummary,
+    quota_updated_at_ms: Option<u64>,
+    codex_home: Option<&Path>,
+) -> Result<ProfileMetadata, crate::errors::AppError> {
+    update_profile_metadata(profile_name, codex_home, move |metadata| {
+        metadata.quota = quota;
+        metadata.quota_updated_at_ms = quota_updated_at_ms;
+    })
+}
+
+pub fn sync_profile_openai_base_url(
+    profile_name: &str,
+    openai_base_url: Option<String>,
+    codex_home: Option<&Path>,
+) -> Result<ProfileMetadata, crate::errors::AppError> {
+    update_profile_metadata(profile_name, codex_home, move |metadata| {
+        metadata.openai_base_url = openai_base_url;
+    })
 }
 
 pub fn save_profile_metadata(
@@ -195,7 +262,11 @@ pub fn save_profile_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::{load_profile_metadata, load_root_auth_metadata};
+    use super::{
+        load_profile_metadata, load_root_auth_metadata, sync_profile_metadata_from_auth,
+        sync_profile_openai_base_url, sync_profile_quota,
+    };
+    use crate::models::{QuotaSummary, QuotaWindow};
     use base64::{engine::general_purpose, Engine as _};
     use std::fs;
     use std::path::PathBuf;
@@ -291,6 +362,31 @@ mod tests {
     }
 
     #[test]
+    fn sync_profile_openai_base_url_persists_custom_base_url() {
+        let codex_home = temp_codex_home("sync-base-url");
+        let profile_dir = codex_home.join("account_backup").join("api");
+        fs::create_dir_all(&profile_dir).unwrap();
+
+        let metadata = sync_profile_openai_base_url(
+            "api",
+            Some("https://example.com/v1".to_string()),
+            Some(&codex_home),
+        )
+        .unwrap();
+
+        assert_eq!(
+            metadata.openai_base_url.as_deref(),
+            Some("https://example.com/v1")
+        );
+        let saved = load_profile_metadata("api", Some(&codex_home));
+        assert_eq!(
+            saved.openai_base_url.as_deref(),
+            Some("https://example.com/v1")
+        );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
     fn load_profile_metadata_overrides_profile_plan_with_auth_claims() {
         let codex_home = temp_codex_home("auth-plan-override");
         let profile_dir = codex_home.join("account_backup").join("c");
@@ -340,6 +436,82 @@ mod tests {
             metadata.subscription_expires_at.as_deref(),
             Some("2033-07-10T00:00:00+00:00")
         );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn sync_profile_metadata_from_auth_overwrites_stale_account_label_and_preserves_quota() {
+        let codex_home = temp_codex_home("sync-profile-metadata");
+        let profile_dir = codex_home.join("account_backup").join("sync");
+        fs::create_dir_all(&profile_dir).unwrap();
+        let id_token = encode_jwt_payload(
+            r#"{"email":"fresh@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"pro","chatgpt_subscription_active_until":"2034-02-01T00:00:00+00:00"}}"#,
+        );
+        fs::write(
+            profile_dir.join("auth.json"),
+            format!(r#"{{"tokens":{{"id_token":"{id_token}","account_id":"acct_sync"}}}}"#),
+        )
+        .unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{"folder_name":"sync","account_label":"Old Label","quota":{"five_hour":{"remaining_percent":55,"refresh_at":"2030-01-01T00:00:00Z"},"weekly":{"remaining_percent":72,"refresh_at":"2030-01-08T00:00:00Z"}}}"#,
+        )
+        .unwrap();
+
+        let synced = sync_profile_metadata_from_auth("sync", Some(&codex_home)).unwrap();
+
+        assert_eq!(synced.account_label.as_deref(), Some("fresh@example.com"));
+        assert_eq!(synced.plan_name.as_deref(), Some("pro"));
+        assert_eq!(
+            synced.subscription_expires_at.as_deref(),
+            Some("2034-02-01T00:00:00+00:00")
+        );
+        assert_eq!(synced.quota.five_hour.remaining_percent, Some(55));
+        assert_eq!(synced.quota.weekly.remaining_percent, Some(72));
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn sync_profile_quota_updates_quota_and_preserves_auth_fields() {
+        let codex_home = temp_codex_home("sync-profile-quota");
+        let profile_dir = codex_home.join("account_backup").join("quota");
+        fs::create_dir_all(&profile_dir).unwrap();
+        let id_token = encode_jwt_payload(
+            r#"{"email":"quota@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"pro","chatgpt_subscription_active_until":"2035-02-01T00:00:00+00:00"}}"#,
+        );
+        fs::write(
+            profile_dir.join("auth.json"),
+            format!(r#"{{"tokens":{{"id_token":"{id_token}","account_id":"acct_quota"}}}}"#),
+        )
+        .unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{"folder_name":"quota","account_label":"quota@example.com","plan_name":"pro"}"#,
+        )
+        .unwrap();
+
+        let synced = sync_profile_quota(
+            "quota",
+            QuotaSummary {
+                five_hour: QuotaWindow {
+                    remaining_percent: Some(91),
+                    refresh_at: Some("2035-02-01 05:00".to_string()),
+                },
+                weekly: QuotaWindow {
+                    remaining_percent: Some(77),
+                    refresh_at: Some("2035-02-08 00:00".to_string()),
+                },
+            },
+            Some(1_777_777_777_000),
+            Some(&codex_home),
+        )
+        .unwrap();
+
+        assert_eq!(synced.account_label.as_deref(), Some("quota@example.com"));
+        assert_eq!(synced.plan_name.as_deref(), Some("pro"));
+        assert_eq!(synced.quota.five_hour.remaining_percent, Some(91));
+        assert_eq!(synced.quota.weekly.remaining_percent, Some(77));
+        assert_eq!(synced.quota_updated_at_ms, Some(1_777_777_777_000));
         let _ = fs::remove_dir_all(&codex_home);
     }
 }

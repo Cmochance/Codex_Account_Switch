@@ -10,6 +10,7 @@ use super::fs_ops::{
 use super::paths::{get_backup_root, get_switch_lock_path, validate_profile_name};
 use super::process;
 use super::profiles::resolve_current_profile;
+use super::config::sync_root_openai_base_url_for_profile;
 
 struct SwitchGuard {
     lock_path: PathBuf,
@@ -88,6 +89,7 @@ pub fn switch_profile_with_home(profile_name: &str, codex_home: Option<&Path>) -
 
     autosave_auth(&codex_home)?;
     overlay_directory_contents(&profile_dir, &codex_home)?;
+    sync_root_openai_base_url_for_profile(&profile_name, Some(&codex_home))?;
     set_active_marker(&profile_name, &backup_root)?;
     super::profiles_index::load_profiles_index(Some(&codex_home))?;
     let warnings = process::reopen_codex_app_if_needed(app_was_running, Some(&codex_home));

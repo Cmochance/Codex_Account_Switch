@@ -21,7 +21,9 @@ pub struct ProfileMetadata {
     pub account_label: Option<String>,
     pub plan_name: Option<String>,
     pub subscription_expires_at: Option<String>,
+    pub openai_base_url: Option<String>,
     pub quota: QuotaSummary,
+    pub quota_updated_at_ms: Option<u64>,
 }
 
 impl ProfileMetadata {
@@ -56,11 +58,13 @@ impl ProfileMetadata {
 pub struct ProfileCard {
     pub folder_name: String,
     pub display_title: String,
+    pub account_label: Option<String>,
     pub status: String,
     pub auth_present: bool,
     pub has_account_identity: bool,
     pub plan_name: Option<String>,
     pub subscription_days_left: Option<i64>,
+    pub openai_base_url: Option<String>,
     pub quota: QuotaSummary,
 }
 
@@ -82,8 +86,10 @@ pub struct ProfileIndexEntry {
     pub has_account_identity: bool,
     pub plan_name: Option<String>,
     pub subscription_expires_at: Option<String>,
+    pub openai_base_url: Option<String>,
     pub auth_present: bool,
     pub stored_quota: QuotaSummary,
+    pub stored_quota_updated_at_ms: Option<u64>,
     pub auth_mtime_ms: Option<u64>,
     pub auth_size: Option<u64>,
     pub profile_mtime_ms: Option<u64>,
@@ -122,6 +128,19 @@ pub struct ProfilePayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddProfilePayload {
     pub folder_name: String,
+    pub openai_base_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenameProfilePayload {
+    pub profile: String,
+    pub new_folder_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateProfileBaseUrlPayload {
+    pub profile: String,
+    pub openai_base_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

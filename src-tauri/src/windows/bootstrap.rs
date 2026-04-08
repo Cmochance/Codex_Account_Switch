@@ -3,8 +3,20 @@ use std::path::{Path, PathBuf};
 use crate::errors::AppResult;
 
 use super::fs_ops::backup_root_state_to_profile;
-use super::paths::{get_backup_root, get_codex_home};
+use super::paths::{get_backup_root, get_codex_home, get_refresh_runtime_dir};
 use super::profiles::resolve_current_profile;
+
+const REFRESH_RUNTIME_DEFAULT_CONFIG: &str = concat!(
+    "model = \"gpt-5.4-mini\"\n",
+    "model_provider = \"openai-custom\"\n",
+    "\n",
+    "[model_providers.\"openai-custom\"]\n",
+    "name = \"OpenAI Custom\"\n",
+    "base_url = \"https://chatgpt.com/backend-api/codex\"\n",
+    "wire_api = \"responses\"\n",
+    "requires_openai_auth = true\n",
+    "supports_websockets = false\n",
+);
 
 pub fn sync_root_state_to_current_profile(codex_home: Option<&Path>) -> AppResult<Option<String>> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
@@ -48,10 +60,39 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
     Ok(true)
 }
 
+pub fn ensure_refresh_runtime_config_initialized(codex_home: Option<&Path>) -> AppResult<()> {
+    let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
+    let runtime_home = get_refresh_runtime_dir(Some(&codex_home));
+    std::fs::create_dir_all(&runtime_home).map_err(|error| {
+        crate::errors::AppError::new(
+            "FS_CREATE_FAILED",
+            format!(
+                "Failed to create refresh runtime directory {}: {error}",
+                runtime_home.display()
+            ),
+        )
+    })?;
+
+    let config_path = runtime_home.join("config.toml");
+    std::fs::write(&config_path, REFRESH_RUNTIME_DEFAULT_CONFIG).map_err(|error| {
+        crate::errors::AppError::new(
+            "FS_WRITE_FAILED",
+            format!(
+                "Failed to write refresh runtime config {}: {error}",
+                config_path.display()
+            ),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ensure_backup_initialized;
+    use super::{
+        ensure_backup_initialized, ensure_refresh_runtime_config_initialized,
+        REFRESH_RUNTIME_DEFAULT_CONFIG,
+    };
     use crate::windows::env_guard;
+    use crate::windows::paths::get_refresh_runtime_dir;
     use crate::windows::process::load_install_state;
     use std::fs;
     use std::path::PathBuf;
@@ -133,6 +174,30 @@ mod tests {
         assert!(initialized);
         let resolved_path = install_state.real_codex_path.unwrap();
         assert!(resolved_path.ends_with("\\codex.cmd"));
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn ensure_refresh_runtime_config_initialized_overwrites_existing_config() {
+        let _guard = env_guard();
+        let codex_home = temp_codex_home("bootstrap-refresh-config");
+
+        ensure_refresh_runtime_config_initialized(Some(&codex_home)).unwrap();
+
+        let config_path = get_refresh_runtime_dir(Some(&codex_home)).join("config.toml");
+        assert!(config_path.is_file());
+        assert_eq!(
+            fs::read_to_string(&config_path).unwrap(),
+            REFRESH_RUNTIME_DEFAULT_CONFIG
+        );
+
+        fs::write(&config_path, "model = \"custom\"\n").unwrap();
+        ensure_refresh_runtime_config_initialized(Some(&codex_home)).unwrap();
+        assert_eq!(
+            fs::read_to_string(&config_path).unwrap(),
+            REFRESH_RUNTIME_DEFAULT_CONFIG
+        );
+
         let _ = fs::remove_dir_all(&codex_home);
     }
 }

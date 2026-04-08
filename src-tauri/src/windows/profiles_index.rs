@@ -16,9 +16,9 @@ use super::paths::{
 use super::profiles::{
     build_display_title, compute_subscription_days_left, resolve_current_profile,
 };
-use super::session_usage::{load_latest_local_quota, normalize_quota_summary};
+use super::session_usage::{load_latest_local_quota_snapshot, normalize_quota_summary};
 
-const PROFILES_INDEX_SCHEMA_VERSION: u32 = 1;
+const PROFILES_INDEX_SCHEMA_VERSION: u32 = 3;
 
 fn file_signature(path: &Path) -> (Option<u64>, Option<u64>) {
     let metadata = match fs::metadata(path) {
@@ -56,8 +56,10 @@ fn build_profile_index_entry(profile_name: &str, codex_home: &Path) -> ProfileIn
         has_account_identity,
         plan_name: metadata.plan_name,
         subscription_expires_at: metadata.subscription_expires_at,
+        openai_base_url: metadata.openai_base_url,
         auth_present: auth_path.is_file(),
         stored_quota: metadata.quota,
+        stored_quota_updated_at_ms: metadata.quota_updated_at_ms,
         auth_mtime_ms,
         auth_size,
         profile_mtime_ms,
@@ -220,6 +222,7 @@ fn build_profile_card(entry: &ProfileIndexEntry, current_profile: Option<&str>) 
     ProfileCard {
         folder_name: entry.folder_name.clone(),
         display_title: build_display_title(&entry.folder_name, entry.account_label.as_deref()),
+        account_label: entry.account_label.clone(),
         status,
         auth_present: entry.auth_present,
         has_account_identity: entry.has_account_identity,
@@ -227,6 +230,7 @@ fn build_profile_card(entry: &ProfileIndexEntry, current_profile: Option<&str>) 
         subscription_days_left: compute_subscription_days_left(
             entry.subscription_expires_at.as_deref(),
         ),
+        openai_base_url: entry.openai_base_url.clone(),
         quota: normalize_quota_summary(
             Some(entry.stored_quota.clone()),
             entry.plan_name.as_deref(),
@@ -247,6 +251,30 @@ fn build_current_card(entry: &ProfileIndexEntry, codex_home: &Path) -> CurrentCa
             entry.subscription_expires_at.as_deref(),
         ),
         profile_folder_path: profile_dir.to_string_lossy().into_owned(),
+    }
+}
+
+fn quota_summary_has_data(quota: &crate::models::QuotaSummary) -> bool {
+    quota.five_hour.remaining_percent.is_some()
+        || quota.five_hour.refresh_at.is_some()
+        || quota.weekly.remaining_percent.is_some()
+        || quota.weekly.refresh_at.is_some()
+}
+
+fn select_current_quota(
+    entry: &ProfileIndexEntry,
+    live_snapshot: Option<&super::session_usage::LocalQuotaSnapshot>,
+) -> crate::models::QuotaSummary {
+    let stored_is_populated = quota_summary_has_data(&entry.stored_quota);
+    let stored_updated_at_ms = entry.stored_quota_updated_at_ms.unwrap_or(0);
+
+    match live_snapshot {
+        Some(snapshot)
+            if snapshot.source_mtime_ms.unwrap_or(0) > stored_updated_at_ms || !stored_is_populated =>
+        {
+            snapshot.quota.clone()
+        }
+        _ => entry.stored_quota.clone(),
     }
 }
 
@@ -299,11 +327,9 @@ pub fn load_current_live_quota(codex_home: Option<&Path>) -> AppResult<CurrentQu
         });
     };
 
+    let live_snapshot = load_latest_local_quota_snapshot(Some(&codex_home));
     let quota = normalize_quota_summary(
-        Some(
-            load_latest_local_quota(Some(&codex_home))
-                .unwrap_or_else(|| entry.stored_quota.clone()),
-        ),
+        Some(select_current_quota(entry, live_snapshot.as_ref())),
         entry.plan_name.as_deref(),
         entry.has_account_identity,
     );
@@ -401,6 +427,7 @@ mod tests {
                 "folder_name":"a",
                 "account_label":"a@example.com",
                 "plan_name":"pro",
+                "quota_updated_at_ms":9999999999999,
                 "quota":{
                     "five_hour":{"remaining_percent":60,"refresh_at":"2099-01-01 00:00"},
                     "weekly":{"remaining_percent":80,"refresh_at":"2099-01-08 00:00"}
@@ -419,6 +446,59 @@ mod tests {
                 .as_ref()
                 .and_then(|quota| quota.five_hour.remaining_percent),
             Some(60)
+        );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn load_current_live_quota_prefers_newer_root_session_snapshot() {
+        let codex_home = temp_codex_home("quota-prefers-root-session");
+        let profile_dir = codex_home.join("account_backup").join("a");
+        let session_dir = codex_home.join("sessions").join("2026").join("04").join("08");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(
+            profile_dir.join("auth.json"),
+            r#"{"tokens":{"account_id":"acct_a"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{
+                "folder_name":"a",
+                "account_label":"a@example.com",
+                "plan_name":"pro",
+                "quota_updated_at_ms":1,
+                "quota":{
+                    "five_hour":{"remaining_percent":60,"refresh_at":"2099-01-01 00:00"},
+                    "weekly":{"remaining_percent":80,"refresh_at":"2099-01-08 00:00"}
+                }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join("rollout-2026-04-08T18-00-00.jsonl"),
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":12.0,\"resets_at\":1776000000,\"window_minutes\":300},\"secondary\":{\"used_percent\":24.0,\"resets_at\":1776600000,\"window_minutes\":10080}}}}\n",
+        )
+        .unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "a").unwrap();
+
+        let response = load_current_live_quota(Some(&codex_home)).unwrap();
+
+        assert_eq!(response.profile.as_deref(), Some("a"));
+        assert_eq!(
+            response
+                .quota
+                .as_ref()
+                .and_then(|quota| quota.five_hour.remaining_percent),
+            Some(88)
+        );
+        assert_eq!(
+            response
+                .quota
+                .as_ref()
+                .and_then(|quota| quota.weekly.remaining_percent),
+            Some(76)
         );
         let _ = fs::remove_dir_all(&codex_home);
     }

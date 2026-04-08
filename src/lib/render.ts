@@ -32,7 +32,28 @@ export const elements = {
   dialogCopy: requiredElement<HTMLParagraphElement>("dialog-copy"),
   folderNameLabel: requiredElement<HTMLSpanElement>("folder-name-label"),
   folderNameInput: requiredElement<HTMLInputElement>("folder-name-input"),
+  addBaseUrlLabel: requiredElement<HTMLSpanElement>("add-base-url-label"),
+  addBaseUrlInput: requiredElement<HTMLInputElement>("add-base-url-input"),
+  addBaseUrlCopy: requiredElement<HTMLSpanElement>("add-base-url-copy"),
   dialogError: requiredElement<HTMLParagraphElement>("dialog-error"),
+  renameDialog: document.getElementById("rename-profile-dialog") as HTMLDialogElement,
+  renameProfileForm: requiredElement<HTMLFormElement>("rename-profile-form"),
+  renameDialogTitle: requiredElement<HTMLHeadingElement>("rename-dialog-title"),
+  renameDialogCopy: requiredElement<HTMLParagraphElement>("rename-dialog-copy"),
+  renameFolderNameLabel: requiredElement<HTMLSpanElement>("rename-folder-name-label"),
+  renameFolderNameInput: requiredElement<HTMLInputElement>("rename-folder-name-input"),
+  renameDialogError: requiredElement<HTMLParagraphElement>("rename-dialog-error"),
+  cancelRenameProfileButton: requiredElement<HTMLButtonElement>("cancel-rename-profile-button"),
+  submitRenameProfileButton: requiredElement<HTMLButtonElement>("submit-rename-profile-button"),
+  baseUrlDialog: document.getElementById("base-url-dialog") as HTMLDialogElement,
+  baseUrlForm: requiredElement<HTMLFormElement>("base-url-form"),
+  baseUrlDialogTitle: requiredElement<HTMLHeadingElement>("base-url-dialog-title"),
+  baseUrlDialogCopy: requiredElement<HTMLParagraphElement>("base-url-dialog-copy"),
+  baseUrlLabel: requiredElement<HTMLSpanElement>("base-url-label"),
+  baseUrlInput: requiredElement<HTMLInputElement>("base-url-input"),
+  baseUrlDialogError: requiredElement<HTMLParagraphElement>("base-url-dialog-error"),
+  cancelBaseUrlButton: requiredElement<HTMLButtonElement>("cancel-base-url-button"),
+  submitBaseUrlButton: requiredElement<HTMLButtonElement>("submit-base-url-button"),
   toast: requiredElement<HTMLDivElement>("toast"),
   localeToggleButton: requiredElement<HTMLButtonElement>("locale-toggle-button"),
 };
@@ -58,20 +79,15 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function buildProfileTitleMarkup(folderName: string, displayTitle: string): string {
-  const prefix = `${folderName} / `;
-  let accountLabel = "--";
-
-  if (displayTitle.startsWith(prefix)) {
-    accountLabel = displayTitle.slice(prefix.length).trim() || "--";
-  } else if (displayTitle.trim() && displayTitle.trim() !== folderName) {
-    accountLabel = displayTitle.trim();
+function bindProfileButtons(attribute: string, handler: (profile: string) => void): void {
+  for (const button of elements.profilesGrid.querySelectorAll<HTMLButtonElement>(`[${attribute}]`)) {
+    button.addEventListener("click", () => {
+      const profile = button.getAttribute(attribute);
+      if (profile) {
+        void handler(profile);
+      }
+    });
   }
-
-  return `
-    <span class="profile-title-folder">${escapeHtml(folderName)} /</span>
-    <span class="profile-title-account">${escapeHtml(accountLabel)}</span>
-  `;
 }
 
 export function planLine(planName: string | null, daysLeft: number | null): string {
@@ -158,7 +174,13 @@ export function renderCurrentCard(dashboard: DashboardViewModel): void {
   );
 }
 
-export function renderProfiles(dashboard: DashboardViewModel, onSwitch: (profile: string) => void): void {
+export function renderProfiles(
+  dashboard: DashboardViewModel,
+  onRename: (profile: string) => void,
+  onSwitch: (profile: string) => void,
+  onRefresh: (profile: string) => void,
+  onBaseUrl: (profile: string) => void,
+): void {
   if (!dashboard.profiles.length) {
     elements.profilesGrid.innerHTML =
       `<div class="empty-state">${t(state.locale, "profilesEmpty")}</div>`;
@@ -167,24 +189,75 @@ export function renderProfiles(dashboard: DashboardViewModel, onSwitch: (profile
 
   elements.profilesGrid.innerHTML = dashboard.profiles
     .map((profile) => {
-      const disabled = !profile.auth_present || state.loading || profile.status === "current";
+      const refreshRunning = state.refreshActiveProfile === profile.folder_name;
+      const refreshQueued =
+        !refreshRunning && state.refreshQueue.includes(profile.folder_name);
+      const refreshPending = refreshRunning || refreshQueued;
+      const renameDisabled =
+        state.loading || refreshPending || profile.status === "current";
+      const refreshDisabled =
+        !profile.auth_present || state.loading || refreshPending;
+      const baseDisabled = state.loading || refreshPending || !profile.auth_present;
+      const switchDisabled =
+        !profile.auth_present || state.loading || refreshPending || profile.status === "current";
       const plan = planLine(profile.plan_name, profile.subscription_days_left);
+      const accountLabel = profile.account_label?.trim() || "--";
+      const refreshTitle = refreshRunning
+        ? t(state.locale, "profileRefreshRunning")
+        : refreshQueued
+          ? t(state.locale, "profileRefreshQueued")
+          : refreshDisabled
+            ? t(state.locale, "profileRefreshDisabled")
+            : t(state.locale, "profileRefreshReady");
       return `
         <article class="profile-card status-${profile.status}">
           <header class="profile-card-header">
-            <div>
-              <h3 class="profile-title">${buildProfileTitleMarkup(profile.folder_name, profile.display_title)}</h3>
+            <div class="profile-card-actions">
+              <button
+                class="switch-icon-button profile-folder-button"
+                type="button"
+                title="${renameDisabled ? t(state.locale, "profileRenameDisabled") : t(state.locale, "profileRenameReady")}"
+                data-rename-profile="${profile.folder_name}"
+                ${renameDisabled ? "disabled" : ""}
+              >
+                ${escapeHtml(profile.folder_name)}
+              </button>
+              <button
+                class="switch-icon-button ${refreshPending ? "is-pending-refresh" : ""}"
+                type="button"
+                title="${refreshTitle}"
+                data-refresh-profile="${profile.folder_name}"
+                ${refreshDisabled ? "disabled" : ""}
+              >
+                ${
+                  refreshPending
+                    ? '<span class="button-spinner" aria-hidden="true"></span>'
+                    : t(state.locale, "refreshButton")
+                }
+              </button>
+              <button
+                class="switch-icon-button ${profile.openai_base_url ? "has-custom-base" : ""}"
+                type="button"
+                title="${t(state.locale, "profileBaseReady")}"
+                data-base-url-profile="${profile.folder_name}"
+                ${baseDisabled ? "disabled" : ""}
+              >
+                ${t(state.locale, "baseButton")}
+              </button>
+              <button
+                class="switch-icon-button"
+                type="button"
+                title="${switchDisabled ? t(state.locale, "profileSwitchDisabled") : t(state.locale, "profileSwitchReady")}"
+                data-switch-profile="${profile.folder_name}"
+                ${switchDisabled ? "disabled" : ""}
+              >
+                ${t(state.locale, "switch")}
+              </button>
+            </div>
+            <div class="profile-title">
+              <p class="profile-title-account">${escapeHtml(accountLabel)}</p>
               <p class="profile-plan">${plan}</p>
             </div>
-            <button
-              class="switch-icon-button"
-              type="button"
-              title="${disabled ? t(state.locale, "profileSwitchDisabled") : t(state.locale, "profileSwitchReady")}"
-              data-switch-profile="${profile.folder_name}"
-              ${disabled ? "disabled" : ""}
-            >
-              ${t(state.locale, "switch")}
-            </button>
           </header>
           ${buildQuotaMarkup(
             profile.quota,
@@ -197,14 +270,10 @@ export function renderProfiles(dashboard: DashboardViewModel, onSwitch: (profile
     })
     .join("");
 
-  for (const button of elements.profilesGrid.querySelectorAll<HTMLButtonElement>("[data-switch-profile]")) {
-    button.addEventListener("click", () => {
-      const profile = button.dataset.switchProfile;
-      if (profile) {
-        void onSwitch(profile);
-      }
-    });
-  }
+  bindProfileButtons("data-rename-profile", onRename);
+  bindProfileButtons("data-refresh-profile", onRefresh);
+  bindProfileButtons("data-base-url-profile", onBaseUrl);
+  bindProfileButtons("data-switch-profile", onSwitch);
 }
 
 export function renderPaging(paging: Pick<PagingInfo, "has_previous" | "has_next">): void {
@@ -229,9 +298,23 @@ export function applyLocale(): void {
   elements.dialogCopy.innerHTML = t(state.locale, "addProfileCopy")
     .replace("auth.json", "<code>auth.json</code>")
     .replace("profile.json", "<code>profile.json</code>");
+  elements.renameDialogTitle.textContent = t(state.locale, "renameProfileTitle");
+  elements.renameDialogCopy.textContent = t(state.locale, "renameProfileCopy");
+  elements.baseUrlDialogTitle.textContent = t(state.locale, "baseUrlTitle");
+  elements.baseUrlDialogCopy.textContent = t(state.locale, "baseUrlCopy");
   elements.folderNameLabel.textContent = t(state.locale, "folderName");
+  elements.addBaseUrlLabel.textContent = t(state.locale, "baseUrlLabel");
+  elements.addBaseUrlInput.placeholder = t(state.locale, "baseUrlPlaceholder");
+  elements.addBaseUrlCopy.textContent = t(state.locale, "baseUrlCopy");
+  elements.renameFolderNameLabel.textContent = t(state.locale, "folderName");
+  elements.baseUrlLabel.textContent = t(state.locale, "baseUrlLabel");
+  elements.baseUrlInput.placeholder = t(state.locale, "baseUrlPlaceholder");
   elements.cancelAddProfileButton.textContent = t(state.locale, "cancel");
   elements.submitAddProfileButton.textContent = t(state.locale, "create");
+  elements.cancelRenameProfileButton.textContent = t(state.locale, "cancel");
+  elements.submitRenameProfileButton.textContent = t(state.locale, "rename");
+  elements.cancelBaseUrlButton.textContent = t(state.locale, "cancel");
+  elements.submitBaseUrlButton.textContent = t(state.locale, "save");
   elements.localeToggleButton.textContent =
     state.locale === "en" ? t(state.locale, "languageChinese") : t(state.locale, "languageEnglish");
 }

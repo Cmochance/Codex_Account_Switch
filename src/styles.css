@@ -236,28 +236,27 @@ input {
 
 .profile-card-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
   margin-bottom: 18px;
 }
 
 .profile-title {
-  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
 }
 
-.profile-title-folder {
-  font-size: 2.05rem;
-  letter-spacing: -0.04em;
-  line-height: 1.05;
-  color: #163a57;
-  font-weight: 700;
+.profile-folder-button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-title-account {
+  margin: 0;
   color: #48657d;
   font-size: 1.1rem;
   font-weight: 520;
@@ -266,7 +265,7 @@ input {
 }
 
 .profile-plan {
-  margin: 12px 0 0;
+  margin: 0;
   color: #48657d;
   font-size: 1.1rem;
   font-weight: 520;
@@ -280,8 +279,16 @@ input {
   color: #5c7388;
 }
 
+.profile-card-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
 .switch-icon-button {
-  min-width: 74px;
+  width: 100%;
+  min-width: 0;
   height: 38px;
   padding: 0 14px;
   display: inline-flex;
@@ -300,6 +307,34 @@ input {
     inset 0 -8px 14px rgba(214, 228, 241, 0.2);
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+
+.switch-icon-button.is-pending-refresh {
+  position: relative;
+}
+
+.switch-icon-button.has-custom-base {
+  border-color: rgba(128, 170, 205, 0.92);
+  background: linear-gradient(180deg, rgba(239, 247, 253, 0.88), rgba(214, 229, 241, 0.68));
+}
+
+.button-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(36, 69, 96, 0.22);
+  border-top-color: #244560;
+  border-radius: 999px;
+  animation: button-spin 0.8s linear infinite;
+}
+
+@keyframes button-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .quota-group + .quota-group {
@@ -471,6 +506,12 @@ input {
 
 .field span {
   color: var(--text-secondary);
+}
+
+.field .field-copy {
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: #648099;
 }
 
 .field input {

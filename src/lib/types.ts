@@ -11,11 +11,13 @@ export interface QuotaSummary {
 export interface ProfileCard {
   folder_name: string;
   display_title: string;
+  account_label: string | null;
   status: "current" | "available" | "missing_auth";
   auth_present: boolean;
   has_account_identity: boolean;
   plan_name: string | null;
   subscription_days_left: number | null;
+  openai_base_url: string | null;
   quota: QuotaSummary;
 }
 

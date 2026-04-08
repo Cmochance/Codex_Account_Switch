@@ -1,16 +1,22 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
-use chrono::{DateTime, Duration, Local, LocalResult, NaiveDateTime, TimeZone, Utc};
+use chrono::{Local, TimeZone};
 use serde::Deserialize;
 
 use crate::models::{QuotaSummary, QuotaWindow};
 
 use super::paths::get_codex_home;
+use super::session_files::{collect_jsonl_files, file_modified_ms};
 
 const FIVE_HOUR_WINDOW_MINUTES: i64 = 300;
 const WEEKLY_WINDOW_MINUTES: i64 = 10_080;
+
+#[derive(Clone, Debug)]
+pub struct LocalQuotaSnapshot {
+    pub quota: QuotaSummary,
+    pub source_mtime_ms: Option<u64>,
+}
 
 #[derive(Deserialize)]
 struct SessionLine {
@@ -46,29 +52,6 @@ fn get_sessions_root(codex_home: Option<&Path>) -> PathBuf {
         .join("sessions")
 }
 
-fn collect_session_files(root: &Path, files: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_session_files(&path, files);
-            continue;
-        }
-
-        if path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"))
-        {
-            files.push(path);
-        }
-    }
-}
-
 fn session_files_descending(codex_home: Option<&Path>) -> Vec<PathBuf> {
     let sessions_root = get_sessions_root(codex_home);
     if !sessions_root.is_dir() {
@@ -76,7 +59,7 @@ fn session_files_descending(codex_home: Option<&Path>) -> Vec<PathBuf> {
     }
 
     let mut files = Vec::new();
-    collect_session_files(&sessions_root, &mut files);
+    collect_jsonl_files(&sessions_root, &mut files);
     files.sort_by(|left, right| right.as_os_str().cmp(left.as_os_str()));
     files
 }
@@ -88,67 +71,10 @@ fn format_reset_time(timestamp: i64) -> Option<String> {
         .map(|datetime| datetime.format("%Y-%m-%d %H:%M").to_string())
 }
 
-fn format_reset_datetime(datetime: DateTime<Local>) -> String {
-    datetime.format("%Y-%m-%d %H:%M").to_string()
-}
-
-fn parse_refresh_time(value: &str) -> Option<DateTime<Local>> {
-    DateTime::parse_from_rfc3339(value)
-        .ok()
-        .map(|datetime| datetime.with_timezone(&Local))
-        .or_else(|| {
-            let naive = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M").ok()?;
-            match Local.from_local_datetime(&naive) {
-                LocalResult::Single(datetime) => Some(datetime),
-                LocalResult::Ambiguous(datetime, _) => Some(datetime),
-                LocalResult::None => None,
-            }
-        })
-}
-
-fn quota_startup_anchor() -> DateTime<Local> {
-    static STARTUP_TS: OnceLock<i64> = OnceLock::new();
-
-    let timestamp = *STARTUP_TS.get_or_init(|| Utc::now().timestamp());
-    Local
-        .timestamp_opt(timestamp, 0)
-        .single()
-        .unwrap_or_else(Local::now)
-}
-
-fn next_refresh_after(
-    mut refresh_at: DateTime<Local>,
-    window_duration: Duration,
-    now: DateTime<Local>,
-) -> DateTime<Local> {
-    while refresh_at <= now {
-        refresh_at += window_duration;
-    }
-
-    refresh_at
-}
-
-fn normalize_quota_window(
-    window: QuotaWindow,
-    window_duration: Duration,
-    default_refresh_at: DateTime<Local>,
-) -> QuotaWindow {
-    let now = Local::now();
-    let mut remaining_percent = window.remaining_percent.map(|value| value.min(100));
-    let mut refresh_at = window
-        .refresh_at
-        .as_deref()
-        .and_then(parse_refresh_time)
-        .unwrap_or(default_refresh_at);
-
-    if refresh_at <= now {
-        remaining_percent = Some(100);
-        refresh_at = next_refresh_after(refresh_at, window_duration, now);
-    }
-
+fn normalize_quota_window(window: QuotaWindow) -> QuotaWindow {
     QuotaWindow {
-        remaining_percent: Some(remaining_percent.unwrap_or(100)),
-        refresh_at: Some(format_reset_datetime(refresh_at)),
+        remaining_percent: window.remaining_percent.map(|value| value.min(100)),
+        refresh_at: window.refresh_at,
     }
 }
 
@@ -167,24 +93,15 @@ pub fn normalize_quota_summary(
         return QuotaSummary::default();
     }
 
-    let anchor = quota_startup_anchor();
     let quota = quota.unwrap_or_default();
 
     QuotaSummary {
         five_hour: if is_free_plan(plan_name) {
             QuotaWindow::default()
         } else {
-            normalize_quota_window(
-                quota.five_hour,
-                Duration::minutes(FIVE_HOUR_WINDOW_MINUTES),
-                anchor + Duration::minutes(FIVE_HOUR_WINDOW_MINUTES),
-            )
+            normalize_quota_window(quota.five_hour)
         },
-        weekly: normalize_quota_window(
-            quota.weekly,
-            Duration::minutes(WEEKLY_WINDOW_MINUTES),
-            anchor + Duration::minutes(WEEKLY_WINDOW_MINUTES),
-        ),
+        weekly: normalize_quota_window(quota.weekly),
     }
 }
 
@@ -272,10 +189,29 @@ fn load_latest_quota_from_file(path: &Path) -> Option<QuotaSummary> {
     latest_quota
 }
 
+#[allow(dead_code)]
 pub fn load_latest_local_quota(codex_home: Option<&Path>) -> Option<QuotaSummary> {
+    load_latest_local_quota_snapshot(codex_home).map(|snapshot| snapshot.quota)
+}
+
+pub fn load_latest_local_quota_snapshot(codex_home: Option<&Path>) -> Option<LocalQuotaSnapshot> {
+    load_latest_local_quota_snapshot_since(codex_home, None)
+}
+
+pub fn load_latest_local_quota_snapshot_since(
+    codex_home: Option<&Path>,
+    min_source_mtime_ms: Option<u64>,
+) -> Option<LocalQuotaSnapshot> {
     for path in session_files_descending(codex_home).into_iter().take(32) {
+        let source_mtime_ms = file_modified_ms(&path);
+        if min_source_mtime_ms.is_some_and(|min_mtime| source_mtime_ms.unwrap_or(0) < min_mtime) {
+            continue;
+        }
         if let Some(quota) = load_latest_quota_from_file(&path) {
-            return Some(quota);
+            return Some(LocalQuotaSnapshot {
+                quota,
+                source_mtime_ms,
+            });
         }
     }
 
@@ -284,8 +220,9 @@ pub fn load_latest_local_quota(codex_home: Option<&Path>) -> Option<QuotaSummary
 
 #[cfg(test)]
 mod tests {
-    use super::{load_latest_local_quota, normalize_quota_summary};
-    use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone};
+    use super::{
+        load_latest_local_quota, load_latest_local_quota_snapshot_since, normalize_quota_summary,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -364,32 +301,62 @@ mod tests {
         let _ = fs::remove_dir_all(&codex_home);
     }
 
-    fn parse_local_refresh(value: &str) -> DateTime<Local> {
-        let naive = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M").unwrap();
-        match Local.from_local_datetime(&naive) {
-            chrono::LocalResult::Single(datetime) => datetime,
-            chrono::LocalResult::Ambiguous(datetime, _) => datetime,
-            chrono::LocalResult::None => panic!("invalid local datetime"),
-        }
+    #[test]
+    fn load_latest_local_quota_snapshot_since_skips_older_sessions() {
+        let codex_home = temp_codex_home("latest-since");
+        let old_dir = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("07");
+        let new_dir = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("08");
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::create_dir_all(&new_dir).unwrap();
+        let old_path = old_dir.join("rollout-2026-04-07T08-00-00.jsonl");
+        let new_path = new_dir.join("rollout-2026-04-08T08-00-00.jsonl");
+        fs::write(
+            &old_path,
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":50.0,\"resets_at\":1775000000,\"window_minutes\":300},\"secondary\":{\"used_percent\":40.0,\"resets_at\":1775600000,\"window_minutes\":10080}}}}\n",
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let threshold = fs::metadata(&old_path)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            + 1;
+        fs::write(
+            &new_path,
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":10.0,\"resets_at\":1776000000,\"window_minutes\":10080},\"secondary\":null}}}\n",
+        )
+        .unwrap();
+
+        let quota = load_latest_local_quota_snapshot_since(Some(&codex_home), Some(threshold)).unwrap();
+
+        assert_eq!(quota.quota.five_hour.remaining_percent, None);
+        assert_eq!(quota.quota.weekly.remaining_percent, Some(90));
+        let _ = fs::remove_dir_all(&codex_home);
     }
 
     #[test]
-    fn normalize_quota_summary_defaults_missing_windows_to_full_allowance() {
-        let now = Local::now();
+    fn normalize_quota_summary_keeps_missing_windows_empty() {
         let quota = normalize_quota_summary(None, Some("pro"), true);
 
-        assert_eq!(quota.five_hour.remaining_percent, Some(100));
-        assert_eq!(quota.weekly.remaining_percent, Some(100));
-
-        let five_hour_refresh = parse_local_refresh(quota.five_hour.refresh_at.as_deref().unwrap());
-        let weekly_refresh = parse_local_refresh(quota.weekly.refresh_at.as_deref().unwrap());
-
-        assert!(five_hour_refresh > now + Duration::minutes(295));
-        assert!(weekly_refresh > now + Duration::minutes(10_000));
+        assert_eq!(quota.five_hour.remaining_percent, None);
+        assert_eq!(quota.five_hour.refresh_at, None);
+        assert_eq!(quota.weekly.remaining_percent, None);
+        assert_eq!(quota.weekly.refresh_at, None);
     }
 
     #[test]
-    fn normalize_quota_summary_restores_expired_windows_to_full_allowance() {
+    fn normalize_quota_summary_preserves_existing_profile_values() {
         let quota = normalize_quota_summary(
             Some(QuotaSummary {
                 five_hour: QuotaWindow {
@@ -405,15 +372,10 @@ mod tests {
             true,
         );
 
-        assert_eq!(quota.five_hour.remaining_percent, Some(100));
-        assert_eq!(quota.weekly.remaining_percent, Some(100));
-
-        let five_hour_refresh = parse_local_refresh(quota.five_hour.refresh_at.as_deref().unwrap());
-        let weekly_refresh = parse_local_refresh(quota.weekly.refresh_at.as_deref().unwrap());
-        let now = Local::now();
-
-        assert!(five_hour_refresh > now);
-        assert!(weekly_refresh > now);
+        assert_eq!(quota.five_hour.remaining_percent, Some(12));
+        assert_eq!(quota.five_hour.refresh_at.as_deref(), Some("2000-01-01 00:00"));
+        assert_eq!(quota.weekly.remaining_percent, Some(34));
+        assert_eq!(quota.weekly.refresh_at.as_deref(), Some("2000-01-02 00:00"));
     }
 
     #[test]

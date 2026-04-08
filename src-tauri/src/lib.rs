@@ -11,7 +11,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             windows::bootstrap::ensure_backup_initialized(None)?;
+            windows::bootstrap::ensure_refresh_runtime_config_initialized(None)?;
             windows::bootstrap::sync_root_state_to_current_profile(None)?;
+            windows::config::sync_root_openai_base_url_for_current_profile(None)?;
             windows::profiles_index::load_profiles_index(None)?;
             Ok(windowing::install(app)?)
         })
@@ -20,6 +22,9 @@ pub fn run() {
             commands::dashboard::get_current_live_quota,
             commands::actions::open_codex,
             commands::actions::login_current_profile,
+            commands::actions::refresh_profile,
+            commands::actions::rename_profile,
+            commands::actions::update_profile_base_url,
             commands::actions::open_profile_folder,
             commands::actions::add_profile,
             commands::actions::open_contact,

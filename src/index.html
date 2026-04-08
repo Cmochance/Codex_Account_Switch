@@ -52,11 +52,71 @@
           <input id="folder-name-input" name="folder_name" type="text" autocomplete="off" required />
         </label>
 
+        <label class="field">
+          <span id="add-base-url-label">Base Url</span>
+          <input
+            id="add-base-url-input"
+            name="openai_base_url"
+            type="text"
+            autocomplete="off"
+            placeholder="https://example.com/v1"
+          />
+          <span id="add-base-url-copy" class="field-copy">Must start with http:// or https://. Only fill this for API KEY logins, otherwise Codex will fail.</span>
+        </label>
+
         <p id="dialog-error" class="dialog-error" hidden></p>
 
         <div class="dialog-actions">
           <button id="cancel-add-profile-button" class="ghost-button" type="button">Cancel</button>
           <button id="submit-add-profile-button" class="primary-button" type="submit">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="rename-profile-dialog" class="dialog">
+      <form id="rename-profile-form" class="dialog-form" method="dialog">
+        <div class="dialog-copy">
+          <h3 id="rename-dialog-title">Rename Profile</h3>
+          <p id="rename-dialog-copy">Enter a new folder name for this profile.</p>
+        </div>
+
+        <label class="field">
+          <span id="rename-folder-name-label">Folder name</span>
+          <input id="rename-folder-name-input" name="folder_name" type="text" autocomplete="off" required />
+        </label>
+
+        <p id="rename-dialog-error" class="dialog-error" hidden></p>
+
+        <div class="dialog-actions">
+          <button id="cancel-rename-profile-button" class="ghost-button" type="button">Cancel</button>
+          <button id="submit-rename-profile-button" class="primary-button" type="submit">Rename</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="base-url-dialog" class="dialog">
+      <form id="base-url-form" class="dialog-form" method="dialog">
+        <div class="dialog-copy">
+          <h3 id="base-url-dialog-title">Custom Base Url</h3>
+          <p id="base-url-dialog-copy">Must start with http:// or https://. Only fill this for API KEY logins, otherwise Codex will fail.</p>
+        </div>
+
+        <label class="field">
+          <span id="base-url-label">Base Url</span>
+          <input
+            id="base-url-input"
+            name="openai_base_url"
+            type="text"
+            autocomplete="off"
+            placeholder="https://example.com/v1"
+          />
+        </label>
+
+        <p id="base-url-dialog-error" class="dialog-error" hidden></p>
+
+        <div class="dialog-actions">
+          <button id="cancel-base-url-button" class="ghost-button" type="button">Cancel</button>
+          <button id="submit-base-url-button" class="primary-button" type="submit">Save</button>
         </div>
       </form>
     </dialog>

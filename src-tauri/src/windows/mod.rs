@@ -1,14 +1,25 @@
-pub mod actions;
 pub mod bootstrap;
+pub mod config;
 pub mod fs_ops;
 pub mod install;
 pub mod metadata;
 pub mod paths;
+pub mod profile_actions;
 pub mod process;
 pub mod profiles;
 pub mod profiles_index;
+pub mod refresh_runtime;
+pub mod session_files;
 pub mod session_usage;
 pub mod switch;
+
+pub mod actions {
+    pub use super::profile_actions::{
+        add_profile, login_current_profile, open_codex_app, open_contact, open_profile_folder,
+        rename_profile, update_profile_base_url,
+    };
+    pub use super::refresh_runtime::refresh_profile;
+}
 
 #[cfg(test)]
 pub(crate) fn env_lock() -> &'static std::sync::Mutex<()> {

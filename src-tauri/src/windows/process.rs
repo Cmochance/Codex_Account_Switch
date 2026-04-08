@@ -14,6 +14,7 @@ use crate::errors::{AppError, AppResult};
 
 use super::paths::{get_codex_home, get_install_state_file, APP_PROCESS_NAME};
 
+const AUTH_REFRESH_PROMPT: &str = "Reply with the single word OK.";
 const WINDOWS_INVOKABLE_SUFFIXES: [&str; 4] = ["cmd", "exe", "bat", "com"];
 const WINDOWS_STORE_APP_ID: &str = "OpenAI.Codex_2p2nqsd0c76g0!App";
 const WINDOWS_STORE_SHELL_PREFIX: &str = r"shell:AppsFolder\";
@@ -290,6 +291,21 @@ pub fn forward_to_real_codex(args: &[String], codex_home: Option<&Path>) -> AppR
     Ok(status.code().unwrap_or(1))
 }
 
+fn build_auth_refresh_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Command {
+    let mut command = Command::new(real_codex_path);
+    command.args([
+        "exec",
+        "--skip-git-repo-check",
+        "--color",
+        "never",
+        AUTH_REFRESH_PROMPT,
+    ]);
+    hide_console_window(&mut command);
+    command.current_dir(runtime_codex_home);
+    command.env("CODEX_HOME", runtime_codex_home);
+    command
+}
+
 fn build_login_command(codex_home: &Path) -> Command {
     let mut command = if let Some(real_codex_path) = resolve_real_codex_cli(Some(codex_home)) {
         let mut command = Command::new(real_codex_path);
@@ -309,6 +325,40 @@ fn build_login_command(codex_home: &Path) -> Command {
     command.current_dir(codex_home);
     command.env("CODEX_HOME", codex_home);
     command
+}
+
+pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
+    let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) else {
+        return Err(AppError::new(
+            "REAL_CODEX_NOT_FOUND",
+            "Real Codex CLI path not found. Run `codex_switch_cli.exe install` first.",
+        ));
+    };
+
+    let output = build_auth_refresh_command(&real_codex_path, runtime_codex_home)
+        .output()
+        .map_err(|error| {
+            AppError::new(
+                "AUTH_REFRESH_COMMAND_FAILED",
+                format!("Failed to start `codex exec` for auth refresh: {error}"),
+            )
+        })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let message = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        "`codex exec` exited without a success status while refreshing auth.".to_string()
+    };
+
+    Err(AppError::new("AUTH_REFRESH_FAILED", message))
 }
 
 pub fn run_codex_login(codex_home: &Path) -> AppResult<()> {
@@ -392,9 +442,9 @@ pub fn reopen_codex_app_if_needed(app_was_running: bool, _codex_home: Option<&Pa
 #[cfg(test)]
 mod tests {
     use super::{
-        discover_real_codex_cli_path, load_install_state, resolve_windows_app_target,
-        resolve_real_codex_cli, windows_store_shell_target, AppLaunchTarget, InstallState,
-        WINDOWS_STORE_APP_ID,
+        build_auth_refresh_command, discover_real_codex_cli_path, load_install_state,
+        resolve_windows_app_target, resolve_real_codex_cli, windows_store_shell_target,
+        AppLaunchTarget, InstallState, AUTH_REFRESH_PROMPT, WINDOWS_STORE_APP_ID,
     };
     use crate::windows::env_guard;
     use serde_json::to_string_pretty;
@@ -468,6 +518,45 @@ mod tests {
             Some(npm_dir.join("codex.cmd").to_string_lossy().into_owned())
         );
         let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn build_auth_refresh_command_targets_runtime_codex_home() {
+        let runtime_codex_home = temp_codex_home("auth-refresh-command");
+        let real_codex_path = runtime_codex_home.join("bin").join("codex.exe");
+        let command = build_auth_refresh_command(&real_codex_path, &runtime_codex_home);
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let envs = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), real_codex_path.as_os_str());
+        assert_eq!(
+            args,
+            vec![
+                "exec".to_string(),
+                "--skip-git-repo-check".to_string(),
+                "--color".to_string(),
+                "never".to_string(),
+                AUTH_REFRESH_PROMPT.to_string(),
+            ]
+        );
+        assert_eq!(command.get_current_dir(), Some(runtime_codex_home.as_path()));
+        assert!(envs.iter().any(|(key, value)| {
+            key == "CODEX_HOME"
+                && value.as_deref()
+                    == Some(runtime_codex_home.to_string_lossy().as_ref())
+        }));
     }
 
     #[test]
