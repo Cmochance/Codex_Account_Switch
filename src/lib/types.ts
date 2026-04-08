@@ -24,6 +24,7 @@ export interface ProfileCard {
 export interface CurrentCard {
   folder_name: string;
   display_title: string;
+  account_label: string | null;
   has_account_identity: boolean;
   plan_name: string | null;
   subscription_days_left: number | null;

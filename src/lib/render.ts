@@ -162,7 +162,7 @@ export function renderCurrentCard(dashboard: DashboardViewModel): void {
   }
 
   state.currentProfile = current.folder_name;
-  elements.currentTitle.textContent = current.display_title;
+  elements.currentTitle.textContent = current.account_label?.trim() || "--";
   elements.currentPlan.textContent = planLine(current.plan_name, current.subscription_days_left);
   elements.currentLoginButton.disabled = state.loading;
   elements.openCurrentFolderButton.disabled = false;

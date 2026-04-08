@@ -245,6 +245,7 @@ fn build_current_card(entry: &ProfileIndexEntry, codex_home: &Path) -> CurrentCa
     CurrentCard {
         folder_name: entry.folder_name.clone(),
         display_title: build_display_title(&entry.folder_name, entry.account_label.as_deref()),
+        account_label: entry.account_label.clone(),
         has_account_identity: entry.has_account_identity,
         plan_name: entry.plan_name.clone(),
         subscription_days_left: compute_subscription_days_left(

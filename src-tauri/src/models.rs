@@ -72,6 +72,7 @@ pub struct ProfileCard {
 pub struct CurrentCard {
     pub folder_name: String,
     pub display_title: String,
+    pub account_label: Option<String>,
     pub has_account_identity: bool,
     pub plan_name: Option<String>,
     pub subscription_days_left: Option<i64>,

@@ -446,6 +446,14 @@ input {
   font-weight: 520;
 }
 
+.current-account-title {
+  color: #48657d;
+  font-size: 1.1rem;
+  font-weight: 520;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .locale-toggle-button {
   min-width: 64px;
   height: 36px;
