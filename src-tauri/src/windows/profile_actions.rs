@@ -14,6 +14,7 @@ use super::metadata::{
 };
 use super::paths::{
     get_backup_root, get_codex_home, validate_profile_name, CONTACT_URL, RELEASES_URL,
+    XIAOHONGSHU_URL,
 };
 use super::process::{open_or_activate_codex_app, run_codex_login};
 use super::profiles::resolve_current_profile;
@@ -248,6 +249,19 @@ pub fn open_releases(app: &tauri::AppHandle) -> AppResult<String> {
         })?;
 
     Ok(RELEASES_URL.to_string())
+}
+
+pub fn open_xiaohongshu(app: &tauri::AppHandle) -> AppResult<String> {
+    app.opener()
+        .open_url(XIAOHONGSHU_URL, None::<&str>)
+        .map_err(|error| {
+            AppError::new(
+                "XIAOHONGSHU_URL_OPEN_FAILED",
+                format!("Failed to open Xiaohongshu URL: {error}"),
+            )
+        })?;
+
+    Ok(XIAOHONGSHU_URL.to_string())
 }
 
 #[cfg(test)]

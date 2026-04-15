@@ -114,3 +114,13 @@ pub fn open_releases(app: tauri::AppHandle) -> Result<ActionResponse, CommandErr
         path: Some(path),
     })
 }
+
+#[tauri::command]
+pub fn open_xiaohongshu(app: tauri::AppHandle) -> Result<ActionResponse, CommandError> {
+    let path = windows::actions::open_xiaohongshu(&app)?;
+    Ok(ActionResponse {
+        ok: true,
+        message: "Opened Xiaohongshu URL.".to_string(),
+        path: Some(path),
+    })
+}

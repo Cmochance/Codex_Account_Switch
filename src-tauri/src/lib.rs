@@ -28,6 +28,7 @@ pub fn run() {
             commands::actions::add_profile,
             commands::actions::open_contact,
             commands::actions::open_releases,
+            commands::actions::open_xiaohongshu,
             commands::switch::switch_profile,
         ])
         .run(tauri::generate_context!())

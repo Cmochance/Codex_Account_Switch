@@ -13,6 +13,7 @@ import {
   openCodex,
   openContact,
   openReleases,
+  openXiaohongshu,
   openProfileFolder,
   refreshProfile,
   renameProfile,
@@ -27,6 +28,10 @@ import {
   renderProfiles,
   showToast,
 } from "./render";
+
+type ErrorWithCode = Error & {
+  code?: string;
+};
 
 function rerenderDashboard(): void {
   applyLocale();
@@ -133,6 +138,29 @@ async function refreshAllData(showError = true): Promise<void> {
   }
 }
 
+function isExpiredProfileAuthError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const code = (error as ErrorWithCode).code;
+  if (code === "AUTH_REFRESH_RELOGIN_REQUIRED") {
+    return true;
+  }
+
+  return /token_invalidated|refresh_token_reused|sign(?:ing)? in again|log out and sign in again/i.test(
+    error.message,
+  );
+}
+
+function refreshProfileErrorMessage(error: unknown): string {
+  if (isExpiredProfileAuthError(error)) {
+    return t(state.locale, "profileRefreshRequiresLogin");
+  }
+
+  return error instanceof Error ? error.message : t(state.locale, "failedToRefreshProfile");
+}
+
 async function handleSwitchProfile(profile: string): Promise<void> {
   try {
     await runBlockingAction(async () => {
@@ -165,10 +193,7 @@ async function drainRefreshQueue(): Promise<void> {
         showToast(t(state.locale, "refreshedProfile", { profile }));
         await refreshAllData(false);
       } catch (error) {
-        showToast(
-          error instanceof Error ? error.message : t(state.locale, "failedToRefreshProfile"),
-          true,
-        );
+        showToast(refreshProfileErrorMessage(error), true);
       } finally {
         state.refreshActiveProfile = null;
         rerenderDashboard();
@@ -267,6 +292,15 @@ async function handleOpenReleases(): Promise<void> {
     showToast(t(state.locale, "openedReleases"));
   } catch (error) {
     showToast(error instanceof Error ? error.message : t(state.locale, "failedToOpenReleases"), true);
+  }
+}
+
+async function handleOpenXiaohongshu(): Promise<void> {
+  try {
+    await openXiaohongshu();
+    showToast(t(state.locale, "openedXiaohongshu"));
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : t(state.locale, "failedToOpenXiaohongshu"), true);
   }
 }
 
@@ -405,6 +439,9 @@ export function bootstrap(): void {
   });
   elements.upgradeButton.addEventListener("click", () => {
     void handleOpenReleases();
+  });
+  elements.xiaohongshuButton.addEventListener("click", () => {
+    void handleOpenXiaohongshu();
   });
   elements.addProfilesButton.addEventListener("click", openAddProfileDialog);
   elements.cancelAddProfileButton.addEventListener("click", () => {

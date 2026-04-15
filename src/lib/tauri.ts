@@ -11,6 +11,10 @@ import type {
   SwitchResponse,
 } from "./types";
 
+type NativeCommandError = Error & {
+  code?: string;
+};
+
 type RuntimeWindow = typeof globalThis & {
   __TAURI_INTERNALS__?: unknown;
   __TAURI__?: unknown;
@@ -160,8 +164,10 @@ function toError(error: unknown): Error {
 
   if (error && typeof error === "object") {
     const payload = error as CommandError;
-    if (payload.message) {
-      return new Error(payload.message);
+    if (payload.message || payload.error_code) {
+      const nextError = new Error(payload.message || "Unknown native command error.") as NativeCommandError;
+      nextError.code = payload.error_code;
+      return nextError;
     }
   }
 
@@ -265,6 +271,7 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
       case "refresh_profile":
       case "open_releases":
       case "open_contact":
+      case "open_xiaohongshu":
         return mockAction(`${command} completed in preview mode`) as Promise<T>;
       default:
         return Promise.reject(new Error(`Unsupported preview command: ${command}`));
@@ -333,4 +340,8 @@ export function openContact(): Promise<ActionResponse> {
 
 export function openReleases(): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("open_releases");
+}
+
+export function openXiaohongshu(): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("open_xiaohongshu");
 }

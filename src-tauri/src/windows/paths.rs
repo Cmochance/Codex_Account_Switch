@@ -17,6 +17,7 @@ pub const WINDOWS_RUNTIME_DIRNAME: &str = "windows";
 pub const APP_PROCESS_NAME: &str = "Codex.exe";
 pub const CONTACT_URL: &str = "https://github.com/Cmochance/Codex_Account_Switch";
 pub const RELEASES_URL: &str = "https://github.com/Cmochance/Codex_Account_Switch/releases";
+pub const XIAOHONGSHU_URL: &str = "https://www.xiaohongshu.com/explore/69df8fca000000002302203c";
 pub const DEFAULT_PAGE_SIZE: u32 = 6;
 
 fn fallback_home_dir() -> PathBuf {

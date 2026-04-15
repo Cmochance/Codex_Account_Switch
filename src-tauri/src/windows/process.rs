@@ -327,6 +327,25 @@ fn build_login_command(codex_home: &Path) -> Command {
     command
 }
 
+fn classify_auth_refresh_failure(message: &str) -> Option<AppError> {
+    let normalized = message.to_ascii_lowercase();
+    let requires_relogin = normalized.contains("token_invalidated")
+        || normalized.contains("refresh_token_reused")
+        || normalized.contains("authentication token has been invalidated")
+        || normalized.contains("refresh token has already been used")
+        || normalized.contains("please try signing in again")
+        || normalized.contains("please log out and sign in again");
+
+    if requires_relogin {
+        return Some(AppError::new(
+            "AUTH_REFRESH_RELOGIN_REQUIRED",
+            "This account session has expired. Please log in again.",
+        ));
+    }
+
+    None
+}
+
 pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
     let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) else {
         return Err(AppError::new(
@@ -357,6 +376,10 @@ pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) 
     } else {
         "`codex exec` exited without a success status while refreshing auth.".to_string()
     };
+
+    if let Some(error) = classify_auth_refresh_failure(&message) {
+        return Err(error);
+    }
 
     Err(AppError::new("AUTH_REFRESH_FAILED", message))
 }
@@ -442,9 +465,10 @@ pub fn reopen_codex_app_if_needed(app_was_running: bool, _codex_home: Option<&Pa
 #[cfg(test)]
 mod tests {
     use super::{
-        build_auth_refresh_command, discover_real_codex_cli_path, load_install_state,
-        resolve_windows_app_target, resolve_real_codex_cli, windows_store_shell_target,
-        AppLaunchTarget, InstallState, AUTH_REFRESH_PROMPT, WINDOWS_STORE_APP_ID,
+        build_auth_refresh_command, classify_auth_refresh_failure, discover_real_codex_cli_path,
+        load_install_state, resolve_real_codex_cli, resolve_windows_app_target,
+        windows_store_shell_target, AppLaunchTarget, InstallState, AUTH_REFRESH_PROMPT,
+        WINDOWS_STORE_APP_ID,
     };
     use crate::windows::env_guard;
     use serde_json::to_string_pretty;
@@ -572,5 +596,34 @@ mod tests {
             ))
         );
         let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn classify_auth_refresh_failure_detects_invalidated_token_errors() {
+        let error = classify_auth_refresh_failure(
+            "401 Unauthorized: Your authentication token has been invalidated. Please try signing in again. code: token_invalidated",
+        )
+        .unwrap();
+
+        assert_eq!(error.error_code, "AUTH_REFRESH_RELOGIN_REQUIRED");
+        assert_eq!(
+            error.message,
+            "This account session has expired. Please log in again."
+        );
+    }
+
+    #[test]
+    fn classify_auth_refresh_failure_detects_reused_refresh_token_errors() {
+        let error = classify_auth_refresh_failure(
+            "Failed to refresh token: 401 Unauthorized: {\"error\":{\"message\":\"Your refresh token has already been used to generate a new access token. Please try signing in again.\",\"code\":\"refresh_token_reused\"}}",
+        )
+        .unwrap();
+
+        assert_eq!(error.error_code, "AUTH_REFRESH_RELOGIN_REQUIRED");
+    }
+
+    #[test]
+    fn classify_auth_refresh_failure_ignores_non_auth_messages() {
+        assert!(classify_auth_refresh_failure("network timeout").is_none());
     }
 }

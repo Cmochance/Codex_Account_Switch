@@ -462,8 +462,7 @@ button.pager-pill:hover:not(:disabled) {
   min-width: 0;
 }
 
-.profile-title-account,
-.current-account-title {
+.profile-title-account {
   font-family: var(--font-display);
   line-height: 0.98;
   letter-spacing: -0.014em;
@@ -721,7 +720,14 @@ button.pager-pill:disabled {
 }
 
 .current-account-title {
-  font-size: 2.1rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 400;
+  line-height: 1.25;
+  letter-spacing: 0;
 }
 
 .current-actions {
