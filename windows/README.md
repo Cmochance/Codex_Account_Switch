@@ -1,6 +1,6 @@
 # Legacy Note
 
-Windows Python scripts were removed.
+Historical Windows scripts were removed.
 
 Windows install, uninstall, shim forwarding, and `codex switch` CLI now live in the Rust/Tauri runtime under [`src-tauri/`](../src-tauri/).
 

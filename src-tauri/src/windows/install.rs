@@ -487,19 +487,19 @@ fn uninstall_with_path_hook(
     };
 
     if remove_script {
-        let legacy_python_cli = runtime_dir.join("codex_switch.py");
-        if legacy_python_cli.exists() {
-            remove_path(&legacy_python_cli)?;
+        let legacy_cli_script = runtime_dir.join("codex_switch.py");
+        if legacy_cli_script.exists() {
+            remove_path(&legacy_cli_script)?;
         }
 
-        let legacy_python_common = runtime_dir.join("common.py");
-        if legacy_python_common.exists() {
-            remove_path(&legacy_python_common)?;
+        let legacy_common_script = runtime_dir.join("common.py");
+        if legacy_common_script.exists() {
+            remove_path(&legacy_common_script)?;
         }
 
-        let legacy_python_cache = runtime_dir.join("__pycache__");
-        if legacy_python_cache.exists() {
-            remove_path(&legacy_python_cache)?;
+        let legacy_cache_dir = runtime_dir.join("__pycache__");
+        if legacy_cache_dir.exists() {
+            remove_path(&legacy_cache_dir)?;
         }
     }
 

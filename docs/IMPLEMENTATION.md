@@ -19,8 +19,8 @@
     - dashboard view-model shaping in `src/lib/dashboard-view-model.ts`
     - native invoke wrapper in `src/lib/tauri.ts`
   - native commands and CLI runtime under `src-tauri/`
-- The desktop app does not use a local Python backend or HTTP server at runtime
-- `windows/` and `tests/` remain in the repository as legacy compatibility assets while the Rust path is the primary runtime and regression target
+- The desktop app does not use a separate local backend or HTTP server at runtime
+- `windows/` remains only as a historical note directory while the Rust path is the primary runtime and regression target
 
 ## Installation behavior
 
@@ -114,4 +114,3 @@ Windows desktop app discovery first prefers the path recorded in `install_state.
 - Primary regression baseline is the Rust suite under `src-tauri/`
 - Root command: `npm test`
 - Equivalent direct command: `cargo test --manifest-path src-tauri/Cargo.toml`
-- Python tests under `tests/` are supplemental legacy compatibility coverage and are not the default regression gate
