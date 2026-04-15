@@ -2,15 +2,20 @@ export type Locale = "en" | "zh-CN";
 
 const enMessages = {
   appTitle: "Codex Switch",
-  currentSession: "Current session",
-  currentQuota: "Current quota",
+  currentSession: "Current Account",
+  profilesHeading: "Profiles",
+  controlDeck: "Control Deck",
+  quotaMonitor: "Live quota monitor",
   login: "Login",
-  openFolder: "Open folder",
+  openFolder: "Open Folder",
   addProfiles: "Add Profiles",
   openCodex: "Open Codex",
-  contactUs: "Contact Us",
-  previous: "Previous",
+  contactUs: "Like it? Leave a Star!",
+  previous: "Prev",
   next: "Next",
+  upgrade: "Check for updates",
+  star: "Guide",
+  xiaohongshu: "Xiaohongshu",
   addProfileTitle: "Add Profile",
   addProfileCopy: "Create a new backup folder with template auth.json and profile.json.",
   renameProfileTitle: "Rename Profile",
@@ -63,6 +68,8 @@ const enMessages = {
   failedToLogin: "Failed to log in current profile.",
   openedRepository: "Opened repository",
   failedToOpenRepository: "Failed to open repository.",
+  openedReleases: "Opened releases page",
+  failedToOpenReleases: "Failed to open releases page.",
   createdProfile: "Created profile {profile}",
   failedToCreateProfile: "Failed to create profile.",
   subscriptionFallback: "Subscription • {days} days left",
@@ -78,14 +85,19 @@ const messages: Record<Locale, Messages> = {
   "zh-CN": {
     appTitle: "Codex Switch",
     currentSession: "当前账号",
-    currentQuota: "当前额度",
+    profilesHeading: "账号列表",
+    controlDeck: "控制面板",
+    quotaMonitor: "实时额度监控",
     login: "登录",
     openFolder: "打开文件夹",
     addProfiles: "添加账号",
     openCodex: "打开 Codex",
-    contactUs: "联系我们",
+    contactUs: "觉得好用，点个Star！",
     previous: "上一页",
     next: "下一页",
+    upgrade: "检查版本更新",
+    star: "使用指南",
+    xiaohongshu: "小红书",
     addProfileTitle: "添加账号",
     addProfileCopy: "创建新的备份文件夹，并写入 auth.json 与 profile.json 模板。",
     renameProfileTitle: "重命名账号",
@@ -138,6 +150,8 @@ const messages: Record<Locale, Messages> = {
     failedToLogin: "当前账号登录失败。",
     openedRepository: "已打开仓库地址",
     failedToOpenRepository: "打开仓库地址失败。",
+    openedReleases: "已打开版本更新页面",
+    failedToOpenReleases: "打开版本更新页面失败。",
     createdProfile: "已创建账号 {profile}",
     failedToCreateProfile: "创建账号失败。",
     subscriptionFallback: "订阅 • 剩余 {days} 天",
@@ -153,9 +167,7 @@ export function resolveInitialLocale(): Locale {
   if (stored === "en" || stored === "zh-CN") {
     return stored;
   }
-
-  const language = globalThis.navigator?.language?.toLowerCase() ?? "";
-  return language.startsWith("zh") ? "zh-CN" : "en";
+  return "en";
 }
 
 export function persistLocale(locale: Locale): void {

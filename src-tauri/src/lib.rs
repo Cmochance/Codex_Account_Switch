@@ -7,7 +7,6 @@ mod windows;
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(windowing::WindowSizingState::new())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             windows::bootstrap::ensure_backup_initialized(None)?;
@@ -28,6 +27,7 @@ pub fn run() {
             commands::actions::open_profile_folder,
             commands::actions::add_profile,
             commands::actions::open_contact,
+            commands::actions::open_releases,
             commands::switch::switch_profile,
         ])
         .run(tauri::generate_context!())

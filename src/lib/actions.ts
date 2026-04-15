@@ -12,6 +12,7 @@ import {
   loginCurrentProfile,
   openCodex,
   openContact,
+  openReleases,
   openProfileFolder,
   refreshProfile,
   renameProfile,
@@ -32,7 +33,7 @@ function rerenderDashboard(): void {
 
   const dashboard = buildDashboardViewModel();
   if (!dashboard) {
-    renderPaging({ has_previous: false, has_next: false });
+    renderPaging({ has_previous: false, has_next: false, page: 1, total_pages: 1 });
     return;
   }
 
@@ -260,6 +261,15 @@ async function handleOpenContact(): Promise<void> {
   }
 }
 
+async function handleOpenReleases(): Promise<void> {
+  try {
+    await openReleases();
+    showToast(t(state.locale, "openedReleases"));
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : t(state.locale, "failedToOpenReleases"), true);
+  }
+}
+
 function openAddProfileDialog(): void {
   openTextDialog({
     dialog: elements.dialog,
@@ -393,6 +403,9 @@ export function bootstrap(): void {
   elements.contactButton.addEventListener("click", () => {
     void handleOpenContact();
   });
+  elements.upgradeButton.addEventListener("click", () => {
+    void handleOpenReleases();
+  });
   elements.addProfilesButton.addEventListener("click", openAddProfileDialog);
   elements.cancelAddProfileButton.addEventListener("click", () => {
     elements.dialog.close();
@@ -412,8 +425,11 @@ export function bootstrap(): void {
   elements.baseUrlForm.addEventListener("submit", (event) => {
     void handleSubmitBaseUrl(event as SubmitEvent);
   });
-  elements.localeToggleButton.addEventListener("click", () => {
-    setLocale(state.locale === "en" ? "zh-CN" : "en");
+  elements.localeEnButton.addEventListener("click", () => {
+    setLocale("en");
+  });
+  elements.localeZhButton.addEventListener("click", () => {
+    setLocale("zh-CN");
   });
   window.setInterval(() => {
     void refreshCurrentQuota();

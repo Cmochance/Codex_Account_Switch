@@ -16,7 +16,7 @@ pub mod switch;
 pub mod actions {
     pub use super::profile_actions::{
         add_profile, login_current_profile, open_codex_app, open_contact, open_profile_folder,
-        rename_profile, update_profile_base_url,
+        open_releases, rename_profile, update_profile_base_url,
     };
     pub use super::refresh_runtime::refresh_profile;
 }

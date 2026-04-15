@@ -13,7 +13,7 @@ use super::metadata::{
     sync_profile_openai_base_url,
 };
 use super::paths::{
-    get_backup_root, get_codex_home, validate_profile_name, CONTACT_URL,
+    get_backup_root, get_codex_home, validate_profile_name, CONTACT_URL, RELEASES_URL,
 };
 use super::process::{open_or_activate_codex_app, run_codex_login};
 use super::profiles::resolve_current_profile;
@@ -235,6 +235,19 @@ pub fn open_contact(app: &tauri::AppHandle) -> AppResult<String> {
         })?;
 
     Ok(CONTACT_URL.to_string())
+}
+
+pub fn open_releases(app: &tauri::AppHandle) -> AppResult<String> {
+    app.opener()
+        .open_url(RELEASES_URL, None::<&str>)
+        .map_err(|error| {
+            AppError::new(
+                "RELEASES_URL_OPEN_FAILED",
+                format!("Failed to open releases URL: {error}"),
+            )
+        })?;
+
+    Ok(RELEASES_URL.to_string())
 }
 
 #[cfg(test)]

@@ -6,39 +6,95 @@
     <title>Codex Switch</title>
   </head>
   <body>
-    <main class="dashboard">
-      <section class="profiles-column">
-        <div id="profiles-grid" class="profiles-grid"></div>
-      </section>
-
-      <aside class="summary-column">
-        <article class="summary-card">
-          <div class="summary-card-topbar">
-            <p id="current-session-label" class="summary-label">Current session</p>
-            <button id="locale-toggle-button" class="ghost-button locale-toggle-button" type="button">中文</button>
-          </div>
-          <h2 id="current-title" class="current-account-title">--</h2>
-          <p id="current-plan" class="summary-plan">--</p>
-          <div class="summary-actions">
-            <button id="current-login-button" class="primary-button wide-button" type="button">Login</button>
-            <button id="open-current-folder-button" class="ghost-button wide-button" type="button">Open folder</button>
-          </div>
-        </article>
-
-        <article class="summary-card quota-card">
-          <h3 id="current-quota-label">Current quota</h3>
-          <div id="current-quota-panel" class="quota-stack"></div>
-        </article>
-
-        <div class="control-grid">
-          <button id="add-profiles-button" class="ghost-button control-button" type="button">Add Profiles</button>
-          <button id="open-codex-button" class="ghost-button control-button" type="button">Open Codex</button>
-          <button id="contact-button" class="ghost-button control-button" type="button">Contact Us</button>
-          <button id="previous-page-button" class="ghost-button pager-button" type="button">Previous</button>
-          <button id="next-page-button" class="ghost-button pager-button" type="button">Next</button>
+    <div class="window-shell">
+      <header id="window-titlebar-drag-surface" class="window-titlebar">
+        <div class="window-drag-region">
+          <span class="window-app-mark" aria-hidden="true"></span>
+          <span class="window-app-title">Codex Switch</span>
         </div>
-      </aside>
-    </main>
+
+        <div class="window-controls" aria-label="Window controls">
+          <button id="window-minimize-button" class="window-control-button" type="button" aria-label="Minimize window">
+            <span class="window-control-icon window-control-icon--minimize" aria-hidden="true"></span>
+          </button>
+          <button id="window-maximize-button" class="window-control-button" type="button" aria-label="Maximize window">
+            <span class="window-control-icon window-control-icon--maximize" aria-hidden="true"></span>
+          </button>
+          <button id="window-close-button" class="window-control-button window-control-button--close" type="button" aria-label="Close window">
+            <span class="window-control-icon window-control-icon--close" aria-hidden="true"></span>
+          </button>
+        </div>
+      </header>
+
+      <main class="dashboard">
+        <section class="content-row">
+          <section class="profiles-stage">
+            <div class="profiles-header">
+              <h2 id="profiles-heading" class="section-title">Profiles</h2>
+
+              <div class="pager-block">
+                <div class="pager-row">
+                  <button id="previous-page-button" class="pager-pill" type="button">Prev</button>
+                  <span id="page-indicator" class="pager-pill pager-current">1 / 1</span>
+                  <button id="next-page-button" class="pager-pill" type="button">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="profiles-grid" class="profiles-grid"></div>
+          </section>
+
+          <aside class="right-rail">
+            <article class="rail-card current-account-card">
+              <div class="current-account-topbar">
+                <div class="utility-cluster current-utility-cluster">
+                  <div class="locale-segment" role="group" aria-label="Locale">
+                    <button id="locale-en-button" class="locale-pill" type="button">EN</button>
+                    <button id="locale-zh-button" class="locale-pill" type="button">中文</button>
+                  </div>
+
+                  <div class="quota-monitor-pill">
+                    <span class="quota-monitor-dot" aria-hidden="true"></span>
+                    <span id="quota-monitor-label">Live quota monitor</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card-heading">
+                <h2 id="current-section-heading" class="section-title section-title-rail">Current Account</h2>
+              </div>
+
+              <div class="current-identity">
+                <h3 id="current-title" class="current-account-title">--</h3>
+                <p id="current-plan" class="current-plan">--</p>
+              </div>
+
+              <div class="current-actions">
+                <button id="current-login-button" class="action-button action-button-primary" type="button">Login</button>
+                <button id="open-current-folder-button" class="action-button action-button-secondary" type="button">Open Folder</button>
+              </div>
+
+              <div id="current-quota-panel" class="current-quota-panel"></div>
+            </article>
+
+            <article class="rail-card control-card">
+              <div class="card-heading">
+                <h2 id="control-deck-heading" class="section-title section-title-rail">Control Deck</h2>
+              </div>
+
+              <div class="control-stack">
+                <button id="add-profiles-button" class="control-button" type="button">Add Profiles</button>
+                <button id="open-codex-button" class="control-button" type="button">Open Codex</button>
+                <button id="contact-button" class="control-button" type="button">Contact Us</button>
+                <button id="upgrade-button" class="control-button" type="button">Upgrade</button>
+                <button id="star-button" class="control-button" type="button">Star</button>
+                <button id="xiaohongshu-button" class="control-button" type="button">Xiaohongshu</button>
+              </div>
+            </article>
+          </aside>
+        </section>
+      </main>
+    </div>
 
     <dialog id="add-profile-dialog" class="dialog">
       <form id="add-profile-form" class="dialog-form" method="dialog">
