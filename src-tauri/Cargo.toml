@@ -1,6 +1,6 @@
 [package]
 name = "codex_switch"
-version = "0.1.0"
+version = "1.4.2"
 description = "Native Tauri control panel for Codex account switching"
 authors = ["Cmochance"]
 edition = "2021"

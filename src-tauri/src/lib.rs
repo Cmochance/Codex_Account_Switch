@@ -1,20 +1,28 @@
+#[path = "../shared/runtime/cli.rs"]
 mod cli;
+#[path = "../shared/commands/mod.rs"]
 mod commands;
+#[path = "../shared/runtime/errors.rs"]
 mod errors;
+#[path = "../mac/runtime/mod.rs"]
+mod macos;
+#[path = "../shared/runtime/models.rs"]
 mod models;
+#[path = "../shared/platform/mod.rs"]
+mod platform;
+#[path = "../shared/runtime/mod.rs"]
+mod shared;
+#[path = "../win/runtime/windowing.rs"]
 mod windowing;
+#[path = "../win/runtime/mod.rs"]
 mod windows;
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            windows::bootstrap::ensure_backup_initialized(None)?;
-            windows::bootstrap::ensure_refresh_runtime_config_initialized(None)?;
-            windows::bootstrap::sync_root_state_to_current_profile(None)?;
-            windows::config::sync_root_openai_base_url_for_current_profile(None)?;
-            windows::profiles_index::load_profiles_index(None)?;
-            Ok(windowing::install(app)?)
+            platform::setup_runtime()?;
+            Ok(platform::install_windowing(app)?)
         })
         .invoke_handler(tauri::generate_handler![
             commands::dashboard::get_profiles_snapshot,

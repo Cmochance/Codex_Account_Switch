@@ -1,7 +1,7 @@
 {
   "name": "codex_switch",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.4.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,8 @@
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --no-bundle"
+    "tauri:build": "tauri build --no-bundle",
+    "tauri:build:macos-dmg": "tauri build --bundles app,dmg --no-sign && sh -c 'for f in src-tauri/target/release/bundle/dmg/*.dmg; do [ -e \"$f\" ] || exit 0; mv -f \"$f\" src-tauri/target/release/bundle/macos/; done'"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1"

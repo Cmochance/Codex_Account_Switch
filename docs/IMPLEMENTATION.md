@@ -7,28 +7,51 @@
 - Current profile pointer: `~/.codex/account_backup/.current_profile`
 - Active marker per profile: `~/.codex/account_backup/<profile>/.active_profile`
 - Auto snapshots: `~/.codex/account_backup/_autosave/<timestamp>/auth.json`
+- macOS runtime files: `~/.codex/account_backup/macos/`
+- macOS command shim: `~/.codex/bin/codex`
 - Windows runtime files: `%CODEX_HOME%\account_backup\windows\`
 - Windows command shim: `%CODEX_HOME%\bin\codex.cmd`
 
 ## Runtime shape
 
-- macOS uses shell entrypoints under `macOS/`
+- macOS still keeps shell entrypoints under `macOS-backup/` as retained compatibility fallback
 - Windows desktop UI and CLI both use Rust/Tauri:
-  - frontend under `src/`
-    - controller/orchestration in `src/lib/actions.ts`
-    - dashboard view-model shaping in `src/lib/dashboard-view-model.ts`
-    - native invoke wrapper in `src/lib/tauri.ts`
-  - native commands and CLI runtime under `src-tauri/`
+  - Windows shell frontend under `src-tauri/win/front/`
+  - shared frontend bridge code under `src-tauri/shared/front/`
+    - controller/orchestration in `src-tauri/shared/front/actions.ts`
+    - dashboard view-model shaping in `src-tauri/shared/front/dashboard-view-model.ts`
+    - native invoke wrapper in `src-tauri/shared/front/tauri.ts`
+- macOS desktop shell now has a separate frontend root under `src-tauri/mac/front/`
+  - `src-tauri/mac/front/index.html` removes the Windows-style custom title bar
+  - `src-tauri/mac/front/styles.css` carries macOS-specific shell styling overrides
+  - `src-tauri/mac/front/lib/window-controls.ts` is intentionally a no-op because macOS uses native window controls
+- native commands and CLI runtime stay under `src-tauri/`, but the source tree is now split by responsibility:
+  - `src-tauri/win/front/` holds the Windows desktop shell
+  - `src-tauri/mac/front/` holds the macOS desktop shell
+  - `src-tauri/shared/front/` holds shared frontend bridge code and font assets
+  - `src-tauri/win/runtime/` holds Windows-only bootstrap, install, process, refresh, and windowing code
+  - `src-tauri/mac/runtime/` holds macOS-only bootstrap, CLI shim, install, process, switch, and windowing code
+  - `src-tauri/shared/runtime/` holds platform-neutral profile, metadata, quota, path, config, CLI, error, and model logic
+  - `src-tauri/shared/platform/` defines platform lifecycle hooks so window close, login, auth refresh, and app reopen can be routed without hard-coding those call sites to Windows modules
+  - `src-tauri/shared/commands/` holds the Tauri command boundary used by both platforms
+  - `src-tauri/src/` is now kept as the crate entry layer only, because Cargo expects `lib.rs` and `main.rs` there by default
+- `src-tauri/shared/runtime/switch_core.rs` now owns the profile switch orchestration
+- `src-tauri/mac/runtime/windowing.rs` now applies native macOS window decorations instead of reusing the Windows custom chrome assumptions
+- `src-tauri/shared/runtime/cli.rs` now resolves to `windows::*` or `macos::*` through compile-time aliases instead of directly binding the CLI to Windows modules
 - The desktop app does not use a separate local backend or HTTP server at runtime
 - `windows/` remains only as a historical note directory while the Rust path is the primary runtime and regression target
 
 ## Installation behavior
 
-- `macOS/install.sh` creates `~/.codex/account_backup` if missing
-- `macOS/install.sh` creates `~/.codex/account_backup/a` through `~/.codex/account_backup/d`
-- macOS install fills any missing `a`-`d` `auth.json` files from `examples/account_backup/demo/auth.json.example`
-- If `~/.codex/auth.json` exists during macOS install, it is copied to `~/.codex/account_backup/a/auth.json`
-- If a real root auth exists and no active profile is initialized yet, macOS install sets `a` as the active profile
+- `macOS-backup/install.sh` is now a compatibility entrypoint with `auto`, `desktop`, and `legacy` modes
+- In `auto` mode, `macOS-backup/install.sh` prefers the native desktop installer and falls back to the legacy shell installer if no native installer binary is available
+- `macOS-backup/install-legacy.sh` keeps the original shell-based installation behavior
+- `macOS-backup/install-desktop.sh` delegates to the native `codex_switch` installer and then wires `~/.codex/bin` into the shell
+- Legacy macOS install creates `~/.codex/account_backup` if missing
+- Legacy macOS install creates `~/.codex/account_backup/a` through `~/.codex/account_backup/d`
+- Legacy macOS install fills any missing `a`-`d` `auth.json` files from `examples/account_backup/demo/auth.json.example`
+- If `~/.codex/auth.json` exists during legacy macOS install, it is copied to `~/.codex/account_backup/a/auth.json`
+- If a real root auth exists and no active profile is initialized yet, legacy macOS install sets `a` as the active profile
 - `codex_switch.exe install` creates the same profile layout plus `%CODEX_HOME%\account_backup\windows\` and `%CODEX_HOME%\bin\`
 - Windows install copies `codex_switch_cli.exe` into the runtime directory
 - Windows install fills any missing `a`-`d` `auth.json` files from `examples/account_backup/demo/auth.json.example`
@@ -75,10 +98,25 @@ The switch script itself does not create profile folders or generate missing aut
 
 ## macOS wrapper behavior
 
-The macOS installer injects a `codex()` shell wrapper into `~/.zshrc`.
+- In desktop mode, the macOS compatibility installer injects a PATH hook into `~/.zshrc` so `~/.codex/bin/codex` is resolved before the existing CLI
+- In legacy mode, the macOS installer injects a `codex()` shell wrapper into `~/.zshrc`
+- Legacy `codex switch ...` routes to `~/.codex/account_backup/codex-switch.sh`
+- Legacy non-switch `codex` commands continue to use the user's existing `codex` CLI in `PATH`
 
-- `codex switch ...` routes to `~/.codex/account_backup/codex-switch.sh`
-- Other `codex` commands continue to use the user's existing `codex` CLI in `PATH`
+## Native macOS runtime behavior
+
+- The native macOS runtime stores its install state in `~/.codex/account_backup/macos/install_state.json`
+- The native macOS runtime copies `codex_switch_cli` into `~/.codex/account_backup/macos/`
+- The native macOS runtime writes a managed `~/.codex/bin/codex` shim that forwards into the runtime CLI
+- Native macOS CLI forwarding skips the managed shim when resolving the real `codex` binary from `PATH`
+- Native macOS app activation first probes `/Applications/Codex.app`, then `~/Applications/Codex.app`, and otherwise falls back to `open -a Codex`
+- If Codex is already running on macOS, the runtime first tries AppleScript activation before doing a fresh open
+- Native macOS app shutdown uses `pgrep -x Codex`, `pkill -TERM -x Codex`, and finally `pkill -KILL -x Codex`
+- Native macOS desktop UI now loads from `src-tauri/mac/front/` instead of the Windows shell under `src-tauri/win/front/`
+- Native macOS windows restore system decorations and native title bar behavior during startup
+- Native macOS bundle packaging is isolated in `src-tauri/tauri.macos.conf.json`, which enables `app` + `dmg` outputs without changing the default Windows/base Tauri config
+- `npm run tauri:build:macos-dmg` moves the generated `.dmg` beside the `.app` under `src-tauri/target/release/bundle/macos/` to keep macOS artifacts in one folder
+- `macOS-backup/uninstall.sh` mirrors the same compatibility split and chooses native desktop teardown when the desktop runtime is installed
 
 ## Windows shim behavior
 

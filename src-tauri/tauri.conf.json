@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "codex_switch",
-  "version": "0.1.0",
+  "version": "1.4.2",
   "identifier": "com.cmochance.codexswitch",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -28,6 +28,11 @@
   },
   "bundle": {
     "active": false,
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
