@@ -595,6 +595,11 @@ button.pager-pill:hover:not(:disabled) {
   margin-top: auto;
 }
 
+.profile-card-actions--windows {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .profile-action-button,
 .control-button,
 .action-button,
@@ -626,6 +631,12 @@ button.pager-pill:hover:not(:disabled) {
   font-size: 0.82rem;
 }
 
+.profile-card-actions--windows .profile-action-button {
+  padding: 0 8px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 .ghost-button,
 .primary-button {
   height: 42px;
@@ -650,6 +661,19 @@ button.pager-pill:hover:not(:disabled) {
 button.pager-pill:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+.ghost-button.danger-button,
+.profile-action-button.profile-action-button-danger {
+  border-color: rgba(212, 150, 142, 0.72);
+  color: #8f3b35;
+}
+
+.ghost-button.danger-button:hover:not(:disabled),
+.profile-action-button.profile-action-button-danger:hover:not(:disabled) {
+  border-color: rgba(190, 95, 86, 0.72);
+  background: rgba(255, 247, 245, 0.98);
+  color: #7d312c;
 }
 
 .action-button-primary {
@@ -857,6 +881,11 @@ button.pager-pill:disabled {
   line-height: 1.45;
 }
 
+.dialog-copy p.warning-copy,
+.field-copy.warning-copy {
+  color: #a04949;
+}
+
 .dialog-error {
   margin-top: 14px;
   color: #a04949;
@@ -869,6 +898,16 @@ button.pager-pill:disabled {
   justify-content: flex-end;
   gap: 12px;
   margin-top: 22px;
+}
+
+.dialog-actions-wide {
+  justify-content: stretch;
+}
+
+.dialog-actions-wide > button {
+  flex: 1 1 0;
+  padding-inline: 10px;
+  white-space: nowrap;
 }
 
 .primary-button {

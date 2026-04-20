@@ -37,6 +37,13 @@ fn render_openai_base_url_assignment(base_url: &str) -> String {
     )
 }
 
+fn load_normalized_profile_base_url(profile_name: &str, codex_home: &Path) -> Option<String> {
+    load_profile_metadata(profile_name, Some(codex_home))
+        .openai_base_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn sync_root_openai_base_url_value(
     desired_base_url: Option<&str>,
     codex_home: Option<&Path>,
@@ -112,13 +119,29 @@ pub fn sync_root_openai_base_url_for_profile(
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
     let profile_name = validate_profile_name(profile_name)?;
     let desired_base_url = if profile_uses_api_key_auth(&profile_name, Some(&codex_home))? {
-        load_profile_metadata(&profile_name, Some(&codex_home))
-            .openai_base_url
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
+        load_normalized_profile_base_url(&profile_name, &codex_home)
     } else {
         None
     };
+
+    sync_root_openai_base_url_value(desired_base_url.as_deref(), Some(&codex_home))
+}
+
+pub fn sync_root_openai_base_url_from_profile_metadata(
+    profile_name: &str,
+    codex_home: Option<&Path>,
+) -> AppResult<()> {
+    let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
+    let profile_name = validate_profile_name(profile_name)?;
+    let profile_dir = get_backup_root(Some(&codex_home)).join(&profile_name);
+    if !profile_dir.is_dir() {
+        return Err(AppError::new(
+            "PROFILE_NOT_FOUND",
+            format!("Profile not found: {profile_name}"),
+        ));
+    }
+
+    let desired_base_url = load_normalized_profile_base_url(&profile_name, &codex_home);
 
     sync_root_openai_base_url_value(desired_base_url.as_deref(), Some(&codex_home))
 }

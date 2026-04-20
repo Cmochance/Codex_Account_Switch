@@ -7,6 +7,8 @@ import {
 } from "@front-shared/dashboard-view-model";
 import {
   addProfile,
+  clearProfileAccount,
+  deleteProfile,
   getCurrentLiveQuota,
   getProfilesSnapshot,
   loginCurrentProfile,
@@ -44,6 +46,7 @@ function rerenderDashboard(): void {
 
   renderProfiles(
     dashboard,
+    handleDeleteProfileClick,
     handleRenameProfileClick,
     handleSwitchProfile,
     handleRefreshProfile,
@@ -55,6 +58,7 @@ function rerenderDashboard(): void {
 
 let renameSourceProfile: string | null = null;
 let baseUrlSourceProfile: string | null = null;
+let deleteSourceProfile: string | null = null;
 
 function isRefreshPending(profile: string): boolean {
   return state.refreshActiveProfile === profile || state.refreshQueue.includes(profile);
@@ -239,6 +243,16 @@ function handleBaseUrlProfileClick(profile: string): void {
   });
 }
 
+function handleDeleteProfileClick(profile: string): void {
+  if (!elements.deleteProfileDialog || !elements.deleteProfileDialogError) {
+    return;
+  }
+
+  deleteSourceProfile = profile;
+  clearDialogError(elements.deleteProfileDialogError);
+  elements.deleteProfileDialog.showModal();
+}
+
 async function handleOpenCurrentFolder(): Promise<void> {
   if (!state.currentProfile) {
     return;
@@ -321,6 +335,11 @@ function closeRenameProfileDialog(): void {
 function closeBaseUrlDialog(): void {
   baseUrlSourceProfile = null;
   elements.baseUrlDialog.close();
+}
+
+function closeDeleteProfileDialog(): void {
+  deleteSourceProfile = null;
+  elements.deleteProfileDialog?.close();
 }
 
 async function handleSubmitAddProfile(event: SubmitEvent): Promise<void> {
@@ -413,6 +432,40 @@ async function handleSubmitBaseUrl(event: SubmitEvent): Promise<void> {
   }
 }
 
+async function handleDeleteProfileAction(action: "delete" | "clear"): Promise<void> {
+  const sourceProfile = deleteSourceProfile;
+  const errorElement = elements.deleteProfileDialogError;
+  if (!errorElement) {
+    return;
+  }
+
+  clearDialogError(errorElement);
+  if (!sourceProfile) {
+    showDialogError(errorElement, t(state.locale, "failedToDeleteProfile"));
+    return;
+  }
+
+  try {
+    await runBlockingAction(async () => {
+      if (action === "delete") {
+        await deleteProfile(sourceProfile);
+        closeDeleteProfileDialog();
+        showToast(t(state.locale, "deletedProfile", { profile: sourceProfile }));
+      } else {
+        await clearProfileAccount(sourceProfile);
+        closeDeleteProfileDialog();
+        showToast(t(state.locale, "clearedProfileAccount", { profile: sourceProfile }));
+      }
+      await refreshAllData();
+    });
+  } catch (error) {
+    showDialogError(
+      errorElement,
+      error instanceof Error ? error.message : t(state.locale, "failedToDeleteProfile"),
+    );
+  }
+}
+
 export function bootstrap(): void {
   state.locale = resolveInitialLocale();
   applyLocale();
@@ -452,6 +505,15 @@ export function bootstrap(): void {
   });
   elements.cancelBaseUrlButton.addEventListener("click", () => {
     closeBaseUrlDialog();
+  });
+  elements.cancelDeleteProfileButton?.addEventListener("click", () => {
+    closeDeleteProfileDialog();
+  });
+  elements.deleteProfileButton?.addEventListener("click", () => {
+    void handleDeleteProfileAction("delete");
+  });
+  elements.clearProfileAccountButton?.addEventListener("click", () => {
+    void handleDeleteProfileAction("clear");
   });
   elements.addProfileForm.addEventListener("submit", (event) => {
     void handleSubmitAddProfile(event as SubmitEvent);

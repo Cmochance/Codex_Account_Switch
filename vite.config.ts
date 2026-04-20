@@ -7,6 +7,9 @@ const root = uiTarget === "macos" ? "src-tauri/mac/front" : "src-tauri/win/front
 
 export default defineConfig({
   root,
+  define: {
+    __CODEX_UI_TARGET__: JSON.stringify(uiTarget),
+  },
   resolve: {
     alias: {
       "@front-shared": fileURLToPath(new URL("./src-tauri/shared/front", import.meta.url)),

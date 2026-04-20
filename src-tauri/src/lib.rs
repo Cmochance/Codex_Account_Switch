@@ -31,6 +31,8 @@ pub fn run() {
             commands::actions::login_current_profile,
             commands::actions::refresh_profile,
             commands::actions::rename_profile,
+            commands::actions::delete_profile,
+            commands::actions::clear_profile_account,
             commands::actions::update_profile_base_url,
             commands::actions::open_profile_folder,
             commands::actions::add_profile,

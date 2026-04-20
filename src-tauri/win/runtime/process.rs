@@ -503,6 +503,17 @@ impl PlatformHooks for WindowsPlatformHooks {
         run_codex_auth_refresh(cli_codex_home, runtime_codex_home)
     }
 
+    fn sync_root_openai_base_url_for_profile(
+        &self,
+        profile_name: &str,
+        codex_home: Option<&Path>,
+    ) -> AppResult<()> {
+        crate::shared::config::sync_root_openai_base_url_from_profile_metadata(
+            profile_name,
+            codex_home,
+        )
+    }
+
     fn sync_on_window_close(&self) -> AppResult<()> {
         crate::windows::bootstrap::sync_root_state_to_current_profile(None).map(|_| ())
     }

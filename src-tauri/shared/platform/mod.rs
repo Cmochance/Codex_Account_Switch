@@ -25,7 +25,7 @@ pub fn setup_runtime() -> AppResult<()> {
     crate::macos::bootstrap::ensure_backup_initialized(None)?;
     crate::macos::bootstrap::ensure_refresh_runtime_config_initialized(None)?;
     crate::macos::bootstrap::sync_root_state_to_current_profile(None)?;
-    crate::shared::config::sync_root_openai_base_url_for_current_profile(None)?;
+    current_hooks().sync_root_openai_base_url_for_current_profile(None)?;
     crate::shared::profiles_index::load_profiles_index(None)?;
     Ok(())
 }
@@ -35,7 +35,7 @@ pub fn setup_runtime() -> AppResult<()> {
     crate::windows::bootstrap::ensure_backup_initialized(None)?;
     crate::windows::bootstrap::ensure_refresh_runtime_config_initialized(None)?;
     crate::windows::bootstrap::sync_root_state_to_current_profile(None)?;
-    crate::shared::config::sync_root_openai_base_url_for_current_profile(None)?;
+    current_hooks().sync_root_openai_base_url_for_current_profile(None)?;
     crate::shared::profiles_index::load_profiles_index(None)?;
     Ok(())
 }

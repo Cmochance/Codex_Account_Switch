@@ -117,7 +117,7 @@
             autocomplete="off"
             placeholder="https://example.com/v1"
           />
-          <span id="add-base-url-copy" class="field-copy">Must start with http:// or https://. Only fill this for API KEY logins, otherwise Codex will fail.</span>
+          <span id="add-base-url-copy" class="field-copy warning-copy">非 API 账号添加 Base Url 会导致账号失效，清空后可恢复。</span>
         </label>
 
         <p id="dialog-error" class="dialog-error" hidden></p>
@@ -150,11 +150,28 @@
       </form>
     </dialog>
 
+    <dialog id="delete-profile-dialog" class="dialog">
+      <div class="dialog-form">
+        <div class="dialog-copy">
+          <h3 id="delete-profile-dialog-title">Delete Profile</h3>
+          <p id="delete-profile-dialog-copy">请确认彻底删除卡片还是仅清空卡片绑定的账号。</p>
+        </div>
+
+        <p id="delete-profile-dialog-error" class="dialog-error" hidden></p>
+
+        <div class="dialog-actions dialog-actions-wide">
+          <button id="delete-profile-button" class="ghost-button danger-button" type="button">删除卡片</button>
+          <button id="clear-profile-account-button" class="ghost-button" type="button">清空账号</button>
+          <button id="cancel-delete-profile-button" class="primary-button" type="button">取消</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="base-url-dialog" class="dialog">
       <form id="base-url-form" class="dialog-form" method="dialog">
         <div class="dialog-copy">
           <h3 id="base-url-dialog-title">Custom Base Url</h3>
-          <p id="base-url-dialog-copy">Must start with http:// or https://. Only fill this for API KEY logins, otherwise Codex will fail.</p>
+          <p id="base-url-dialog-copy" class="warning-copy">非 API 账号添加 Base Url 会导致账号失效，清空后可恢复。</p>
         </div>
 
         <label class="field">

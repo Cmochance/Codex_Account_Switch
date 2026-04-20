@@ -52,6 +52,26 @@ pub fn rename_profile(payload: RenameProfilePayload) -> Result<ActionResponse, C
 }
 
 #[tauri::command]
+pub fn delete_profile(payload: ProfilePayload) -> Result<ActionResponse, CommandError> {
+    let path = windows::actions::delete_profile(&payload.profile)?;
+    Ok(ActionResponse {
+        ok: true,
+        message: "Deleted profile.".to_string(),
+        path: Some(path),
+    })
+}
+
+#[tauri::command]
+pub fn clear_profile_account(payload: ProfilePayload) -> Result<ActionResponse, CommandError> {
+    let path = windows::actions::clear_profile_account(&payload.profile)?;
+    Ok(ActionResponse {
+        ok: true,
+        message: "Cleared profile account.".to_string(),
+        path: Some(path),
+    })
+}
+
+#[tauri::command]
 pub fn update_profile_base_url(
     payload: UpdateProfileBaseUrlPayload,
 ) -> Result<ActionResponse, CommandError> {

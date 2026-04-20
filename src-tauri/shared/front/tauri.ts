@@ -265,6 +265,39 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
         }
         return mockAction("Base URL updated in preview mode") as Promise<T>;
       }
+      case "delete_profile": {
+        const payload = args?.payload as { profile?: string } | undefined;
+        if (payload?.profile) {
+          previewSnapshot.profiles = previewSnapshot.profiles.filter(
+            (entry) => entry.folder_name !== payload.profile,
+          );
+          refreshPreviewSnapshot();
+        }
+        return mockAction("Deleted in preview mode") as Promise<T>;
+      }
+      case "clear_profile_account": {
+        const payload = args?.payload as { profile?: string } | undefined;
+        if (payload?.profile) {
+          previewSnapshot.profiles = previewSnapshot.profiles.map((entry) =>
+            entry.folder_name === payload.profile
+              ? {
+                  ...entry,
+                  account_label: null,
+                  display_title: entry.folder_name,
+                  status: "missing_auth",
+                  auth_present: false,
+                  has_account_identity: false,
+                  plan_name: null,
+                  subscription_days_left: null,
+                  openai_base_url: null,
+                  quota: quota(null, null, null, null),
+                }
+              : entry,
+          );
+          refreshPreviewSnapshot();
+        }
+        return mockAction("Cleared in preview mode") as Promise<T>;
+      }
       case "open_profile_folder":
       case "open_codex":
       case "login_current_profile":
@@ -332,6 +365,14 @@ export function updateProfileBaseUrl(profile: string, openaiBaseUrl: string): Pr
   return invokeCommand<ActionResponse>("update_profile_base_url", {
     payload: { profile, openai_base_url: openaiBaseUrl },
   });
+}
+
+export function deleteProfile(profile: string): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("delete_profile", { payload: { profile } });
+}
+
+export function clearProfileAccount(profile: string): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("clear_profile_account", { payload: { profile } });
 }
 
 export function openContact(): Promise<ActionResponse> {

@@ -7,15 +7,15 @@ use crate::errors::{AppError, AppResult};
 use crate::models::ProfileMetadata;
 use crate::platform;
 
-use super::config::{profile_uses_api_key_auth, sync_root_openai_base_url_for_profile};
-use super::fs_ops::backup_root_state_to_profile;
+use super::config::sync_root_openai_base_url_from_profile_metadata;
+use super::fs_ops::{backup_root_state_to_profile, remove_path};
 use super::metadata::{
     load_profile_metadata, save_profile_metadata, sync_profile_metadata_from_auth,
     sync_profile_openai_base_url,
 };
 use super::paths::{
-    get_backup_root, get_codex_home, validate_profile_name, CONTACT_URL, RELEASES_URL,
-    XIAOHONGSHU_URL,
+    get_backup_root, get_codex_home, validate_profile_name, ACTIVE_MARKER_FILE, CONTACT_URL,
+    RELEASES_URL, XIAOHONGSHU_URL,
 };
 use super::profiles::resolve_current_profile;
 
@@ -88,19 +88,79 @@ pub fn update_profile_base_url(profile_name: &str, openai_base_url: &str) -> App
     }
 
     let normalized_base_url = normalize_openai_base_url(openai_base_url)?;
-    if normalized_base_url.is_some()
-        && !profile_uses_api_key_auth(&profile_name, Some(&codex_home))?
-    {
+    sync_profile_openai_base_url(&profile_name, normalized_base_url, Some(&codex_home))?;
+    if resolve_current_profile(&backup_root).as_deref() == Some(profile_name.as_str()) {
+        sync_root_openai_base_url_from_profile_metadata(&profile_name, Some(&codex_home))?;
+    }
+    super::profiles_index::load_profiles_index(Some(&codex_home))?;
+
+    Ok(profile_dir.to_string_lossy().into_owned())
+}
+
+fn ensure_profile_not_current(
+    backup_root: &Path,
+    profile_name: &str,
+    error_code: &'static str,
+    message: &'static str,
+) -> AppResult<()> {
+    if resolve_current_profile(backup_root).as_deref() == Some(profile_name) {
+        return Err(AppError::new(error_code, message));
+    }
+
+    Ok(())
+}
+
+pub fn delete_profile(profile_name: &str) -> AppResult<String> {
+    let codex_home = get_codex_home();
+    let backup_root = get_backup_root(Some(&codex_home));
+    let profile_name = validate_profile_name(profile_name)?;
+    ensure_profile_not_current(
+        &backup_root,
+        &profile_name,
+        "CURRENT_PROFILE_DELETE_FORBIDDEN",
+        "The active profile cannot be deleted while it is in use.",
+    )?;
+
+    let profile_dir = backup_root.join(&profile_name);
+    if !profile_dir.is_dir() {
         return Err(AppError::new(
-            "PROFILE_BASE_URL_REQUIRES_API_KEY",
-            "Custom Base Url is only supported for API KEY logins.",
+            "PROFILE_NOT_FOUND",
+            format!("Profile not found: {profile_name}"),
         ));
     }
 
-    sync_profile_openai_base_url(&profile_name, normalized_base_url, Some(&codex_home))?;
-    if resolve_current_profile(&backup_root).as_deref() == Some(profile_name.as_str()) {
-        sync_root_openai_base_url_for_profile(&profile_name, Some(&codex_home))?;
+    remove_path(&profile_dir)?;
+    super::profiles_index::load_profiles_index(Some(&codex_home))?;
+
+    Ok(profile_dir.to_string_lossy().into_owned())
+}
+
+pub fn clear_profile_account(profile_name: &str) -> AppResult<String> {
+    let codex_home = get_codex_home();
+    let backup_root = get_backup_root(Some(&codex_home));
+    let profile_name = validate_profile_name(profile_name)?;
+    ensure_profile_not_current(
+        &backup_root,
+        &profile_name,
+        "CURRENT_PROFILE_CLEAR_FORBIDDEN",
+        "The active profile cannot be cleared while it is in use.",
+    )?;
+
+    let profile_dir = backup_root.join(&profile_name);
+    if !profile_dir.is_dir() {
+        return Err(AppError::new(
+            "PROFILE_NOT_FOUND",
+            format!("Profile not found: {profile_name}"),
+        ));
     }
+
+    remove_path(&profile_dir.join("auth.json"))?;
+    remove_path(&profile_dir.join(ACTIVE_MARKER_FILE))?;
+    save_profile_metadata(
+        &profile_name,
+        &ProfileMetadata::with_folder_name(&profile_name),
+        Some(&codex_home),
+    )?;
     super::profiles_index::load_profiles_index(Some(&codex_home))?;
 
     Ok(profile_dir.to_string_lossy().into_owned())
@@ -266,7 +326,10 @@ pub fn open_xiaohongshu(app: &tauri::AppHandle) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{add_profile, rename_profile_with_home, update_profile_base_url};
+    use super::{
+        add_profile, clear_profile_account, delete_profile, rename_profile_with_home,
+        update_profile_base_url,
+    };
     use crate::windows::env_guard;
     use crate::windows::metadata::load_profile_metadata;
     use crate::windows::paths::get_current_profile_file;
@@ -340,7 +403,79 @@ mod tests {
     }
 
     #[test]
-    fn update_profile_base_url_rejects_non_api_key_profiles() {
+    fn delete_profile_removes_non_current_profile() {
+        let _guard = env_guard();
+        let codex_home = temp_codex_home("delete-profile");
+        let original_codex_home = std::env::var_os("CODEX_HOME");
+        write_profile(&codex_home, "delete_me");
+        std::env::set_var("CODEX_HOME", &codex_home);
+
+        delete_profile("delete_me").unwrap();
+
+        assert!(!codex_home.join("account_backup").join("delete_me").exists());
+        let _ = fs::remove_dir_all(&codex_home);
+        if let Some(path) = original_codex_home {
+            std::env::set_var("CODEX_HOME", path);
+        } else {
+            std::env::remove_var("CODEX_HOME");
+        }
+    }
+
+    #[test]
+    fn clear_profile_account_keeps_card_and_removes_account_binding() {
+        let _guard = env_guard();
+        let codex_home = temp_codex_home("clear-profile-account");
+        let original_codex_home = std::env::var_os("CODEX_HOME");
+        write_profile(&codex_home, "clear_me");
+        std::env::set_var("CODEX_HOME", &codex_home);
+
+        clear_profile_account("clear_me").unwrap();
+
+        let profile_dir = codex_home.join("account_backup").join("clear_me");
+        assert!(profile_dir.is_dir());
+        assert!(!profile_dir.join("auth.json").exists());
+        let metadata = load_profile_metadata("clear_me", Some(&codex_home));
+        assert_eq!(metadata.folder_name.as_deref(), Some("clear_me"));
+        assert_eq!(metadata.account_label, None);
+        assert_eq!(metadata.openai_base_url, None);
+        assert_eq!(metadata.quota.five_hour.remaining_percent, None);
+        let _ = fs::remove_dir_all(&codex_home);
+        if let Some(path) = original_codex_home {
+            std::env::set_var("CODEX_HOME", path);
+        } else {
+            std::env::remove_var("CODEX_HOME");
+        }
+    }
+
+    #[test]
+    fn delete_and_clear_profile_reject_current_profile() {
+        let _guard = env_guard();
+        let codex_home = temp_codex_home("delete-profile-current");
+        let original_codex_home = std::env::var_os("CODEX_HOME");
+        write_profile(&codex_home, "active");
+        fs::write(get_current_profile_file(Some(&codex_home)), "active\n").unwrap();
+        std::env::set_var("CODEX_HOME", &codex_home);
+
+        let delete_error = delete_profile("active").unwrap_err();
+        let clear_error = clear_profile_account("active").unwrap_err();
+
+        assert_eq!(delete_error.error_code, "CURRENT_PROFILE_DELETE_FORBIDDEN");
+        assert_eq!(clear_error.error_code, "CURRENT_PROFILE_CLEAR_FORBIDDEN");
+        assert!(codex_home
+            .join("account_backup")
+            .join("active")
+            .join("auth.json")
+            .is_file());
+        let _ = fs::remove_dir_all(&codex_home);
+        if let Some(path) = original_codex_home {
+            std::env::set_var("CODEX_HOME", path);
+        } else {
+            std::env::remove_var("CODEX_HOME");
+        }
+    }
+
+    #[test]
+    fn update_profile_base_url_allows_non_api_key_profiles_and_restores_when_cleared() {
         let _guard = env_guard();
         let codex_home = temp_codex_home("base-url-chatgpt");
         let original_codex_home = std::env::var_os("CODEX_HOME");
@@ -352,11 +487,27 @@ mod tests {
             r#"{"folder_name":"chat"}"#,
         )
         .unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "chat\n").unwrap();
+        fs::write(codex_home.join("config.toml"), "model = \"gpt-5.4\"\n").unwrap();
         std::env::set_var("CODEX_HOME", &codex_home);
 
-        let error = update_profile_base_url("chat", "https://example.com/v1").unwrap_err();
+        update_profile_base_url("chat", "https://example.com/v1").unwrap();
 
-        assert_eq!(error.error_code, "PROFILE_BASE_URL_REQUIRES_API_KEY");
+        let metadata = load_profile_metadata("chat", Some(&codex_home));
+        assert_eq!(
+            metadata.openai_base_url.as_deref(),
+            Some("https://example.com/v1")
+        );
+        let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(config.contains("openai_base_url = \"https://example.com/v1\""));
+
+        update_profile_base_url("chat", "  ").unwrap();
+
+        let metadata = load_profile_metadata("chat", Some(&codex_home));
+        assert_eq!(metadata.openai_base_url, None);
+        let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(!config.contains("openai_base_url"));
+        assert!(config.contains("model = \"gpt-5.4\""));
         let _ = fs::remove_dir_all(&codex_home);
         if let Some(path) = original_codex_home {
             std::env::set_var("CODEX_HOME", path);
