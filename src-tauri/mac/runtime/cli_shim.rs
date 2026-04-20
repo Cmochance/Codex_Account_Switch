@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::errors::{AppError, AppResult};
-use crate::shared::paths::{get_backup_root, INSTALL_STATE_FILENAME};
+use crate::shared::paths::{get_backup_root, INSTALL_STATE_FILENAME, REFRESH_RUNTIME_DIRNAME};
 
 pub const MACOS_RUNTIME_DIRNAME: &str = "macos";
 pub const CLI_RUNTIME_FILENAME: &str = "codex_switch_cli";
@@ -12,6 +12,10 @@ const REAL_CODEX_RESOLVER_TEMPLATE: &str =
 
 pub fn get_runtime_dir(codex_home: &Path) -> PathBuf {
     get_backup_root(Some(codex_home)).join(MACOS_RUNTIME_DIRNAME)
+}
+
+pub fn get_refresh_runtime_dir(codex_home: &Path) -> PathBuf {
+    get_runtime_dir(codex_home).join(REFRESH_RUNTIME_DIRNAME)
 }
 
 pub fn get_install_state_file(codex_home: &Path) -> PathBuf {

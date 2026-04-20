@@ -1,4 +1,4 @@
-#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#![cfg_attr(not(target_os = "windows"), allow(dead_code, unused_imports))]
 
 pub mod bootstrap;
 pub mod install;

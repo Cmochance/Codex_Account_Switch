@@ -2,8 +2,10 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::AppResult;
 use crate::shared::fs_ops::backup_root_state_to_profile;
-use crate::shared::paths::{get_backup_root, get_codex_home, get_refresh_runtime_dir};
+use crate::shared::paths::{get_backup_root, get_codex_home};
 use crate::shared::profiles::resolve_current_profile;
+
+use super::cli_shim::get_refresh_runtime_dir;
 
 const REFRESH_RUNTIME_DEFAULT_CONFIG: &str = concat!(
     "model = \"gpt-5.4-mini\"\n",
@@ -61,7 +63,7 @@ pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
 
 pub fn ensure_refresh_runtime_config_initialized(codex_home: Option<&Path>) -> AppResult<()> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
-    let runtime_home = get_refresh_runtime_dir(Some(&codex_home));
+    let runtime_home = get_refresh_runtime_dir(&codex_home);
     std::fs::create_dir_all(&runtime_home).map_err(|error| {
         crate::errors::AppError::new(
             "FS_CREATE_FAILED",

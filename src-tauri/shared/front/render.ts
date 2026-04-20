@@ -19,6 +19,8 @@ function requiredElement<T extends HTMLElement>(id: string): T {
   return element as T;
 }
 
+const hasDeleteProfileUi = document.getElementById("delete-profile-dialog") instanceof HTMLDialogElement;
+
 export const elements = {
   profilesHeading: requiredElement<HTMLHeadingElement>("profiles-heading"),
   profilesGrid: requiredElement<HTMLDivElement>("profiles-grid"),
@@ -62,25 +64,25 @@ export const elements = {
   renameDialogError: requiredElement<HTMLParagraphElement>("rename-dialog-error"),
   cancelRenameProfileButton: requiredElement<HTMLButtonElement>("cancel-rename-profile-button"),
   submitRenameProfileButton: requiredElement<HTMLButtonElement>("submit-rename-profile-button"),
-  deleteProfileDialog: isWindowsUiTarget
+  deleteProfileDialog: hasDeleteProfileUi
     ? requiredElement<HTMLDialogElement>("delete-profile-dialog")
     : null,
-  deleteProfileDialogTitle: isWindowsUiTarget
+  deleteProfileDialogTitle: hasDeleteProfileUi
     ? requiredElement<HTMLHeadingElement>("delete-profile-dialog-title")
     : null,
-  deleteProfileDialogCopy: isWindowsUiTarget
+  deleteProfileDialogCopy: hasDeleteProfileUi
     ? requiredElement<HTMLParagraphElement>("delete-profile-dialog-copy")
     : null,
-  deleteProfileDialogError: isWindowsUiTarget
+  deleteProfileDialogError: hasDeleteProfileUi
     ? requiredElement<HTMLParagraphElement>("delete-profile-dialog-error")
     : null,
-  deleteProfileButton: isWindowsUiTarget
+  deleteProfileButton: hasDeleteProfileUi
     ? requiredElement<HTMLButtonElement>("delete-profile-button")
     : null,
-  clearProfileAccountButton: isWindowsUiTarget
+  clearProfileAccountButton: hasDeleteProfileUi
     ? requiredElement<HTMLButtonElement>("clear-profile-account-button")
     : null,
-  cancelDeleteProfileButton: isWindowsUiTarget
+  cancelDeleteProfileButton: hasDeleteProfileUi
     ? requiredElement<HTMLButtonElement>("cancel-delete-profile-button")
     : null,
   baseUrlDialog: document.getElementById("base-url-dialog") as HTMLDialogElement,
@@ -297,8 +299,7 @@ export function renderProfiles(
         state.loading || refreshPending || profile.status === "current";
       const refreshDisabled =
         !profile.auth_present || state.loading || refreshPending;
-      const baseDisabled =
-        state.loading || refreshPending || (!isWindowsUiTarget && !profile.auth_present);
+      const baseDisabled = state.loading || refreshPending;
       const switchDisabled =
         !profile.auth_present || state.loading || refreshPending || profile.status === "current";
       const unavailable = isProfileUnavailable(profile);
@@ -321,7 +322,7 @@ export function renderProfiles(
 
           <div class="profile-card-actions${isWindowsUiTarget ? " profile-card-actions--windows" : ""}">
             ${
-              isWindowsUiTarget
+              hasDeleteProfileUi
                 ? `<button
                     class="profile-action-button profile-action-button-danger"
                     type="button"
@@ -379,7 +380,7 @@ export function renderProfiles(
     })
     .join("");
 
-  if (isWindowsUiTarget) {
+  if (hasDeleteProfileUi) {
     bindProfileButtons("data-delete-profile", onDelete);
   }
   bindProfileButtons("data-rename-profile", onRename);
@@ -426,7 +427,7 @@ export function applyLocale(): void {
     .replace("profile.json", "<code>profile.json</code>");
   elements.renameDialogTitle.textContent = t(state.locale, "renameProfileTitle");
   elements.renameDialogCopy.textContent = t(state.locale, "renameProfileCopy");
-  if (isWindowsUiTarget) {
+  if (hasDeleteProfileUi) {
     elements.deleteProfileDialogTitle!.textContent = t(state.locale, "deleteProfileTitle");
     elements.deleteProfileDialogCopy!.textContent = t(state.locale, "deleteProfileCopy");
     elements.deleteProfileButton!.textContent = t(state.locale, "deleteCard");

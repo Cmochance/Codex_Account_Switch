@@ -19,3 +19,4 @@ src-tauri/target/
 src-tauri/gen/
 local_doc/
 agent/
+.codex/

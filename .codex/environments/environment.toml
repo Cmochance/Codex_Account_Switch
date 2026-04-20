@@ -7,7 +7,7 @@ script = ""
 
 [[actions]]
 name = "拉取新版本并进行冲突分析"
-icon = "run"
+icon = "tool"
 command = '''
 git stash push -u -m "codex-auto-merge"
 git fetch origin

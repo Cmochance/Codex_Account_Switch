@@ -131,6 +131,23 @@
       </form>
     </dialog>
 
+    <dialog id="delete-profile-dialog" class="dialog">
+      <div class="dialog-form">
+        <div class="dialog-copy">
+          <h3 id="delete-profile-dialog-title">Delete Profile</h3>
+          <p id="delete-profile-dialog-copy">Please confirm whether to permanently delete this card or only clear the account bound to it.</p>
+        </div>
+
+        <p id="delete-profile-dialog-error" class="dialog-error" hidden></p>
+
+        <div class="dialog-actions dialog-actions-wide">
+          <button id="delete-profile-button" class="ghost-button danger-button" type="button">Delete Card</button>
+          <button id="clear-profile-account-button" class="ghost-button" type="button">Clear Account</button>
+          <button id="cancel-delete-profile-button" class="primary-button" type="button">Cancel</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="base-url-dialog" class="dialog">
       <form id="base-url-form" class="dialog-form" method="dialog">
         <div class="dialog-copy">
