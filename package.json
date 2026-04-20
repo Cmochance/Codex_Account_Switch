@@ -1,17 +1,21 @@
 {
   "name": "codex_switch",
   "private": true,
-  "version": "1.4.2",
+  "version": "1.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "version:sync": "node scripts/version-sync.mjs",
+    "version:sync:release": "node scripts/version-sync.mjs --set-from-version-log src-tauri/target/release/version.md",
+    "version:set": "node scripts/version-sync.mjs --set",
+    "build": "npm run version:sync && tsc && vite build",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --no-bundle",
-    "tauri:build:macos-dmg": "tauri build --bundles app,dmg --no-sign && sh -c 'for f in src-tauri/target/release/bundle/dmg/*.dmg; do [ -e \"$f\" ] || exit 0; mv -f \"$f\" src-tauri/target/release/bundle/macos/; done'"
+    "tauri:dev": "npm run version:sync && tauri dev",
+    "tauri:build": "npm run version:sync:release && tauri build",
+    "tauri:build:portable": "npm run version:sync && tauri build --no-bundle",
+    "tauri:build:macos-dmg": "npm run version:sync && tauri build --bundles app,dmg --no-sign && sh -c 'for f in src-tauri/target/release/bundle/dmg/*.dmg; do [ -e \"$f\" ] || exit 0; mv -f \"$f\" src-tauri/target/release/bundle/macos/; done'"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1"
