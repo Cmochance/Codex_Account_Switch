@@ -34,6 +34,7 @@ struct SessionPayload {
 
 #[derive(Deserialize)]
 struct SessionRateLimits {
+    limit_id: Option<String>,
     primary: Option<SessionRateLimitWindow>,
     secondary: Option<SessionRateLimitWindow>,
 }
@@ -153,7 +154,18 @@ fn apply_rate_limit_window(
     }
 }
 
-fn quota_from_line(line: &str) -> Option<QuotaSummary> {
+struct ParsedQuotaEvent {
+    quota: QuotaSummary,
+    limit_id: Option<String>,
+}
+
+fn is_primary_codex_limit(limit_id: Option<&str>) -> bool {
+    limit_id
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("codex"))
+}
+
+fn quota_from_line(line: &str) -> Option<ParsedQuotaEvent> {
     let parsed = serde_json::from_str::<SessionLine>(line).ok()?;
     if parsed.line_type != "event_msg" {
         return None;
@@ -173,20 +185,35 @@ fn quota_from_line(line: &str) -> Option<QuotaSummary> {
         || quota.five_hour.refresh_at.is_some()
         || quota.weekly.remaining_percent.is_some()
         || quota.weekly.refresh_at.is_some())
-    .then_some(quota)
+    .then_some(ParsedQuotaEvent {
+        quota,
+        limit_id: rate_limits.limit_id,
+    })
+}
+
+fn select_latest_quota_from_lines<'a>(
+    lines: impl Iterator<Item = &'a str>,
+) -> Option<QuotaSummary> {
+    let mut latest_quota = None;
+    let mut latest_codex_quota = None;
+
+    for line in lines {
+        let Some(event) = quota_from_line(line) else {
+            continue;
+        };
+
+        if is_primary_codex_limit(event.limit_id.as_deref()) {
+            latest_codex_quota = Some(event.quota.clone());
+        }
+        latest_quota = Some(event.quota);
+    }
+
+    latest_codex_quota.or(latest_quota)
 }
 
 fn load_latest_quota_from_file(path: &Path) -> Option<QuotaSummary> {
     let raw = fs::read_to_string(path).ok()?;
-    let mut latest_quota = None;
-
-    for line in raw.lines() {
-        if let Some(quota) = quota_from_line(line) {
-            latest_quota = Some(quota);
-        }
-    }
-
-    latest_quota
+    select_latest_quota_from_lines(raw.lines())
 }
 
 #[allow(dead_code)]
@@ -216,4 +243,51 @@ pub fn load_latest_local_quota_snapshot_since(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token_count_line(
+        limit_id: Option<&str>,
+        primary_used_percent: f64,
+        secondary_used_percent: f64,
+    ) -> String {
+        let limit_id_field = limit_id
+            .map(|value| format!(r#""limit_id":"{value}","#))
+            .unwrap_or_default();
+
+        format!(
+            r#"{{"type":"event_msg","payload":{{"type":"token_count","rate_limits":{{{limit_id_field}"primary":{{"used_percent":{primary_used_percent},"resets_at":1730000000,"window_minutes":300}},"secondary":{{"used_percent":{secondary_used_percent},"resets_at":1730600000,"window_minutes":10080}}}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn prefers_main_codex_limit_over_later_model_specific_limit() {
+        let lines = [
+            token_count_line(Some("codex"), 11.0, 12.0),
+            token_count_line(Some("codex_bengalfox"), 0.0, 0.0),
+        ];
+
+        let quota = select_latest_quota_from_lines(lines.iter().map(String::as_str))
+            .expect("expected quota to be parsed");
+
+        assert_eq!(quota.five_hour.remaining_percent, Some(89));
+        assert_eq!(quota.weekly.remaining_percent, Some(88));
+    }
+
+    #[test]
+    fn falls_back_to_latest_available_limit_when_main_codex_is_absent() {
+        let lines = [
+            token_count_line(Some("codex_bengalfox"), 25.0, 30.0),
+            token_count_line(Some("codex_koala"), 5.0, 6.0),
+        ];
+
+        let quota = select_latest_quota_from_lines(lines.iter().map(String::as_str))
+            .expect("expected quota to be parsed");
+
+        assert_eq!(quota.five_hour.remaining_percent, Some(95));
+        assert_eq!(quota.weekly.remaining_percent, Some(94));
+    }
 }
