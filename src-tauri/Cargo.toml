@@ -1,6 +1,6 @@
 [package]
 name = "codex_switch"
-version = "1.5.1"
+version = "1.5.2"
 description = "Native Tauri control panel for Codex account switching"
 authors = ["Cmochance"]
 edition = "2021"
@@ -25,3 +25,6 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4.1"
+
+
+

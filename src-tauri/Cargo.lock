@@ -460,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "codex_switch"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",

@@ -255,6 +255,7 @@ fn build_current_card(entry: &ProfileIndexEntry, codex_home: &Path) -> CurrentCa
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn quota_summary_has_data(quota: &crate::models::QuotaSummary) -> bool {
     quota.five_hour.remaining_percent.is_some()
         || quota.five_hour.refresh_at.is_some()
@@ -262,6 +263,7 @@ fn quota_summary_has_data(quota: &crate::models::QuotaSummary) -> bool {
         || quota.weekly.refresh_at.is_some()
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn select_current_quota(
     entry: &ProfileIndexEntry,
     live_snapshot: Option<&super::session_usage::LocalQuotaSnapshot>,
@@ -309,6 +311,7 @@ pub fn load_profiles_snapshot(codex_home: Option<&Path>) -> AppResult<ProfilesSn
     })
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn load_current_live_quota(codex_home: Option<&Path>) -> AppResult<CurrentQuotaResponse> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
     let index = load_profiles_index(Some(&codex_home))?;
