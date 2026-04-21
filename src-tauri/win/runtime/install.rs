@@ -10,8 +10,8 @@ use super::paths::{
     ACTIVE_MARKER_FILE, CURRENT_PROFILE_FILENAME, DEFAULT_PROFILES,
 };
 use super::process::{
-    discover_real_codex_cli_path, hide_console_window, load_install_state,
-    resolve_windows_invokable_path, save_install_state, InstallState,
+    discover_real_codex_cli_path, hide_console_window, is_acceptable_real_codex_cli_path,
+    load_install_state, resolve_windows_invokable_path, save_install_state, InstallState,
 };
 use super::profiles::resolve_current_profile;
 
@@ -187,7 +187,9 @@ fn resolve_real_codex_path(codex_home: &Path) -> AppResult<PathBuf> {
     let state = load_install_state(Some(codex_home));
     if let Some(existing) = state.real_codex_path.as_deref() {
         let path = PathBuf::from(existing);
-        if path.is_file() && path != managed_shim_path {
+        if let Some(path) = resolve_windows_invokable_path(&path)
+            .filter(|path| is_acceptable_real_codex_cli_path(path, Some(&managed_shim_path)))
+        {
             return Ok(path);
         }
     }
@@ -352,7 +354,7 @@ pub fn refresh_install_state(codex_home: &Path) -> AppResult<()> {
         .real_codex_path
         .as_deref()
         .and_then(|path| resolve_windows_invokable_path(Path::new(path)))
-        .filter(|path| path != &managed_shim_path)
+        .filter(|path| is_acceptable_real_codex_cli_path(path, Some(&managed_shim_path)))
         .or_else(|| discover_real_codex_cli_path(Some(&managed_shim_path)))
         .map(|path| path.to_string_lossy().into_owned());
 
@@ -562,8 +564,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        ensure_dir_on_path_entries, install_from_with_path_hook, remove_dir_from_path_entries,
-        uninstall_with_path_hook, CLI_RUNTIME_FILENAME,
+        ensure_dir_on_path_entries, install_from_with_path_hook, refresh_install_state,
+        remove_dir_from_path_entries, uninstall_with_path_hook, CLI_RUNTIME_FILENAME,
     };
     use crate::windows::{
         env_guard,
@@ -646,6 +648,62 @@ mod tests {
         );
         assert!(result.path_added_by_installer);
         assert!(result.path_changed);
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn refresh_install_state_replaces_cached_windows_apps_alias() {
+        let _guard = env_guard();
+        let codex_home = temp_codex_home("refresh-install-state-windowsapps");
+        let runtime_dir = codex_home.join("account_backup").join("windows");
+        let managed_bin = codex_home.join("bin");
+        let alias_dir = codex_home
+            .join("AppData")
+            .join("Local")
+            .join("Microsoft")
+            .join("WindowsApps");
+        let npm_dir = codex_home.join("npm");
+        fs::create_dir_all(&runtime_dir).unwrap();
+        fs::create_dir_all(&managed_bin).unwrap();
+        fs::create_dir_all(&alias_dir).unwrap();
+        fs::create_dir_all(&npm_dir).unwrap();
+        fs::write(managed_bin.join("codex.cmd"), "@echo off\r\n").unwrap();
+        fs::write(alias_dir.join("codex.exe"), "alias").unwrap();
+        fs::write(npm_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
+        fs::write(
+            runtime_dir.join("install_state.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&InstallState {
+                    real_codex_path: Some(
+                        alias_dir.join("codex.exe").to_string_lossy().into_owned()
+                    ),
+                    path_added_by_installer: false,
+                })
+                .unwrap()
+            ),
+        )
+        .unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths([managed_bin.clone(), npm_dir.clone()]).unwrap(),
+        );
+
+        refresh_install_state(&codex_home).unwrap();
+        let state = load_install_state(Some(&codex_home));
+
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+
+        assert_eq!(
+            state.real_codex_path,
+            Some(npm_dir.join("codex.cmd").to_string_lossy().into_owned())
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 

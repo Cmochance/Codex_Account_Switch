@@ -18,6 +18,7 @@ use super::paths::{get_codex_home, get_install_state_file};
 const AUTH_REFRESH_PROMPT: &str = "Reply with the single word OK.";
 const APP_PROCESS_NAME: &str = "Codex.exe";
 const WINDOWS_INVOKABLE_SUFFIXES: [&str; 4] = ["cmd", "exe", "bat", "com"];
+const WINDOWS_APPS_PATH_SEGMENT: &str = r"\microsoft\windowsapps\";
 const WINDOWS_STORE_APP_ID: &str = "OpenAI.Codex_2p2nqsd0c76g0!App";
 const WINDOWS_STORE_SHELL_PREFIX: &str = r"shell:AppsFolder\";
 #[cfg(target_os = "windows")]
@@ -68,11 +69,28 @@ pub(super) fn save_install_state(codex_home: Option<&Path>, state: &InstallState
 }
 
 fn normalize_windows_path(path: &Path) -> String {
-    path.to_string_lossy().to_ascii_lowercase()
+    path.to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase()
 }
 
 fn paths_match(left: &Path, right: &Path) -> bool {
     normalize_windows_path(left) == normalize_windows_path(right)
+}
+
+fn is_windows_apps_alias_path(path: &Path) -> bool {
+    normalize_windows_path(path).contains(WINDOWS_APPS_PATH_SEGMENT)
+}
+
+pub(super) fn is_acceptable_real_codex_cli_path(
+    path: &Path,
+    managed_shim_path: Option<&Path>,
+) -> bool {
+    if managed_shim_path.is_some_and(|managed_shim| paths_match(path, managed_shim)) {
+        return false;
+    }
+
+    !is_windows_apps_alias_path(path)
 }
 
 pub(super) fn resolve_windows_invokable_path(path: &Path) -> Option<PathBuf> {
@@ -103,7 +121,7 @@ fn push_real_codex_candidate(
     let Some(resolved_path) = resolve_windows_invokable_path(&path) else {
         return;
     };
-    if managed_shim_path.is_some_and(|managed_shim| paths_match(&resolved_path, managed_shim)) {
+    if !is_acceptable_real_codex_cli_path(&resolved_path, managed_shim_path) {
         return;
     }
     push_candidate(candidates, resolved_path);
@@ -250,32 +268,50 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
     }
 }
 
-fn resolve_real_codex_cli(codex_home: Option<&Path>) -> Option<PathBuf> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RealCodexPathSource {
+    InstallState,
+    Discovery,
+}
+
+fn persist_real_codex_path(
+    codex_home: Option<&Path>,
+    state: &mut InstallState,
+    path: Option<&Path>,
+) {
+    let next_path = path.map(|path| path.to_string_lossy().into_owned());
+    if state.real_codex_path != next_path {
+        state.real_codex_path = next_path;
+        save_install_state(codex_home, state);
+    }
+}
+
+fn resolve_real_codex_cli_with_source(
+    codex_home: Option<&Path>,
+) -> Option<(PathBuf, RealCodexPathSource)> {
     let managed_shim_path = managed_codex_shim_path(codex_home);
     let mut state = load_install_state(codex_home);
 
     if let Some(raw_path) = state.real_codex_path.as_ref().map(PathBuf::from) {
-        if let Some(resolved_path) = resolve_windows_invokable_path(&raw_path) {
-            if !paths_match(&resolved_path, &managed_shim_path) {
-                let resolved_text = resolved_path.to_string_lossy().into_owned();
-                if state.real_codex_path.as_deref() != Some(resolved_text.as_str()) {
-                    state.real_codex_path = Some(resolved_text);
-                    save_install_state(codex_home, &state);
-                }
-                return Some(resolved_path);
-            }
+        if let Some(resolved_path) = resolve_windows_invokable_path(&raw_path)
+            .filter(|path| is_acceptable_real_codex_cli_path(path, Some(&managed_shim_path)))
+        {
+            persist_real_codex_path(codex_home, &mut state, Some(&resolved_path));
+            return Some((resolved_path, RealCodexPathSource::InstallState));
         }
     }
 
     let discovered_path = discover_real_codex_cli_path(Some(&managed_shim_path));
-    if let Some(path) = discovered_path.as_ref() {
-        let resolved_text = path.to_string_lossy().into_owned();
-        if state.real_codex_path.as_deref() != Some(resolved_text.as_str()) {
-            state.real_codex_path = Some(resolved_text);
-            save_install_state(codex_home, &state);
-        }
+    if let Some(path) = discovered_path.as_deref() {
+        persist_real_codex_path(codex_home, &mut state, Some(path));
+    } else if state.real_codex_path.is_some() {
+        persist_real_codex_path(codex_home, &mut state, None);
     }
-    discovered_path
+    discovered_path.map(|path| (path, RealCodexPathSource::Discovery))
+}
+
+fn resolve_real_codex_cli(codex_home: Option<&Path>) -> Option<PathBuf> {
+    resolve_real_codex_cli_with_source(codex_home).map(|(path, _)| path)
 }
 
 pub fn forward_to_real_codex(args: &[String], codex_home: Option<&Path>) -> AppResult<i32> {
@@ -356,11 +392,17 @@ fn classify_auth_refresh_failure(message: &str) -> Option<AppError> {
 }
 
 pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
-    let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) else {
+    let Some((real_codex_path, real_codex_source)) =
+        resolve_real_codex_cli_with_source(Some(cli_codex_home))
+    else {
         return Err(AppError::new(
             "REAL_CODEX_NOT_FOUND",
             "Real Codex CLI path not found. Run `codex_switch_cli.exe install` first.",
         ));
+    };
+    let source_label = match real_codex_source {
+        RealCodexPathSource::InstallState => "install_state.json",
+        RealCodexPathSource::Discovery => "CLI discovery",
     };
 
     let output = build_auth_refresh_command(&real_codex_path, runtime_codex_home)
@@ -368,7 +410,11 @@ pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) 
         .map_err(|error| {
             AppError::new(
                 "AUTH_REFRESH_COMMAND_FAILED",
-                format!("Failed to start `codex exec` for auth refresh: {error}"),
+                format!(
+                    "Failed to start `codex exec` for auth refresh via {} (source: {}): {error}",
+                    real_codex_path.display(),
+                    source_label
+                ),
             )
         })?;
 
@@ -523,9 +569,9 @@ impl PlatformHooks for WindowsPlatformHooks {
 mod tests {
     use super::{
         build_auth_refresh_command, classify_auth_refresh_failure, discover_real_codex_cli_path,
-        load_install_state, resolve_real_codex_cli, resolve_windows_app_target,
-        windows_store_shell_target, AppLaunchTarget, InstallState, AUTH_REFRESH_PROMPT,
-        WINDOWS_STORE_APP_ID,
+        is_acceptable_real_codex_cli_path, load_install_state, resolve_real_codex_cli,
+        resolve_windows_app_target, windows_store_shell_target, AppLaunchTarget, InstallState,
+        AUTH_REFRESH_PROMPT, WINDOWS_STORE_APP_ID,
     };
     use crate::windows::env_guard;
     use serde_json::to_string_pretty;
@@ -572,6 +618,42 @@ mod tests {
     }
 
     #[test]
+    fn discover_real_codex_cli_path_skips_windows_apps_aliases() {
+        let _guard = env_guard();
+        let codex_home = temp_codex_home("discover-real-cli-windowsapps");
+        let managed_bin = codex_home.join("bin");
+        let alias_dir = codex_home
+            .join("AppData")
+            .join("Local")
+            .join("Microsoft")
+            .join("WindowsApps");
+        let npm_dir = codex_home.join("npm");
+        fs::create_dir_all(&managed_bin).unwrap();
+        fs::create_dir_all(&alias_dir).unwrap();
+        fs::create_dir_all(&npm_dir).unwrap();
+        fs::write(managed_bin.join("codex.cmd"), "@echo off\r\n").unwrap();
+        fs::write(alias_dir.join("codex.exe"), "alias").unwrap();
+        fs::write(npm_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths([alias_dir.clone(), npm_dir.clone()]).unwrap(),
+        );
+
+        let resolved = discover_real_codex_cli_path(Some(&managed_bin.join("codex.cmd")));
+
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+
+        assert_eq!(resolved, Some(npm_dir.join("codex.cmd")));
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
     fn resolve_real_codex_cli_repairs_legacy_extensionless_state() {
         let codex_home = temp_codex_home("repair-legacy-state");
         let runtime_dir = codex_home.join("account_backup").join("windows");
@@ -599,6 +681,60 @@ mod tests {
             Some(npm_dir.join("codex.cmd").to_string_lossy().into_owned())
         );
         let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn resolve_real_codex_cli_skips_cached_windows_apps_alias_and_repairs_state() {
+        let _guard = env_guard();
+        let codex_home = temp_codex_home("repair-windowsapps-state");
+        let runtime_dir = codex_home.join("account_backup").join("windows");
+        let alias_dir = codex_home
+            .join("AppData")
+            .join("Local")
+            .join("Microsoft")
+            .join("WindowsApps");
+        let npm_dir = codex_home.join("npm");
+        fs::create_dir_all(&runtime_dir).unwrap();
+        fs::create_dir_all(&alias_dir).unwrap();
+        fs::create_dir_all(&npm_dir).unwrap();
+        fs::write(alias_dir.join("codex.exe"), "alias").unwrap();
+        fs::write(npm_dir.join("codex.cmd"), "@echo off\r\n").unwrap();
+        let install_state = InstallState {
+            real_codex_path: Some(alias_dir.join("codex.exe").to_string_lossy().into_owned()),
+            path_added_by_installer: false,
+        };
+        fs::write(
+            runtime_dir.join("install_state.json"),
+            format!("{}\n", to_string_pretty(&install_state).unwrap()),
+        )
+        .unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", &npm_dir);
+
+        let resolved = resolve_real_codex_cli(Some(&codex_home));
+        let persisted_state = load_install_state(Some(&codex_home));
+
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+
+        assert_eq!(resolved, Some(npm_dir.join("codex.cmd")));
+        assert_eq!(
+            persisted_state.real_codex_path,
+            Some(npm_dir.join("codex.cmd").to_string_lossy().into_owned())
+        );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn is_acceptable_real_codex_cli_path_rejects_windows_apps_aliases() {
+        let alias_path =
+            PathBuf::from(r"C:\Users\demo\AppData\Local\Microsoft\WindowsApps\codex.exe");
+
+        assert!(!is_acceptable_real_codex_cli_path(&alias_path, None));
     }
 
     #[test]
