@@ -6,7 +6,7 @@ use crate::errors::{AppError, AppResult};
 use crate::platform;
 
 use super::fs_ops::{copy_entry, remove_path};
-use super::metadata::{sync_profile_metadata_from_auth, sync_profile_quota};
+use super::metadata::{sync_profile_metadata_from_auth, sync_profile_metadata_from_auth_and_quota};
 use super::paths::{
     get_backup_root, get_codex_home, get_refresh_runtime_dir, validate_profile_name,
 };
@@ -194,14 +194,15 @@ pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
     }
 
     copy_entry(&refreshed_auth_path, &auth_path)?;
-    sync_profile_metadata_from_auth(&profile_name, Some(&codex_home))?;
     if let Some(snapshot) = refreshed_quota {
-        sync_profile_quota(
+        sync_profile_metadata_from_auth_and_quota(
             &profile_name,
             snapshot.quota,
             snapshot.source_mtime_ms,
             Some(&codex_home),
         )?;
+    } else {
+        sync_profile_metadata_from_auth(&profile_name, Some(&codex_home))?;
     }
     super::profiles_index::load_profiles_index(Some(&codex_home))?;
 

@@ -11,10 +11,14 @@
     "build": "npm run version:sync && tsc && vite build",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:rust:windows": "cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --lib",
+    "test:rust:windows": "cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc",
     "tauri": "tauri",
     "tauri:dev": "npm run version:sync && tauri dev",
     "tauri:build": "npm run version:sync:release && tauri build",
+    "tauri:build:windows": "npm run version:sync:release && tauri build --target x86_64-pc-windows-msvc",
     "tauri:build:portable": "npm run version:sync && tauri build --no-bundle",
+    "tauri:build:windows:portable": "npm run version:sync && tauri build --target x86_64-pc-windows-msvc --no-bundle",
     "tauri:build:macos-dmg": "npm run version:sync && tauri build --bundles app,dmg --no-sign && sh -c 'for f in src-tauri/target/release/bundle/dmg/*.dmg; do [ -e \"$f\" ] || exit 0; mv -f \"$f\" src-tauri/target/release/bundle/macos/; done'"
   },
   "dependencies": {

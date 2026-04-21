@@ -9,6 +9,8 @@ use super::paths::{
     get_backup_root, get_codex_home, get_profile_metadata_path, validate_profile_name,
 };
 
+const PAID_PLAN_NAME: &str = "paid";
+
 #[derive(Deserialize)]
 struct AuthFile {
     tokens: Option<AuthTokens>,
@@ -127,6 +129,22 @@ fn load_or_init_profile_metadata(profile_name: &str, codex_home: Option<&Path>) 
         .unwrap_or_else(|| ProfileMetadata::with_folder_name(profile_name))
 }
 
+fn is_free_plan(plan_name: Option<&str>) -> bool {
+    plan_name
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("free"))
+}
+
+fn quota_has_five_hour_window(quota: &QuotaSummary) -> bool {
+    quota.five_hour.remaining_percent.is_some() || quota.five_hour.refresh_at.is_some()
+}
+
+fn apply_paid_fallback_for_free_plan(metadata: &mut ProfileMetadata) {
+    if is_free_plan(metadata.plan_name.as_deref()) && quota_has_five_hour_window(&metadata.quota) {
+        metadata.plan_name = Some(PAID_PLAN_NAME.to_string());
+    }
+}
+
 fn apply_auth_metadata(
     metadata: &mut ProfileMetadata,
     auth_metadata: AuthDerivedMetadata,
@@ -156,6 +174,7 @@ fn apply_auth_metadata(
     if has_plan_claims {
         metadata.plan_name = plan_name;
         metadata.subscription_expires_at = subscription_expires_at;
+        apply_paid_fallback_for_free_plan(metadata);
     }
 }
 
@@ -220,6 +239,24 @@ pub fn sync_profile_metadata_from_auth(
     })
 }
 
+pub fn sync_profile_metadata_from_auth_and_quota(
+    profile_name: &str,
+    quota: QuotaSummary,
+    quota_updated_at_ms: Option<u64>,
+    codex_home: Option<&Path>,
+) -> Result<ProfileMetadata, crate::errors::AppError> {
+    let auth_metadata = validate_profile_name(profile_name)
+        .ok()
+        .and_then(|profile_name| load_auth_metadata(&profile_name, codex_home));
+    update_profile_metadata(profile_name, codex_home, move |metadata| {
+        metadata.quota = quota;
+        metadata.quota_updated_at_ms = quota_updated_at_ms;
+        if let Some(auth_metadata) = auth_metadata {
+            apply_auth_metadata(metadata, auth_metadata, true);
+        }
+    })
+}
+
 pub fn sync_profile_quota(
     profile_name: &str,
     quota: QuotaSummary,
@@ -262,4 +299,63 @@ pub fn save_profile_metadata(
             format!("Failed to write metadata: {error}"),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::QuotaWindow;
+
+    fn auth_plan(plan_name: &str) -> AuthDerivedMetadata {
+        AuthDerivedMetadata {
+            plan_name: Some(plan_name.to_string()),
+            has_plan_claims: true,
+            ..AuthDerivedMetadata::default()
+        }
+    }
+
+    fn quota_with_five_hour() -> QuotaSummary {
+        QuotaSummary {
+            five_hour: QuotaWindow {
+                remaining_percent: Some(99),
+                refresh_at: Some("2026-04-21 13:37".to_string()),
+            },
+            ..QuotaSummary::default()
+        }
+    }
+
+    #[test]
+    fn free_plan_with_five_hour_quota_displays_paid() {
+        let mut metadata = ProfileMetadata {
+            quota: quota_with_five_hour(),
+            ..ProfileMetadata::default()
+        };
+
+        apply_auth_metadata(&mut metadata, auth_plan("free"), true);
+
+        assert_eq!(metadata.plan_name.as_deref(), Some("paid"));
+    }
+
+    #[test]
+    fn free_plan_without_five_hour_quota_stays_free() {
+        let mut metadata = ProfileMetadata::default();
+
+        apply_auth_metadata(&mut metadata, auth_plan("free"), true);
+
+        assert_eq!(metadata.plan_name.as_deref(), Some("free"));
+    }
+
+    #[test]
+    fn returned_paid_tiers_are_not_reclassified() {
+        for plan_name in ["plus", "pro"] {
+            let mut metadata = ProfileMetadata {
+                quota: quota_with_five_hour(),
+                ..ProfileMetadata::default()
+            };
+
+            apply_auth_metadata(&mut metadata, auth_plan(plan_name), true);
+
+            assert_eq!(metadata.plan_name.as_deref(), Some(plan_name));
+        }
+    }
 }

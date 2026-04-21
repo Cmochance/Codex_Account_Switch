@@ -6,6 +6,7 @@ mod cli;
 mod commands;
 #[path = "../shared/runtime/errors.rs"]
 mod errors;
+#[cfg(target_os = "macos")]
 #[path = "../mac/runtime/mod.rs"]
 mod macos;
 #[path = "../shared/runtime/models.rs"]
@@ -14,8 +15,10 @@ mod models;
 mod platform;
 #[path = "../shared/runtime/mod.rs"]
 mod shared;
+#[cfg(not(target_os = "macos"))]
 #[path = "../win/runtime/windowing.rs"]
 mod windowing;
+#[cfg(not(target_os = "macos"))]
 #[path = "../win/runtime/mod.rs"]
 mod windows;
 
