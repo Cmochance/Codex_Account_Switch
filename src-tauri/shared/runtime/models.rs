@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct ModelMappingEntry {
+    pub source_model: String,
+    pub target_model: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct QuotaWindow {
@@ -22,6 +29,8 @@ pub struct ProfileMetadata {
     pub plan_name: Option<String>,
     pub subscription_expires_at: Option<String>,
     pub openai_base_url: Option<String>,
+    pub provider_protocol: Option<String>,
+    pub model_mappings: Vec<ModelMappingEntry>,
     pub quota: QuotaSummary,
     pub quota_updated_at_ms: Option<u64>,
 }
@@ -65,6 +74,8 @@ pub struct ProfileCard {
     pub plan_name: Option<String>,
     pub subscription_days_left: Option<i64>,
     pub openai_base_url: Option<String>,
+    pub provider_protocol: Option<String>,
+    pub model_mappings: Vec<ModelMappingEntry>,
     pub quota: QuotaSummary,
 }
 
@@ -88,6 +99,8 @@ pub struct ProfileIndexEntry {
     pub plan_name: Option<String>,
     pub subscription_expires_at: Option<String>,
     pub openai_base_url: Option<String>,
+    pub provider_protocol: Option<String>,
+    pub model_mappings: Vec<ModelMappingEntry>,
     pub auth_present: bool,
     pub stored_quota: QuotaSummary,
     pub stored_quota_updated_at_ms: Option<u64>,
@@ -145,6 +158,12 @@ pub struct UpdateProfileBaseUrlPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateProfileModelMappingsPayload {
+    pub profile: String,
+    pub mappings: Vec<ModelMappingEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwitchResponse {
     pub ok: bool,
     pub profile: String,
@@ -157,4 +176,12 @@ pub struct ActionResponse {
     pub ok: bool,
     pub message: String,
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ProviderModelListResponse {
+    pub models: Vec<String>,
+    pub provider_protocol: Option<String>,
+    pub protocol_warning: Option<String>,
 }

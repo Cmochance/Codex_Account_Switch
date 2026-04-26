@@ -13,18 +13,61 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
+axum = "0.7.9"
 base64 = "0.22.1"
 chrono = { version = "0.4.44", features = ["serde"] }
+futures-util = "0.3.31"
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tauri = { version = "=2.10.1", features = [] }
 tauri-plugin-opener = "2.5.3"
+tokio = { version = "1.48.0", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+uuid = { version = "1.18.1", features = ["v4"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4.1"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

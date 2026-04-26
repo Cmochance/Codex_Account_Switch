@@ -194,6 +194,44 @@
       </form>
     </dialog>
 
+    <dialog id="model-mapping-dialog" class="dialog">
+      <form id="model-mapping-form" class="dialog-form dialog-form-wide" method="dialog">
+        <div class="dialog-copy">
+          <h3 id="model-mapping-dialog-title">Model Mapping</h3>
+          <p id="model-mapping-dialog-copy">Map Codex source models to provider model names for this profile.</p>
+          <p id="model-mapping-dialog-hint" class="field-copy">
+            After provider models are loaded, the right column supports dropdown suggestions and manual input.
+          </p>
+        </div>
+
+        <div class="model-mapping-toolbar">
+          <button id="model-mapping-fetch-button" class="ghost-button" type="button">Read Models</button>
+          <span id="model-mapping-fetch-status" class="field-copy"></span>
+        </div>
+        <p id="model-mapping-provider-type" class="field-copy model-mapping-provider-type" hidden></p>
+
+        <div class="model-mapping-header">
+          <span id="model-mapping-source-label">Codex model</span>
+          <span id="model-mapping-target-label">Provider model</span>
+          <span class="model-mapping-actions-label"></span>
+        </div>
+
+        <div id="model-mapping-grid" class="model-mapping-grid"></div>
+        <datalist id="provider-model-options"></datalist>
+
+        <div class="model-mapping-footer">
+          <button id="add-model-mapping-row-button" class="ghost-button" type="button">Add Row</button>
+        </div>
+
+        <p id="model-mapping-dialog-error" class="dialog-error" hidden></p>
+
+        <div class="dialog-actions">
+          <button id="cancel-model-mapping-button" class="ghost-button" type="button">Cancel</button>
+          <button id="submit-model-mapping-button" class="primary-button" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="toast" class="toast" hidden></div>
     <script type="module" src="/main.ts"></script>
   </body>

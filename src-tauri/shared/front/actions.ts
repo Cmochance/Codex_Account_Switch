@@ -6,6 +6,7 @@ import {
   buildDashboardViewModel,
 } from "@front-shared/dashboard-view-model";
 import {
+  fetchProfileProviderModels,
   addProfile,
   clearProfileAccount,
   deleteProfile,
@@ -21,6 +22,7 @@ import {
   renameProfile,
   switchProfile,
   updateProfileBaseUrl,
+  updateProfileModelMappings,
 } from "@front-shared/tauri";
 import {
   applyLocale,
@@ -30,10 +32,28 @@ import {
   renderProfiles,
   showToast,
 } from "@front-shared/render";
+import type {
+  ModelMappingEntry,
+  ProfileCard,
+  ProviderModelListResponse,
+} from "@front-shared/types";
 
 type ErrorWithCode = Error & {
   code?: string;
 };
+
+const sourceModelOptions = [
+  { value: "gpt-5.2", label: "GPT-5.2" },
+  { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
+  { value: "gpt-5.4", label: "GPT-5.4" },
+] as const;
+
+const PROVIDER_PROTOCOL_RESPONSES = "responses";
+const PROVIDER_PROTOCOL_CHAT_COMPLETIONS = "chat/completions";
+const PROVIDER_PROTOCOL_MESSAGES = "messages";
+const PROVIDER_PROTOCOL_COMPLETIONS = "completions";
+
+const providerModelCache = new Map<string, ProviderModelListResponse>();
 
 function rerenderDashboard(): void {
   applyLocale();
@@ -51,14 +71,26 @@ function rerenderDashboard(): void {
     handleSwitchProfile,
     handleRefreshProfile,
     handleBaseUrlProfileClick,
+    handleModelMappingProfileClick,
   );
   renderCurrentCard(dashboard);
   renderPaging(dashboard.paging);
+  if (elements.modelMappingDialog?.open) {
+    renderProviderModelOptions();
+    renderModelMappingRows();
+    setModelMappingProviderType(modelMappingProviderProtocol);
+    updateModelMappingDialogControls();
+  }
 }
 
 let renameSourceProfile: string | null = null;
 let baseUrlSourceProfile: string | null = null;
 let deleteSourceProfile: string | null = null;
+let modelMappingSourceProfile: string | null = null;
+let modelMappingRows: ModelMappingEntry[] = [];
+let modelMappingFetchPending = false;
+let loadedProviderModels: string[] = [];
+let modelMappingProviderProtocol: string | null = null;
 
 function isRefreshPending(profile: string): boolean {
   return state.refreshActiveProfile === profile || state.refreshQueue.includes(profile);
@@ -72,6 +104,259 @@ function clearDialogError(element: HTMLParagraphElement): void {
 function showDialogError(element: HTMLParagraphElement, message: string): void {
   element.hidden = false;
   element.textContent = message;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function currentProfileEntry(profile: string): ProfileCard | undefined {
+  return state.snapshot?.profiles.find((entry) => entry.folder_name === profile);
+}
+
+function cloneMappings(mappings: ModelMappingEntry[]): ModelMappingEntry[] {
+  return mappings.map((mapping) => ({
+    source_model: mapping.source_model,
+    target_model: mapping.target_model,
+  }));
+}
+
+function defaultModelMappingRow(): ModelMappingEntry {
+  return {
+    source_model: sourceModelOptions[0]?.value ?? "gpt-5.2",
+    target_model: "",
+  };
+}
+
+function setModelMappingStatus(message: string, isError = false): void {
+  if (!elements.modelMappingFetchStatus) {
+    return;
+  }
+
+  elements.modelMappingFetchStatus.textContent = message;
+  elements.modelMappingFetchStatus.style.color = isError ? "#a04949" : "";
+}
+
+function providerProtocolText(protocol: string | null): string {
+  if (protocol === PROVIDER_PROTOCOL_RESPONSES) {
+    return t(state.locale, "modelMappingProviderTypeResponses");
+  }
+  if (protocol === PROVIDER_PROTOCOL_CHAT_COMPLETIONS) {
+    return t(state.locale, "modelMappingProviderTypeChatCompletions");
+  }
+  if (protocol === PROVIDER_PROTOCOL_MESSAGES) {
+    return t(state.locale, "modelMappingProviderTypeMessages");
+  }
+  if (protocol === PROVIDER_PROTOCOL_COMPLETIONS) {
+    return t(state.locale, "modelMappingProviderTypeCompletions");
+  }
+  if (protocol?.trim()) {
+    return protocol;
+  }
+  return t(state.locale, "modelMappingProviderTypeUnknown");
+}
+
+function sourceOptionsForRow(sourceModel: string): ReadonlyArray<{ value: string; label: string }> {
+  if (sourceModelOptions.some((option) => option.value === sourceModel)) {
+    return sourceModelOptions;
+  }
+
+  if (!sourceModel.trim()) {
+    return sourceModelOptions;
+  }
+
+  return [{ value: sourceModel, label: sourceModel }, ...sourceModelOptions];
+}
+
+function setModelMappingProviderType(protocol: string | null): void {
+  modelMappingProviderProtocol = protocol;
+  if (!elements.modelMappingProviderType) {
+    return;
+  }
+
+  elements.modelMappingProviderType.hidden = false;
+  elements.modelMappingProviderType.textContent = t(state.locale, "modelMappingProviderType", {
+    type: providerProtocolText(protocol),
+  });
+}
+
+function updateModelMappingDialogControls(): void {
+  if (!elements.modelMappingDialog || !elements.modelMappingFetchButton) {
+    return;
+  }
+
+  const profile = modelMappingSourceProfile ? currentProfileEntry(modelMappingSourceProfile) : null;
+  const hasBaseUrl = Boolean(profile?.openai_base_url?.trim());
+  elements.modelMappingFetchButton.disabled = state.loading || modelMappingFetchPending || !hasBaseUrl;
+  elements.addModelMappingRowButton!.disabled = state.loading || modelMappingFetchPending;
+  elements.submitModelMappingButton!.disabled = state.loading || modelMappingFetchPending;
+  elements.cancelModelMappingButton!.disabled = modelMappingFetchPending;
+}
+
+function renderProviderModelOptions(): void {
+  if (!elements.providerModelOptions) {
+    return;
+  }
+
+  elements.providerModelOptions.innerHTML = loadedProviderModels
+    .map((model) => `<option value="${escapeHtml(model)}"></option>`)
+    .join("");
+}
+
+function bindModelMappingRowEvents(): void {
+  if (!elements.modelMappingGrid) {
+    return;
+  }
+
+  for (const select of elements.modelMappingGrid.querySelectorAll<HTMLSelectElement>("[data-model-mapping-source]")) {
+    select.addEventListener("change", () => {
+      const index = Number(select.getAttribute("data-model-mapping-source"));
+      if (Number.isNaN(index) || !modelMappingRows[index]) {
+        return;
+      }
+      modelMappingRows[index] = {
+        ...modelMappingRows[index],
+        source_model: select.value,
+      };
+    });
+  }
+
+  for (const input of elements.modelMappingGrid.querySelectorAll<HTMLInputElement>("[data-model-mapping-target]")) {
+    input.addEventListener("input", () => {
+      const index = Number(input.getAttribute("data-model-mapping-target"));
+      if (Number.isNaN(index) || !modelMappingRows[index]) {
+        return;
+      }
+      modelMappingRows[index] = {
+        ...modelMappingRows[index],
+        target_model: input.value,
+      };
+    });
+  }
+
+  for (const button of elements.modelMappingGrid.querySelectorAll<HTMLButtonElement>("[data-model-mapping-remove]")) {
+    button.addEventListener("click", () => {
+      const index = Number(button.getAttribute("data-model-mapping-remove"));
+      if (Number.isNaN(index)) {
+        return;
+      }
+      modelMappingRows = modelMappingRows.filter((_, currentIndex) => currentIndex !== index);
+      renderModelMappingRows();
+    });
+  }
+}
+
+function renderModelMappingRows(): void {
+  if (!elements.modelMappingGrid) {
+    return;
+  }
+
+  if (!modelMappingRows.length) {
+    elements.modelMappingGrid.innerHTML =
+      `<div class="empty-state model-mapping-empty-state">${t(state.locale, "modelMappingEmpty")}</div>`;
+    return;
+  }
+
+  const rowsMarkup = modelMappingRows
+    .map((mapping, index) => {
+      const sourceOptionsMarkup = sourceOptionsForRow(mapping.source_model)
+        .map(
+          (option) =>
+            `<option value="${option.value}"${option.value === mapping.source_model ? " selected" : ""}>${option.label}</option>`,
+        )
+        .join("");
+
+      return `
+        <div class="model-mapping-row">
+          <select class="model-mapping-select" data-model-mapping-source="${index}">
+            ${sourceOptionsMarkup}
+          </select>
+          <input
+            class="model-mapping-input"
+            data-model-mapping-target="${index}"
+            list="provider-model-options"
+            placeholder="${escapeHtml(t(state.locale, "modelMappingTargetPlaceholder"))}"
+            value="${escapeHtml(mapping.target_model)}"
+          />
+          <button
+            class="ghost-button model-mapping-remove-button"
+            type="button"
+            data-model-mapping-remove="${index}"
+          >
+            ${t(state.locale, "modelMappingRemoveRow")}
+          </button>
+        </div>
+      `;
+    })
+    .join("");
+
+  elements.modelMappingGrid.innerHTML = rowsMarkup;
+  bindModelMappingRowEvents();
+}
+
+function openModelMappingDialog(profile: string): void {
+  if (!elements.modelMappingDialog || !elements.modelMappingDialogError) {
+    return;
+  }
+
+  modelMappingSourceProfile = profile;
+  modelMappingRows = cloneMappings(currentProfileEntry(profile)?.model_mappings ?? []);
+  if (!modelMappingRows.length) {
+    modelMappingRows = [defaultModelMappingRow()];
+  }
+  const cachedProviderModels = providerModelCache.get(profile);
+  loadedProviderModels = [...(cachedProviderModels?.models ?? [])];
+  modelMappingFetchPending = false;
+  clearDialogError(elements.modelMappingDialogError);
+  setModelMappingStatus("");
+  setModelMappingProviderType(
+    cachedProviderModels?.provider_protocol ?? currentProfileEntry(profile)?.provider_protocol ?? null,
+  );
+  renderProviderModelOptions();
+  renderModelMappingRows();
+  updateModelMappingDialogControls();
+  elements.modelMappingDialog.showModal();
+}
+
+function closeModelMappingDialog(): void {
+  modelMappingSourceProfile = null;
+  modelMappingRows = [];
+  loadedProviderModels = [];
+  modelMappingFetchPending = false;
+  modelMappingProviderProtocol = null;
+  if (elements.modelMappingDialog) {
+    elements.modelMappingDialog.close();
+  }
+}
+
+function normalizeModelMappingsForSubmit(): ModelMappingEntry[] | null {
+  const filteredRows = modelMappingRows
+    .map((mapping) => ({
+      source_model: mapping.source_model.trim(),
+      target_model: mapping.target_model.trim(),
+    }))
+    .filter((mapping) => mapping.target_model);
+
+  const seenSources = new Set<string>();
+  for (const mapping of filteredRows) {
+    const sourceKey = mapping.source_model.toLowerCase();
+    if (seenSources.has(sourceKey)) {
+      showDialogError(elements.modelMappingDialogError!, t(state.locale, "modelMappingDuplicateSource"));
+      return null;
+    }
+    if (!mapping.target_model) {
+      showDialogError(elements.modelMappingDialogError!, t(state.locale, "modelMappingTargetRequired"));
+      return null;
+    }
+    seenSources.add(sourceKey);
+  }
+
+  return filteredRows;
 }
 
 function openTextDialog(options: {
@@ -243,6 +528,10 @@ function handleBaseUrlProfileClick(profile: string): void {
   });
 }
 
+function handleModelMappingProfileClick(profile: string): void {
+  openModelMappingDialog(profile);
+}
+
 function handleDeleteProfileClick(profile: string): void {
   if (!elements.deleteProfileDialog || !elements.deleteProfileDialogError) {
     return;
@@ -335,6 +624,49 @@ function closeRenameProfileDialog(): void {
 function closeBaseUrlDialog(): void {
   baseUrlSourceProfile = null;
   elements.baseUrlDialog.close();
+}
+
+async function handleFetchProviderModels(): Promise<void> {
+  if (!modelMappingSourceProfile || !elements.modelMappingDialogError) {
+    return;
+  }
+
+  clearDialogError(elements.modelMappingDialogError);
+  const profile = currentProfileEntry(modelMappingSourceProfile);
+  if (!profile?.openai_base_url?.trim()) {
+    showDialogError(elements.modelMappingDialogError, t(state.locale, "modelMappingMissingBaseUrl"));
+    return;
+  }
+
+  modelMappingFetchPending = true;
+  setModelMappingStatus("");
+  setModelMappingProviderType(profile.provider_protocol ?? null);
+  updateModelMappingDialogControls();
+  try {
+    const response = await fetchProfileProviderModels(modelMappingSourceProfile);
+    loadedProviderModels = [...response.models];
+    providerModelCache.set(modelMappingSourceProfile, {
+      models: [...response.models],
+      provider_protocol: response.provider_protocol ?? null,
+      protocol_warning: response.protocol_warning ?? null,
+    });
+    renderProviderModelOptions();
+    renderModelMappingRows();
+    setModelMappingProviderType(response.provider_protocol ?? null);
+    setModelMappingStatus(
+      t(state.locale, "modelMappingFetchedModels", { count: response.models.length }),
+    );
+  } catch (error) {
+    showDialogError(
+      elements.modelMappingDialogError,
+      error instanceof Error ? error.message : t(state.locale, "modelMappingFetchFailed"),
+    );
+    setModelMappingStatus(t(state.locale, "modelMappingFetchFailed"), true);
+    setModelMappingProviderType(profile.provider_protocol ?? null);
+  } finally {
+    modelMappingFetchPending = false;
+    updateModelMappingDialogControls();
+  }
 }
 
 function closeDeleteProfileDialog(): void {
@@ -466,6 +798,40 @@ async function handleDeleteProfileAction(action: "delete" | "clear"): Promise<vo
   }
 }
 
+async function handleSubmitModelMappings(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  clearDialogError(elements.modelMappingDialogError!);
+
+  const sourceProfile = modelMappingSourceProfile;
+  if (!sourceProfile) {
+    showDialogError(elements.modelMappingDialogError!, t(state.locale, "failedToSaveModelMappings"));
+    return;
+  }
+
+  const normalizedMappings = normalizeModelMappingsForSubmit();
+  if (!normalizedMappings) {
+    return;
+  }
+
+  try {
+    await runBlockingAction(async () => {
+      await updateProfileModelMappings(sourceProfile, normalizedMappings);
+      closeModelMappingDialog();
+      showToast(
+        normalizedMappings.length
+          ? t(state.locale, "savedModelMappings", { profile: sourceProfile })
+          : t(state.locale, "clearedModelMappings", { profile: sourceProfile }),
+      );
+      await refreshAllData();
+    });
+  } catch (error) {
+    showDialogError(
+      elements.modelMappingDialogError!,
+      error instanceof Error ? error.message : t(state.locale, "failedToSaveModelMappings"),
+    );
+  }
+}
+
 export function bootstrap(): void {
   state.locale = resolveInitialLocale();
   applyLocale();
@@ -506,6 +872,9 @@ export function bootstrap(): void {
   elements.cancelBaseUrlButton.addEventListener("click", () => {
     closeBaseUrlDialog();
   });
+  elements.cancelModelMappingButton?.addEventListener("click", () => {
+    closeModelMappingDialog();
+  });
   elements.cancelDeleteProfileButton?.addEventListener("click", () => {
     closeDeleteProfileDialog();
   });
@@ -523,6 +892,16 @@ export function bootstrap(): void {
   });
   elements.baseUrlForm.addEventListener("submit", (event) => {
     void handleSubmitBaseUrl(event as SubmitEvent);
+  });
+  elements.modelMappingForm?.addEventListener("submit", (event) => {
+    void handleSubmitModelMappings(event as SubmitEvent);
+  });
+  elements.modelMappingFetchButton?.addEventListener("click", () => {
+    void handleFetchProviderModels();
+  });
+  elements.addModelMappingRowButton?.addEventListener("click", () => {
+    modelMappingRows = [...modelMappingRows, defaultModelMappingRow()];
+    renderModelMappingRows();
   });
   elements.localeEnButton.addEventListener("click", () => {
     setLocale("en");

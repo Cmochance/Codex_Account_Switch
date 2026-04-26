@@ -1,0 +1,61 @@
+{
+  "id": "resp_5567c67e5c804214a991b3d7c572b549",
+  "previous_response_id": null,
+  "effective_instructions": null,
+  "request_messages": [
+    {
+      "content": "Reply with exactly hello.",
+      "role": "user"
+    }
+  ],
+  "response": {
+    "created_at": 1776843576,
+    "error": null,
+    "id": "resp_5567c67e5c804214a991b3d7c572b549",
+    "incomplete_details": null,
+    "instructions": null,
+    "max_output_tokens": null,
+    "metadata": {},
+    "model": "kimi-for-coding",
+    "object": "response",
+    "output": [
+      {
+        "content": [
+          {
+            "annotations": [],
+            "text": "hello.",
+            "type": "output_text"
+          }
+        ],
+        "id": "msg_cedee5b04d1c49c1a682eee88ef7d52b",
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      }
+    ],
+    "output_text": "hello.",
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "status": "completed",
+    "store": true,
+    "temperature": null,
+    "text": {
+      "format": {
+        "type": "text"
+      }
+    },
+    "tool_choice": "auto",
+    "top_p": null,
+    "usage": {
+      "input_tokens": 12,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 5,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 17
+    }
+  }
+}

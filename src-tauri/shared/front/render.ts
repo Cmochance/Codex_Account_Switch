@@ -20,6 +20,8 @@ function requiredElement<T extends HTMLElement>(id: string): T {
 }
 
 const hasDeleteProfileUi = document.getElementById("delete-profile-dialog") instanceof HTMLDialogElement;
+const hasModelMappingUi =
+  isWindowsUiTarget && document.getElementById("model-mapping-dialog") instanceof HTMLDialogElement;
 
 export const elements = {
   profilesHeading: requiredElement<HTMLHeadingElement>("profiles-heading"),
@@ -94,6 +96,54 @@ export const elements = {
   baseUrlDialogError: requiredElement<HTMLParagraphElement>("base-url-dialog-error"),
   cancelBaseUrlButton: requiredElement<HTMLButtonElement>("cancel-base-url-button"),
   submitBaseUrlButton: requiredElement<HTMLButtonElement>("submit-base-url-button"),
+  modelMappingDialog: hasModelMappingUi
+    ? requiredElement<HTMLDialogElement>("model-mapping-dialog")
+    : null,
+  modelMappingForm: hasModelMappingUi
+    ? requiredElement<HTMLFormElement>("model-mapping-form")
+    : null,
+  modelMappingDialogTitle: hasModelMappingUi
+    ? requiredElement<HTMLHeadingElement>("model-mapping-dialog-title")
+    : null,
+  modelMappingDialogCopy: hasModelMappingUi
+    ? requiredElement<HTMLParagraphElement>("model-mapping-dialog-copy")
+    : null,
+  modelMappingDialogHint: hasModelMappingUi
+    ? requiredElement<HTMLParagraphElement>("model-mapping-dialog-hint")
+    : null,
+  modelMappingSourceLabel: hasModelMappingUi
+    ? requiredElement<HTMLSpanElement>("model-mapping-source-label")
+    : null,
+  modelMappingTargetLabel: hasModelMappingUi
+    ? requiredElement<HTMLSpanElement>("model-mapping-target-label")
+    : null,
+  modelMappingGrid: hasModelMappingUi
+    ? requiredElement<HTMLDivElement>("model-mapping-grid")
+    : null,
+  providerModelOptions: hasModelMappingUi
+    ? requiredElement<HTMLDataListElement>("provider-model-options")
+    : null,
+  modelMappingFetchButton: hasModelMappingUi
+    ? requiredElement<HTMLButtonElement>("model-mapping-fetch-button")
+    : null,
+  addModelMappingRowButton: hasModelMappingUi
+    ? requiredElement<HTMLButtonElement>("add-model-mapping-row-button")
+    : null,
+  modelMappingFetchStatus: hasModelMappingUi
+    ? requiredElement<HTMLSpanElement>("model-mapping-fetch-status")
+    : null,
+  modelMappingProviderType: hasModelMappingUi
+    ? requiredElement<HTMLParagraphElement>("model-mapping-provider-type")
+    : null,
+  modelMappingDialogError: hasModelMappingUi
+    ? requiredElement<HTMLParagraphElement>("model-mapping-dialog-error")
+    : null,
+  cancelModelMappingButton: hasModelMappingUi
+    ? requiredElement<HTMLButtonElement>("cancel-model-mapping-button")
+    : null,
+  submitModelMappingButton: hasModelMappingUi
+    ? requiredElement<HTMLButtonElement>("submit-model-mapping-button")
+    : null,
   toast: requiredElement<HTMLDivElement>("toast"),
 };
 
@@ -280,6 +330,7 @@ export function renderProfiles(
   onSwitch: (profile: string) => void,
   onRefresh: (profile: string) => void,
   onBaseUrl: (profile: string) => void,
+  onModelMapping: (profile: string) => void,
 ): void {
   if (!dashboard.profiles.length) {
     elements.profilesGrid.innerHTML =
@@ -365,6 +416,19 @@ export function renderProfiles(
             >
               ${t(state.locale, "baseButton")}
             </button>
+            ${
+              hasModelMappingUi
+                ? `<button
+                    class="profile-action-button"
+                    type="button"
+                    title="${t(state.locale, "profileModelReady")}"
+                    data-model-mapping-profile="${profile.folder_name}"
+                    ${baseDisabled ? "disabled" : ""}
+                  >
+                    ${t(state.locale, "modelButton")}
+                  </button>`
+                : ""
+            }
             <button
               class="profile-action-button"
               type="button"
@@ -386,6 +450,9 @@ export function renderProfiles(
   bindProfileButtons("data-rename-profile", onRename);
   bindProfileButtons("data-refresh-profile", onRefresh);
   bindProfileButtons("data-base-url-profile", onBaseUrl);
+  if (hasModelMappingUi) {
+    bindProfileButtons("data-model-mapping-profile", onModelMapping);
+  }
   bindProfileButtons("data-switch-profile", onSwitch);
 }
 
@@ -437,6 +504,17 @@ export function applyLocale(): void {
   const baseUrlCopy = t(state.locale, isWindowsUiTarget ? "baseUrlWindowsCopy" : "baseUrlCopy");
   elements.baseUrlDialogTitle.textContent = t(state.locale, "baseUrlTitle");
   elements.baseUrlDialogCopy.textContent = baseUrlCopy;
+  if (hasModelMappingUi) {
+    elements.modelMappingDialogTitle!.textContent = t(state.locale, "modelMappingTitle");
+    elements.modelMappingDialogCopy!.textContent = t(state.locale, "modelMappingCopy");
+    elements.modelMappingDialogHint!.textContent = t(state.locale, "modelMappingHint");
+    elements.modelMappingSourceLabel!.textContent = t(state.locale, "modelMappingSourceLabel");
+    elements.modelMappingTargetLabel!.textContent = t(state.locale, "modelMappingTargetLabel");
+    elements.modelMappingFetchButton!.textContent = t(state.locale, "modelMappingReadModels");
+    elements.addModelMappingRowButton!.textContent = t(state.locale, "modelMappingAddRow");
+    elements.cancelModelMappingButton!.textContent = t(state.locale, "cancel");
+    elements.submitModelMappingButton!.textContent = t(state.locale, "save");
+  }
   elements.folderNameLabel.textContent = t(state.locale, "folderName");
   elements.addBaseUrlLabel.textContent = t(state.locale, "baseUrlLabel");
   elements.addBaseUrlInput.placeholder = t(state.locale, "baseUrlPlaceholder");

@@ -554,10 +554,18 @@ impl PlatformHooks for WindowsPlatformHooks {
         profile_name: &str,
         codex_home: Option<&Path>,
     ) -> AppResult<()> {
-        crate::shared::config::sync_root_openai_base_url_from_profile_metadata(
+        crate::windows::provider_gateway::sync_root_openai_base_url_for_profile(
             profile_name,
             codex_home,
         )
+    }
+
+    fn sync_root_model_for_profile(
+        &self,
+        profile_name: &str,
+        codex_home: Option<&Path>,
+    ) -> AppResult<()> {
+        crate::windows::model_mapping::sync_root_model_for_profile(profile_name, codex_home)
     }
 
     fn sync_on_window_close(&self) -> AppResult<()> {

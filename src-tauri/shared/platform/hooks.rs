@@ -38,5 +38,24 @@ pub trait PlatformHooks: Send + Sync {
 
         self.sync_root_openai_base_url_for_profile(&current_profile, Some(&codex_home))
     }
+    fn sync_root_model_for_profile(
+        &self,
+        _profile_name: &str,
+        _codex_home: Option<&Path>,
+    ) -> AppResult<()> {
+        Ok(())
+    }
+    fn sync_root_model_for_current_profile(&self, codex_home: Option<&Path>) -> AppResult<()> {
+        let codex_home = codex_home
+            .map(Path::to_path_buf)
+            .unwrap_or_else(crate::shared::paths::get_codex_home);
+        let backup_root = crate::shared::paths::get_backup_root(Some(&codex_home));
+        let Some(current_profile) = crate::shared::profiles::resolve_current_profile(&backup_root)
+        else {
+            return Ok(());
+        };
+
+        self.sync_root_model_for_profile(&current_profile, Some(&codex_home))
+    }
     fn sync_on_window_close(&self) -> AppResult<()>;
 }

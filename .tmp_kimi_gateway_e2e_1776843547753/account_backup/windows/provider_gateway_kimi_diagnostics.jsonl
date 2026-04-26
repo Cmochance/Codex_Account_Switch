@@ -1,0 +1,2 @@
+{"base_url":"https://api.kimi.com/coding/","body_preview":null,"endpoint":null,"error":null,"event":"route_selected","profile_name":"Kimi","provider_protocol":"messages","request_model":"gpt-5.2","status":null,"ts_ms":1776843572990}
+{"base_url":"https://api.kimi.com/coding/","body_preview":null,"endpoint":"https://api.kimi.com/coding/v1/messages","error":null,"event":"upstream_success","profile_name":"Kimi","provider_protocol":"messages","request_model":"kimi-for-coding","status":200,"ts_ms":1776843576705}

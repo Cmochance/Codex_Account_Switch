@@ -8,6 +8,7 @@ use crate::models::{
     ProfilesSnapshotResponse,
 };
 
+use super::config::profile_uses_api_key_auth;
 use super::metadata::load_profile_metadata;
 use super::paths::{
     get_backup_root, get_codex_home, get_profiles_index_path, list_profile_dirs, utc_timestamp,
@@ -18,7 +19,7 @@ use super::profiles::{
 };
 use super::session_usage::{load_latest_local_quota_snapshot, normalize_quota_summary};
 
-const PROFILES_INDEX_SCHEMA_VERSION: u32 = 3;
+const PROFILES_INDEX_SCHEMA_VERSION: u32 = 6;
 
 fn file_signature(path: &Path) -> (Option<u64>, Option<u64>) {
     let metadata = match fs::metadata(path) {
@@ -38,12 +39,15 @@ fn file_signature(path: &Path) -> (Option<u64>, Option<u64>) {
 fn build_profile_index_entry(profile_name: &str, codex_home: &Path) -> ProfileIndexEntry {
     let profile_dir = get_backup_root(Some(codex_home)).join(profile_name);
     let metadata = load_profile_metadata(profile_name, Some(codex_home));
+    let uses_api_key_auth =
+        profile_uses_api_key_auth(profile_name, Some(codex_home)).unwrap_or(false);
     let account_label = metadata
         .account_label
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string);
+        .map(str::to_string)
+        .or_else(|| uses_api_key_auth.then(|| "API".to_string()));
     let has_account_identity = account_label.is_some();
     let auth_path = profile_dir.join("auth.json");
     let metadata_path = profile_dir.join("profile.json");
@@ -57,6 +61,8 @@ fn build_profile_index_entry(profile_name: &str, codex_home: &Path) -> ProfileIn
         plan_name: metadata.plan_name,
         subscription_expires_at: metadata.subscription_expires_at,
         openai_base_url: metadata.openai_base_url,
+        provider_protocol: metadata.provider_protocol,
+        model_mappings: metadata.model_mappings,
         auth_present: auth_path.is_file(),
         stored_quota: metadata.quota,
         stored_quota_updated_at_ms: metadata.quota_updated_at_ms,
@@ -231,6 +237,8 @@ fn build_profile_card(entry: &ProfileIndexEntry, current_profile: Option<&str>) 
             entry.subscription_expires_at.as_deref(),
         ),
         openai_base_url: entry.openai_base_url.clone(),
+        provider_protocol: entry.provider_protocol.clone(),
+        model_mappings: entry.model_mappings.clone(),
         quota: normalize_quota_summary(
             Some(entry.stored_quota.clone()),
             entry.plan_name.as_deref(),
@@ -343,4 +351,43 @@ pub fn load_current_live_quota(codex_home: Option<&Path>) -> AppResult<CurrentQu
         profile: Some(entry.folder_name.clone()),
         quota: Some(quota),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_profiles_snapshot;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_codex_home(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "codex-switch-shared-profiles-index-{name}-{unique}"
+        ))
+    }
+
+    #[test]
+    fn api_key_profile_without_email_label_displays_api() {
+        let codex_home = temp_codex_home("api-label");
+        let profile_dir = codex_home.join("account_backup").join("api");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(profile_dir.join("auth.json"), r#"{"auth_mode":"apikey"}"#).unwrap();
+        fs::write(profile_dir.join("profile.json"), r#"{"folder_name":"api"}"#).unwrap();
+
+        let snapshot = load_profiles_snapshot(Some(&codex_home)).unwrap();
+        let profile = snapshot
+            .profiles
+            .iter()
+            .find(|entry| entry.folder_name == "api")
+            .expect("expected api profile");
+
+        assert_eq!(profile.account_label.as_deref(), Some("API"));
+        assert!(profile.has_account_identity);
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
 }

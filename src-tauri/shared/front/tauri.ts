@@ -5,8 +5,10 @@ import type {
   CommandError,
   CurrentCard,
   CurrentQuotaResponse,
+  ModelMappingEntry,
   ProfileCard,
   ProfilesSnapshotResponse,
+  ProviderModelListResponse,
   QuotaSummary,
   SwitchResponse,
 } from "@front-shared/types";
@@ -57,6 +59,8 @@ const previewProfiles: ProfileCard[] = [
     plan_name: "Pro plan",
     subscription_days_left: 18,
     openai_base_url: null,
+    provider_protocol: null,
+    model_mappings: [],
     quota: quota(84, "3小时后刷新", 61, "2天4小时后刷新"),
   },
   {
@@ -69,6 +73,8 @@ const previewProfiles: ProfileCard[] = [
     plan_name: "Plus plan",
     subscription_days_left: 12,
     openai_base_url: null,
+    provider_protocol: null,
+    model_mappings: [],
     quota: quota(58, "1小时后刷新", 42, "4天6小时后刷新"),
   },
   {
@@ -81,18 +87,22 @@ const previewProfiles: ProfileCard[] = [
     plan_name: null,
     subscription_days_left: null,
     openai_base_url: null,
+    provider_protocol: null,
+    model_mappings: [],
     quota: quota(null, "6小时后刷新", null, "7天2小时后刷新"),
   },
   {
     folder_name: "workspace-delta",
     display_title: "Workspace Delta",
-    account_label: "Workspace Delta",
+    account_label: "API",
     status: "available",
     auth_present: true,
     has_account_identity: true,
     plan_name: "Custom endpoint",
     subscription_days_left: 31,
     openai_base_url: "https://example.com/v1",
+    provider_protocol: "responses",
+    model_mappings: [{ source_model: "gpt-5.4", target_model: "deepseek-chat" }],
     quota: quota(73, "2小时后刷新", 88, "1天9小时后刷新"),
   },
   {
@@ -105,18 +115,22 @@ const previewProfiles: ProfileCard[] = [
     plan_name: "Pro plan",
     subscription_days_left: 18,
     openai_base_url: null,
+    provider_protocol: null,
+    model_mappings: [],
     quota: quota(84, "3小时后刷新", 61, "2天4小时后刷新"),
   },
   {
     folder_name: "workspace-zeta",
     display_title: "Workspace Zeta",
-    account_label: "Workspace Zeta",
+    account_label: "API",
     status: "available",
     auth_present: true,
     has_account_identity: true,
     plan_name: "Custom endpoint",
     subscription_days_left: 31,
     openai_base_url: "https://example.com/v1",
+    provider_protocol: "chat/completions",
+    model_mappings: [{ source_model: "gpt-5.3-codex", target_model: "qwen-max" }],
     quota: quota(73, "2小时后刷新", 88, "1天9小时后刷新"),
   },
 ];
@@ -247,6 +261,8 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
             plan_name: "Pro plan",
             subscription_days_left: 30,
             openai_base_url: payload.openai_base_url ?? null,
+            provider_protocol: null,
+            model_mappings: [],
             quota: quota(52, "5小时后刷新", 67, "3天后刷新"),
           });
           refreshPreviewSnapshot();
@@ -259,6 +275,11 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
           previewSnapshot.profiles = previewSnapshot.profiles.map((entry) =>
             entry.folder_name === payload.profile
               ? { ...entry, openai_base_url: payload.openai_base_url ?? null }
+              : entry,
+          );
+          previewSnapshot.profiles = previewSnapshot.profiles.map((entry) =>
+            entry.folder_name === payload.profile
+              ? { ...entry, provider_protocol: null }
               : entry,
           );
           refreshPreviewSnapshot();
@@ -290,6 +311,8 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
                   plan_name: null,
                   subscription_days_left: null,
                   openai_base_url: null,
+                  provider_protocol: null,
+                  model_mappings: [],
                   quota: quota(null, null, null, null),
                 }
               : entry,
@@ -298,6 +321,30 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
         }
         return mockAction("Cleared in preview mode") as Promise<T>;
       }
+      case "update_profile_model_mappings": {
+        const payload = args?.payload as { profile?: string; mappings?: ModelMappingEntry[] } | undefined;
+        if (payload?.profile) {
+          previewSnapshot.profiles = previewSnapshot.profiles.map((entry) =>
+            entry.folder_name === payload.profile
+              ? { ...entry, model_mappings: clone(payload.mappings ?? []) }
+              : entry,
+          );
+          refreshPreviewSnapshot();
+        }
+        return mockAction("Model mappings updated in preview mode") as Promise<T>;
+      }
+      case "fetch_profile_provider_models":
+        return {
+          models: [
+            "deepseek-chat",
+            "deepseek-reasoner",
+            "qwen-max",
+            "glm-4.5",
+            "claude-sonnet-4-20250514",
+          ],
+          provider_protocol: "chat/completions",
+          protocol_warning: null,
+        } as T;
       case "open_profile_folder":
       case "open_codex":
       case "login_current_profile":
@@ -364,6 +411,21 @@ export function renameProfile(profile: string, newFolderName: string): Promise<A
 export function updateProfileBaseUrl(profile: string, openaiBaseUrl: string): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("update_profile_base_url", {
     payload: { profile, openai_base_url: openaiBaseUrl },
+  });
+}
+
+export function updateProfileModelMappings(
+  profile: string,
+  mappings: ModelMappingEntry[],
+): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("update_profile_model_mappings", {
+    payload: { profile, mappings },
+  });
+}
+
+export function fetchProfileProviderModels(profile: string): Promise<ProviderModelListResponse> {
+  return invokeCommand<ProviderModelListResponse>("fetch_profile_provider_models", {
+    payload: { profile },
   });
 }
 

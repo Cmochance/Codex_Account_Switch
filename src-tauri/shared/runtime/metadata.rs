@@ -1,9 +1,10 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use crate::models::{ProfileMetadata, QuotaSummary};
+use crate::models::{ModelMappingEntry, ProfileMetadata, QuotaSummary};
 
 use super::paths::{
     get_backup_root, get_codex_home, get_profile_metadata_path, validate_profile_name,
@@ -129,6 +130,47 @@ fn load_or_init_profile_metadata(profile_name: &str, codex_home: Option<&Path>) 
         .unwrap_or_else(|| ProfileMetadata::with_folder_name(profile_name))
 }
 
+fn normalize_provider_protocol(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let normalized = match trimmed.to_ascii_lowercase().as_str() {
+            "chat_completions_only" => "chat/completions".to_string(),
+            value => value.to_string(),
+        };
+
+        Some(normalized)
+    })
+}
+
+fn normalize_model_mappings(model_mappings: Vec<ModelMappingEntry>) -> Vec<ModelMappingEntry> {
+    let mut seen_sources = BTreeSet::new();
+    let mut normalized = Vec::new();
+
+    for mapping in model_mappings {
+        let source_model = mapping.source_model.trim();
+        let target_model = mapping.target_model.trim();
+        if source_model.is_empty() || target_model.is_empty() {
+            continue;
+        }
+
+        let dedupe_key = source_model.to_ascii_lowercase();
+        if !seen_sources.insert(dedupe_key) {
+            continue;
+        }
+
+        normalized.push(ModelMappingEntry {
+            source_model: source_model.to_string(),
+            target_model: target_model.to_string(),
+        });
+    }
+
+    normalized
+}
+
 fn is_free_plan(plan_name: Option<&str>) -> bool {
     plan_name
         .map(str::trim)
@@ -186,6 +228,8 @@ fn hydrate_profile_metadata(
     if metadata.folder_name.is_none() {
         metadata.folder_name = Some(profile_name.to_string());
     }
+    metadata.provider_protocol = normalize_provider_protocol(metadata.provider_protocol);
+    metadata.model_mappings = normalize_model_mappings(metadata.model_mappings);
 
     if let Some(auth_metadata) = load_auth_metadata(profile_name, codex_home) {
         apply_auth_metadata(&mut metadata, auth_metadata, false);
@@ -206,6 +250,7 @@ where
     let mut metadata = load_or_init_profile_metadata(&profile_name, codex_home);
     metadata.folder_name = Some(profile_name.clone());
     updater(&mut metadata);
+    metadata.model_mappings = normalize_model_mappings(metadata.model_mappings);
     save_profile_metadata(&profile_name, &metadata, codex_home)?;
     Ok(hydrate_profile_metadata(
         metadata,
@@ -276,6 +321,7 @@ pub fn sync_profile_openai_base_url(
 ) -> Result<ProfileMetadata, crate::errors::AppError> {
     update_profile_metadata(profile_name, codex_home, move |metadata| {
         metadata.openai_base_url = openai_base_url;
+        metadata.provider_protocol = None;
     })
 }
 
@@ -298,6 +344,26 @@ pub fn save_profile_metadata(
             "PROFILE_METADATA_WRITE_FAILED",
             format!("Failed to write metadata: {error}"),
         )
+    })
+}
+
+pub fn sync_profile_model_mappings(
+    profile_name: &str,
+    model_mappings: Vec<ModelMappingEntry>,
+    codex_home: Option<&Path>,
+) -> Result<ProfileMetadata, crate::errors::AppError> {
+    update_profile_metadata(profile_name, codex_home, move |metadata| {
+        metadata.model_mappings = model_mappings;
+    })
+}
+
+pub fn sync_profile_provider_protocol(
+    profile_name: &str,
+    provider_protocol: Option<String>,
+    codex_home: Option<&Path>,
+) -> Result<ProfileMetadata, crate::errors::AppError> {
+    update_profile_metadata(profile_name, codex_home, move |metadata| {
+        metadata.provider_protocol = normalize_provider_protocol(provider_protocol);
     })
 }
 

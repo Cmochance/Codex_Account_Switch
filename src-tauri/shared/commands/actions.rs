@@ -1,7 +1,7 @@
 use crate::errors::CommandError;
 use crate::models::{
-    ActionResponse, AddProfilePayload, ProfilePayload, RenameProfilePayload,
-    UpdateProfileBaseUrlPayload,
+    ActionResponse, AddProfilePayload, ProfilePayload, ProviderModelListResponse,
+    RenameProfilePayload, UpdateProfileBaseUrlPayload, UpdateProfileModelMappingsPayload,
 };
 
 #[cfg(target_os = "macos")]
@@ -91,6 +91,39 @@ pub fn update_profile_base_url(
         message: "Updated profile Base Url.".to_string(),
         path: Some(path),
     })
+}
+
+#[tauri::command]
+pub fn update_profile_model_mappings(
+    payload: UpdateProfileModelMappingsPayload,
+) -> Result<ActionResponse, CommandError> {
+    let path = platform_runtime::actions::update_profile_model_mappings(
+        &payload.profile,
+        payload.mappings,
+    )?;
+    Ok(ActionResponse {
+        ok: true,
+        message: "Updated profile model mappings.".to_string(),
+        path: Some(path),
+    })
+}
+
+#[tauri::command]
+pub async fn fetch_profile_provider_models(
+    payload: ProfilePayload,
+) -> Result<ProviderModelListResponse, CommandError> {
+    let profile = payload.profile;
+    tauri::async_runtime::spawn_blocking(move || {
+        platform_runtime::actions::fetch_profile_provider_models(&profile)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::new(
+            "PROVIDER_MODEL_LIST_FAILED",
+            format!("Provider model discovery task failed: {error}"),
+        )
+    })?
+    .map_err(Into::into)
 }
 
 #[tauri::command]

@@ -8,9 +8,10 @@ use crate::macos as native;
 use crate::windows as native;
 
 const USAGE: &str = "Usage:\n  codex_switch_cli install\n  codex_switch_cli uninstall [--remove-script]\n  codex_switch_cli shim switch <profile>\n  codex_switch_cli shim switch list\n  codex_switch_cli shim <codex args...>";
+const GATEWAY_USAGE_SUFFIX: &str = "\n  codex_switch_cli gateway serve [--port <port>]";
 
 fn print_usage() {
-    eprintln!("{USAGE}");
+    eprintln!("{USAGE}{GATEWAY_USAGE_SUFFIX}");
 }
 
 fn print_install_summary(summary: &native::install::InstallSummary) {
@@ -178,6 +179,7 @@ pub fn run(args: &[String], codex_home: Option<PathBuf>) -> i32 {
     let result = match args.first().map(String::as_str) {
         Some("install") => run_install(codex_home),
         Some("uninstall") => run_uninstall(&args[1..], codex_home),
+        Some("gateway") => native::provider_gateway::run_gateway_cli(&args[1..], codex_home),
         Some("shim") => run_shim(&args[1..], codex_home),
         _ => {
             print_usage();

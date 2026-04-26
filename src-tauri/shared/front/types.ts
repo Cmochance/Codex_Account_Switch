@@ -8,6 +8,11 @@ export interface QuotaSummary {
   weekly: QuotaWindow;
 }
 
+export interface ModelMappingEntry {
+  source_model: string;
+  target_model: string;
+}
+
 export interface ProfileCard {
   folder_name: string;
   display_title: string;
@@ -18,6 +23,8 @@ export interface ProfileCard {
   plan_name: string | null;
   subscription_days_left: number | null;
   openai_base_url: string | null;
+  provider_protocol: string | null;
+  model_mappings: ModelMappingEntry[];
   quota: QuotaSummary;
 }
 
@@ -70,6 +77,12 @@ export interface ActionResponse {
   ok: boolean;
   message: string;
   path: string | null;
+}
+
+export interface ProviderModelListResponse {
+  models: string[];
+  provider_protocol: string | null;
+  protocol_warning: string | null;
 }
 
 export interface CommandError {

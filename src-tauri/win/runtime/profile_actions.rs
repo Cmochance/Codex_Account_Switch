@@ -4,14 +4,17 @@ use std::path::{Path, PathBuf};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::errors::{AppError, AppResult};
-use crate::models::ProfileMetadata;
+use crate::models::{ModelMappingEntry, ProfileMetadata, ProviderModelListResponse};
 use crate::platform;
 
-use super::config::sync_root_openai_base_url_from_profile_metadata;
+use super::config::{profile_uses_api_key_auth, sync_root_openai_base_url_from_profile_metadata};
 use super::fs_ops::{backup_root_state_to_profile, remove_path};
 use super::metadata::{
     load_profile_metadata, save_profile_metadata, sync_profile_metadata_from_auth,
-    sync_profile_openai_base_url,
+    sync_profile_model_mappings, sync_profile_openai_base_url,
+};
+use super::model_mapping::{
+    fetch_profile_provider_models as fetch_provider_models_for_profile, sync_root_model_for_profile,
 };
 use super::paths::{
     get_backup_root, get_codex_home, validate_profile_name, ACTIVE_MARKER_FILE, CONTACT_URL,
@@ -90,11 +93,54 @@ pub fn update_profile_base_url(profile_name: &str, openai_base_url: &str) -> App
     let normalized_base_url = normalize_openai_base_url(openai_base_url)?;
     sync_profile_openai_base_url(&profile_name, normalized_base_url, Some(&codex_home))?;
     if resolve_current_profile(&backup_root).as_deref() == Some(profile_name.as_str()) {
-        sync_root_openai_base_url_from_profile_metadata(&profile_name, Some(&codex_home))?;
+        if profile_uses_api_key_auth(&profile_name, Some(&codex_home))? {
+            platform::current_hooks()
+                .sync_root_openai_base_url_for_profile(&profile_name, Some(&codex_home))?;
+        } else {
+            sync_root_openai_base_url_from_profile_metadata(&profile_name, Some(&codex_home))?;
+        }
     }
     super::profiles_index::load_profiles_index(Some(&codex_home))?;
 
     Ok(profile_dir.to_string_lossy().into_owned())
+}
+
+pub fn update_profile_model_mappings(
+    profile_name: &str,
+    model_mappings: Vec<ModelMappingEntry>,
+) -> AppResult<String> {
+    let codex_home = get_codex_home();
+    let backup_root = get_backup_root(Some(&codex_home));
+    let profile_name = validate_profile_name(profile_name)?;
+    let profile_dir = backup_root.join(&profile_name);
+    if !profile_dir.is_dir() {
+        return Err(AppError::new(
+            "PROFILE_NOT_FOUND",
+            format!("Profile not found: {profile_name}"),
+        ));
+    }
+
+    sync_profile_model_mappings(&profile_name, model_mappings, Some(&codex_home))?;
+    if resolve_current_profile(&backup_root).as_deref() == Some(profile_name.as_str()) {
+        sync_root_model_for_profile(&profile_name, Some(&codex_home))?;
+    }
+    super::profiles_index::load_profiles_index(Some(&codex_home))?;
+
+    Ok(profile_dir.to_string_lossy().into_owned())
+}
+
+pub fn fetch_profile_provider_models(profile_name: &str) -> AppResult<ProviderModelListResponse> {
+    let codex_home = get_codex_home();
+    let profile_name = validate_profile_name(profile_name)?;
+    let profile_dir = get_backup_root(Some(&codex_home)).join(&profile_name);
+    if !profile_dir.is_dir() {
+        return Err(AppError::new(
+            "PROFILE_NOT_FOUND",
+            format!("Profile not found: {profile_name}"),
+        ));
+    }
+
+    fetch_provider_models_for_profile(&profile_name, Some(&codex_home))
 }
 
 fn ensure_profile_not_current(
@@ -328,8 +374,9 @@ pub fn open_xiaohongshu(app: &tauri::AppHandle) -> AppResult<String> {
 mod tests {
     use super::{
         add_profile, clear_profile_account, delete_profile, rename_profile_with_home,
-        update_profile_base_url,
+        update_profile_base_url, update_profile_model_mappings,
     };
+    use crate::models::ModelMappingEntry;
     use crate::windows::env_guard;
     use crate::windows::metadata::load_profile_metadata;
     use crate::windows::paths::get_current_profile_file;
@@ -537,7 +584,7 @@ mod tests {
             Some("https://example.com/v1")
         );
         let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
-        assert!(config.contains("openai_base_url = \"https://example.com/v1\""));
+        assert!(config.contains("openai_base_url = \"http://127.0.0.1:"));
         let _ = fs::remove_dir_all(&codex_home);
         if let Some(path) = original_codex_home {
             std::env::set_var("CODEX_HOME", path);
@@ -561,6 +608,51 @@ mod tests {
             metadata.openai_base_url.as_deref(),
             Some("https://example.com/v1")
         );
+        let _ = fs::remove_dir_all(&codex_home);
+        if let Some(path) = original_codex_home {
+            std::env::set_var("CODEX_HOME", path);
+        } else {
+            std::env::remove_var("CODEX_HOME");
+        }
+    }
+
+    #[test]
+    fn update_profile_model_mappings_updates_current_root_config_for_active_profile() {
+        let _guard = env_guard();
+        let codex_home = temp_codex_home("model-mapping-current");
+        let original_codex_home = std::env::var_os("CODEX_HOME");
+        let profile_dir = codex_home.join("account_backup").join("api");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(
+            profile_dir.join("auth.json"),
+            r#"{"auth_mode":"apikey","api_key":"sk-test"}"#,
+        )
+        .unwrap();
+        fs::write(profile_dir.join("profile.json"), r#"{"folder_name":"api"}"#).unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "api\n").unwrap();
+        fs::write(codex_home.join("config.toml"), "model = \"gpt-5.4\"\n").unwrap();
+        std::env::set_var("CODEX_HOME", &codex_home);
+
+        update_profile_model_mappings(
+            "api",
+            vec![ModelMappingEntry {
+                source_model: "gpt-5.4".to_string(),
+                target_model: "provider-a".to_string(),
+            }],
+        )
+        .unwrap();
+
+        let metadata = load_profile_metadata("api", Some(&codex_home));
+        assert_eq!(metadata.model_mappings.len(), 1);
+        assert_eq!(
+            metadata.model_mappings[0],
+            ModelMappingEntry {
+                source_model: "gpt-5.4".to_string(),
+                target_model: "provider-a".to_string(),
+            }
+        );
+        let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(config.contains("model = \"gpt-5.4\""));
         let _ = fs::remove_dir_all(&codex_home);
         if let Some(path) = original_codex_home {
             std::env::set_var("CODEX_HOME", path);

@@ -1,0 +1,24 @@
+{
+  "folder_name": "Kimi",
+  "account_label": null,
+  "plan_name": null,
+  "subscription_expires_at": null,
+  "openai_base_url": "https://api.kimi.com/coding/",
+  "model_mappings": [
+    {
+      "source_model": "gpt-5.2",
+      "target_model": "kimi-for-coding"
+    }
+  ],
+  "quota": {
+    "five_hour": {
+      "remaining_percent": 99,
+      "refresh_at": "2026-04-22 07:21"
+    },
+    "weekly": {
+      "remaining_percent": 100,
+      "refresh_at": "2026-04-29 02:21"
+    }
+  },
+  "quota_updated_at_ms": 1776839855350
+}

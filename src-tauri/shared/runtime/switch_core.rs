@@ -92,6 +92,7 @@ pub fn switch_profile_with_home<H: PlatformHooks + ?Sized>(
     autosave_auth(&codex_home)?;
     overlay_directory_contents(&profile_dir, &codex_home)?;
     hooks.sync_root_openai_base_url_for_profile(&profile_name, Some(&codex_home))?;
+    hooks.sync_root_model_for_profile(&profile_name, Some(&codex_home))?;
     set_active_marker(&profile_name, &backup_root)?;
     load_profiles_index(Some(&codex_home))?;
     let warnings = hooks.reopen_codex_app_if_needed(app_was_running, Some(&codex_home));
