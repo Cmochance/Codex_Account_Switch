@@ -76,3 +76,19 @@ export interface CommandError {
   error_code?: string;
   message?: string;
 }
+
+export interface ProxyStatus {
+  running: boolean;
+  port: number;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  today_requests: number;
+}
+
+export interface AppSettings {
+  theme: "light" | "dark" | "system";
+  locale: "en" | "zh-CN";
+  proxy_port: number;
+  auto_start: boolean;
+}

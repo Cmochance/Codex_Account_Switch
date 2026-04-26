@@ -26,72 +26,266 @@
         </div>
       </header>
 
-      <main class="dashboard">
-        <section class="content-row">
-          <section class="profiles-stage">
-            <div class="profiles-header">
-              <h2 id="profiles-heading" class="section-title">Profiles</h2>
+      <nav class="app-nav">
+        <div class="nav-links">
+          <button id="nav-dashboard" class="nav-link is-active" type="button" data-page="dashboard">Dashboard</button>
+          <button id="nav-proxy" class="nav-link" type="button" data-page="proxy">Proxy</button>
+          <button id="nav-settings" class="nav-link" type="button" data-page="settings">Settings</button>
+          <button id="nav-guide" class="nav-link" type="button" data-page="guide">Guide</button>
+        </div>
+      </nav>
 
-              <div class="pager-block">
-                <div class="pager-row">
-                  <button id="previous-page-button" class="pager-pill" type="button">Prev</button>
-                  <span id="page-indicator" class="pager-pill pager-current">1 / 1</span>
-                  <button id="next-page-button" class="pager-pill" type="button">Next</button>
+      <main class="dashboard">
+        <!-- Dashboard Page -->
+        <section id="page-dashboard" class="page-section">
+          <section class="content-row">
+            <section class="profiles-stage">
+              <div class="profiles-header">
+                <h2 id="profiles-heading" class="section-title">Profiles</h2>
+
+                <div class="pager-block">
+                  <div class="pager-row">
+                    <button id="previous-page-button" class="pager-pill" type="button">Prev</button>
+                    <span id="page-indicator" class="pager-pill pager-current">1 / 1</span>
+                    <button id="next-page-button" class="pager-pill" type="button">Next</button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="profiles-grid" class="profiles-grid"></div>
+            </section>
+
+            <aside class="right-rail">
+              <article class="rail-card current-account-card">
+                <div class="current-account-topbar">
+                  <div class="utility-cluster current-utility-cluster">
+                    <div class="locale-segment" role="group" aria-label="Locale">
+                      <button id="locale-en-button" class="locale-pill" type="button">EN</button>
+                      <button id="locale-zh-button" class="locale-pill" type="button">中文</button>
+                    </div>
+
+                    <div class="quota-monitor-pill">
+                      <span class="quota-monitor-dot" aria-hidden="true"></span>
+                      <span id="quota-monitor-label">Live quota monitor</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card-heading">
+                  <h2 id="current-section-heading" class="section-title section-title-rail">Current Account</h2>
+                </div>
+
+                <div class="current-identity">
+                  <h3 id="current-title" class="current-account-title">--</h3>
+                  <p id="current-plan" class="current-plan">--</p>
+                </div>
+
+                <div class="current-actions">
+                  <button id="current-login-button" class="action-button action-button-primary" type="button">Login</button>
+                  <button id="open-current-folder-button" class="action-button action-button-secondary" type="button">Open Folder</button>
+                </div>
+
+                <div id="current-quota-panel" class="current-quota-panel"></div>
+              </article>
+
+              <article class="rail-card quick-actions-card">
+                <div class="card-heading">
+                  <h2 id="quick-actions-heading" class="section-title section-title-rail">Quick Actions</h2>
+                </div>
+                <div class="quick-actions-grid">
+                  <button id="quick-proxy" class="quick-action" type="button">
+                    <span class="quick-action-icon">⚡</span>
+                    <span class="quick-action-label">Proxy</span>
+                  </button>
+                  <button id="quick-settings" class="quick-action" type="button">
+                    <span class="quick-action-icon">⚙️</span>
+                    <span class="quick-action-label">Settings</span>
+                  </button>
+                  <button id="quick-guide" class="quick-action" type="button">
+                    <span class="quick-action-icon">📖</span>
+                    <span class="quick-action-label">Guide</span>
+                  </button>
+                  <button id="quick-refresh-all" class="quick-action" type="button">
+                    <span class="quick-action-icon">🔄</span>
+                    <span class="quick-action-label">Refresh All</span>
+                  </button>
+                </div>
+              </article>
+
+              <article class="rail-card control-card">
+                <div class="card-heading">
+                  <h2 id="control-deck-heading" class="section-title section-title-rail">Control Deck</h2>
+                </div>
+
+                <div class="control-stack">
+                  <button id="add-profiles-button" class="control-button" type="button">Add Profiles</button>
+                  <button id="open-codex-button" class="control-button" type="button">Open Codex</button>
+                  <button id="contact-button" class="control-button" type="button">Contact Us</button>
+                  <button id="upgrade-button" class="control-button" type="button">Upgrade</button>
+                  <button id="star-button" class="control-button" type="button">Star</button>
+                  <button id="xiaohongshu-button" class="control-button" type="button">Xiaohongshu</button>
+                </div>
+              </article>
+            </aside>
+          </section>
+        </section>
+
+        <!-- Proxy Page -->
+        <section id="page-proxy" class="page-section" hidden>
+          <div class="proxy-container">
+            <div class="proxy-header">
+              <h2 id="proxy-heading" class="section-title">Proxy Console</h2>
+              <div class="proxy-status-bar">
+                <span id="proxy-status-indicator" class="proxy-status-dot"></span>
+                <span id="proxy-status-text">Stopped</span>
+              </div>
+            </div>
+
+            <div class="proxy-controls">
+              <div class="proxy-config">
+                <label class="field proxy-field">
+                  <span id="proxy-port-label">Port</span>
+                  <input id="proxy-port-input" type="number" value="18080" min="1024" max="65535" />
+                </label>
+                <button id="proxy-toggle-button" class="action-button action-button-primary" type="button">Start</button>
+              </div>
+
+              <div class="proxy-stats">
+                <div class="stat-card">
+                  <span id="stat-total-label" class="stat-label">Total</span>
+                  <span id="stat-total" class="stat-value">0</span>
+                </div>
+                <div class="stat-card">
+                  <span id="stat-success-label" class="stat-label">Success</span>
+                  <span id="stat-success" class="stat-value">0</span>
+                </div>
+                <div class="stat-card">
+                  <span id="stat-failed-label" class="stat-label">Failed</span>
+                  <span id="stat-failed" class="stat-value">0</span>
+                </div>
+                <div class="stat-card">
+                  <span id="stat-today-label" class="stat-label">Today</span>
+                  <span id="stat-today" class="stat-value">0</span>
                 </div>
               </div>
             </div>
 
-            <div id="profiles-grid" class="profiles-grid"></div>
-          </section>
+            <div class="proxy-log-panel">
+              <div class="proxy-log-header">
+                <span id="proxy-log-label">Logs</span>
+                <button id="proxy-clear-logs" class="ghost-button" type="button">Clear</button>
+              </div>
+              <div id="proxy-logs" class="proxy-logs"></div>
+            </div>
+          </div>
+        </section>
 
-          <aside class="right-rail">
-            <article class="rail-card current-account-card">
-              <div class="current-account-topbar">
-                <div class="utility-cluster current-utility-cluster">
-                  <div class="locale-segment" role="group" aria-label="Locale">
-                    <button id="locale-en-button" class="locale-pill" type="button">EN</button>
-                    <button id="locale-zh-button" class="locale-pill" type="button">中文</button>
-                  </div>
+        <!-- Settings Page -->
+        <section id="page-settings" class="page-section" hidden>
+          <div class="settings-container">
+            <h2 id="settings-heading" class="section-title">Settings</h2>
 
-                  <div class="quota-monitor-pill">
-                    <span class="quota-monitor-dot" aria-hidden="true"></span>
-                    <span id="quota-monitor-label">Live quota monitor</span>
+            <div class="settings-grid">
+              <article class="rail-card settings-card">
+                <h3 id="appearance-heading" class="settings-card-title">Appearance</h3>
+                <div class="settings-group">
+                  <div class="setting-row">
+                    <span id="theme-label" class="setting-label">Theme</span>
+                    <div class="locale-segment theme-segment">
+                      <button id="theme-light" class="locale-pill" type="button">Light</button>
+                      <button id="theme-dark" class="locale-pill" type="button">Dark</button>
+                      <button id="theme-system" class="locale-pill is-active" type="button">Auto</button>
+                    </div>
                   </div>
+                  <div class="setting-row">
+                    <span id="language-label" class="setting-label">Language</span>
+                    <div class="locale-segment">
+                      <button id="settings-locale-en" class="locale-pill" type="button">EN</button>
+                      <button id="settings-locale-zh" class="locale-pill" type="button">中文</button>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="rail-card settings-card">
+                <h3 id="proxy-settings-heading" class="settings-card-title">Proxy</h3>
+                <div class="settings-group">
+                  <div class="setting-row">
+                    <span id="proxy-port-setting-label" class="setting-label">Proxy Port</span>
+                    <input id="settings-proxy-port" type="number" value="18080" min="1024" max="65535" class="settings-input" />
+                  </div>
+                  <div class="setting-row">
+                    <span id="auto-start-label" class="setting-label">Auto Start</span>
+                    <label class="toggle-switch">
+                      <input id="auto-start-toggle" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                </div>
+              </article>
+
+              <article class="rail-card settings-card">
+                <h3 id="backup-heading" class="settings-card-title">Backup</h3>
+                <div class="settings-group">
+                  <div class="setting-actions">
+                    <button id="export-config" class="control-button" type="button">Export Config</button>
+                    <button id="import-config" class="control-button" type="button">Import Config</button>
+                  </div>
+                </div>
+              </article>
+
+              <article class="rail-card settings-card">
+                <h3 id="about-heading" class="settings-card-title">About</h3>
+                <div class="settings-group">
+                  <div class="about-info">
+                    <p class="about-version">Codex Switch v1.5.2</p>
+                    <p class="about-license">MIT License</p>
+                  </div>
+                  <div class="setting-actions">
+                    <button id="check-update" class="control-button" type="button">Check for Updates</button>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <!-- Guide Page -->
+        <section id="page-guide" class="page-section" hidden>
+          <div class="guide-container">
+            <h2 id="guide-heading" class="section-title">Getting Started</h2>
+
+            <div class="guide-timeline">
+              <div class="guide-step">
+                <div class="guide-step-number">1</div>
+                <div class="guide-step-content">
+                  <h3 id="guide-step-1-title" class="guide-step-title">Add Profiles</h3>
+                  <p id="guide-step-1-desc" class="guide-step-desc">Create backup folders for your Codex accounts. Each profile stores auth.json and profile.json.</p>
                 </div>
               </div>
 
-              <div class="card-heading">
-                <h2 id="current-section-heading" class="section-title section-title-rail">Current Account</h2>
+              <div class="guide-step">
+                <div class="guide-step-number">2</div>
+                <div class="guide-step-content">
+                  <h3 id="guide-step-2-title" class="guide-step-title">Login Account</h3>
+                  <p id="guide-step-2-desc" class="guide-step-desc">Login to your account in the current profile folder using Codex Desktop.</p>
+                </div>
               </div>
 
-              <div class="current-identity">
-                <h3 id="current-title" class="current-account-title">--</h3>
-                <p id="current-plan" class="current-plan">--</p>
+              <div class="guide-step">
+                <div class="guide-step-number">3</div>
+                <div class="guide-step-content">
+                  <h3 id="guide-step-3-title" class="guide-step-title">Switch Freely</h3>
+                  <p id="guide-step-3-desc" class="guide-step-desc">Use the Switch button to quickly change between different accounts without re-login.</p>
+                </div>
               </div>
+            </div>
 
-              <div class="current-actions">
-                <button id="current-login-button" class="action-button action-button-primary" type="button">Login</button>
-                <button id="open-current-folder-button" class="action-button action-button-secondary" type="button">Open Folder</button>
-              </div>
-
-              <div id="current-quota-panel" class="current-quota-panel"></div>
-            </article>
-
-            <article class="rail-card control-card">
-              <div class="card-heading">
-                <h2 id="control-deck-heading" class="section-title section-title-rail">Control Deck</h2>
-              </div>
-
-              <div class="control-stack">
-                <button id="add-profiles-button" class="control-button" type="button">Add Profiles</button>
-                <button id="open-codex-button" class="control-button" type="button">Open Codex</button>
-                <button id="contact-button" class="control-button" type="button">Contact Us</button>
-                <button id="upgrade-button" class="control-button" type="button">Upgrade</button>
-                <button id="star-button" class="control-button" type="button">Star</button>
-                <button id="xiaohongshu-button" class="control-button" type="button">Xiaohongshu</button>
-              </div>
-            </article>
-          </aside>
+            <div class="guide-actions">
+              <button id="guide-add-profile" class="action-button action-button-primary" type="button">Add Your First Profile</button>
+              <button id="guide-back" class="ghost-button" type="button">Back to Dashboard</button>
+            </div>
+          </div>
         </section>
       </main>
     </div>

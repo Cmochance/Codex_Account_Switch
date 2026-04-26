@@ -29,6 +29,7 @@ const enMessages = {
   baseUrlLabel: "Base Url",
   baseUrlPlaceholder: "https://example.com/v1",
   cancel: "Cancel",
+  clear: "Clear",
   create: "Create",
   deleteButton: "Delete",
   deleteCard: "Delete Card",
@@ -89,6 +90,59 @@ const enMessages = {
   subscriptionFallback: "Subscription • {days} days left",
   languageEnglish: "EN",
   languageChinese: "中文",
+
+  // Navigation
+  navDashboard: "Dashboard",
+  navProxy: "Proxy",
+  navSettings: "Settings",
+  navGuide: "Guide",
+
+  // Quick Actions
+  quickActionsHeading: "Quick Actions",
+  quickProxy: "Proxy",
+  quickSettings: "Settings",
+  quickGuide: "Guide",
+  quickRefreshAll: "Refresh All",
+
+  // Proxy
+  proxyHeading: "Proxy Console",
+  proxyRunning: "Running",
+  proxyStopped: "Stopped",
+  proxyStart: "Start",
+  proxyStop: "Stop",
+  proxyPortLabel: "Port",
+  proxyLogs: "Logs",
+  statTotal: "Total",
+  statSuccess: "Success",
+  statFailed: "Failed",
+  statToday: "Today",
+
+  // Settings
+  settingsHeading: "Settings",
+  appearanceHeading: "Appearance",
+  proxySettingsHeading: "Proxy",
+  backupHeading: "Backup",
+  aboutHeading: "About",
+  themeLabel: "Theme",
+  languageLabel: "Language",
+  themeLight: "Light",
+  themeDark: "Dark",
+  themeSystem: "Auto",
+  autoStartLabel: "Auto Start",
+  exportConfig: "Export Config",
+  importConfig: "Import Config",
+  checkUpdate: "Check for Updates",
+
+  // Guide
+  guideHeading: "Getting Started",
+  guideStep1Title: "Add Profiles",
+  guideStep1Desc: "Create backup folders for your Codex accounts. Each profile stores auth.json and profile.json.",
+  guideStep2Title: "Login Account",
+  guideStep2Desc: "Login to your account in the current profile folder using Codex Desktop.",
+  guideStep3Title: "Switch Freely",
+  guideStep3Desc: "Use the Switch button to quickly change between different accounts without re-login.",
+  guideAddProfile: "Add Your First Profile",
+  guideBack: "Back to Dashboard",
 } as const;
 
 type MessageKey = keyof typeof enMessages;
@@ -125,6 +179,7 @@ const messages: Record<Locale, Messages> = {
     baseUrlLabel: "Base Url",
     baseUrlPlaceholder: "https://example.com/v1",
     cancel: "取消",
+    clear: "清空",
     create: "创建",
     deleteButton: "删除",
     deleteCard: "删除卡片",
@@ -185,6 +240,59 @@ const messages: Record<Locale, Messages> = {
     subscriptionFallback: "订阅 • 剩余 {days} 天",
     languageEnglish: "EN",
     languageChinese: "中文",
+
+    // Navigation
+    navDashboard: "仪表盘",
+    navProxy: "代理",
+    navSettings: "设置",
+    navGuide: "引导",
+
+    // Quick Actions
+    quickActionsHeading: "快捷操作",
+    quickProxy: "代理",
+    quickSettings: "设置",
+    quickGuide: "引导",
+    quickRefreshAll: "刷新全部",
+
+    // Proxy
+    proxyHeading: "代理控制台",
+    proxyRunning: "运行中",
+    proxyStopped: "已停止",
+    proxyStart: "启动",
+    proxyStop: "停止",
+    proxyPortLabel: "端口",
+    proxyLogs: "日志",
+    statTotal: "总计",
+    statSuccess: "成功",
+    statFailed: "失败",
+    statToday: "今日",
+
+    // Settings
+    settingsHeading: "设置",
+    appearanceHeading: "外观",
+    proxySettingsHeading: "代理",
+    backupHeading: "备份",
+    aboutHeading: "关于",
+    themeLabel: "主题",
+    languageLabel: "语言",
+    themeLight: "浅色",
+    themeDark: "深色",
+    themeSystem: "自动",
+    autoStartLabel: "开机自启",
+    exportConfig: "导出配置",
+    importConfig: "导入配置",
+    checkUpdate: "检查更新",
+
+    // Guide
+    guideHeading: "使用指南",
+    guideStep1Title: "添加账号",
+    guideStep1Desc: "为 Codex 账号创建备份文件夹。每个配置文件存储 auth.json 和 profile.json。",
+    guideStep2Title: "登录账号",
+    guideStep2Desc: "使用 Codex Desktop 在当前配置文件文件夹中登录您的账号。",
+    guideStep3Title: "自由切换",
+    guideStep3Desc: "使用切换按钮在不同账号之间快速切换，无需重新登录。",
+    guideAddProfile: "添加第一个账号",
+    guideBack: "返回仪表盘",
   },
 };
 

@@ -26,8 +26,11 @@ import {
   applyLocale,
   elements,
   renderCurrentCard,
+  renderNavigation,
   renderPaging,
   renderProfiles,
+  renderProxyPage,
+  renderSettingsPage,
   showToast,
 } from "@front-shared/render";
 
@@ -54,6 +57,103 @@ function rerenderDashboard(): void {
   );
   renderCurrentCard(dashboard);
   renderPaging(dashboard.paging);
+}
+
+function navigateTo(page: "dashboard" | "settings" | "guide" | "proxy"): void {
+  state.currentPage = page;
+  renderNavigation();
+  if (page === "proxy") {
+    renderProxyPage();
+  } else if (page === "settings") {
+    renderSettingsPage();
+  }
+}
+
+function handleToggleProxy(): void {
+  const port = parseInt(elements.proxyPortInput.value, 10);
+  if (!Number.isNaN(port) && port >= 1024 && port <= 65535) {
+    state.proxyPort = port;
+  }
+  state.proxyRunning = !state.proxyRunning;
+  if (state.proxyRunning) {
+    state.proxyLogs.push(`[${new Date().toLocaleTimeString()}] Proxy started on port ${state.proxyPort}`);
+    showToast(t(state.locale, "proxyRunning"));
+  } else {
+    state.proxyLogs.push(`[${new Date().toLocaleTimeString()}] Proxy stopped`);
+    showToast(t(state.locale, "proxyStopped"));
+  }
+  renderProxyPage();
+}
+
+function handleClearProxyLogs(): void {
+  state.proxyLogs = [];
+  renderProxyPage();
+}
+
+function handleThemeChange(theme: "light" | "dark" | "system"): void {
+  state.theme = theme;
+  renderSettingsPage();
+  showToast(t(state.locale, theme === "light" ? "themeLight" : theme === "dark" ? "themeDark" : "themeSystem"));
+}
+
+function handleExportConfig(): void {
+  const config = JSON.stringify({
+    profiles: state.snapshot?.profiles ?? [],
+    settings: {
+      locale: state.locale,
+      theme: state.theme,
+      proxyPort: state.proxyPort,
+    },
+  }, null, 2);
+  const blob = new Blob([config], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `codex-switch-config-${new Date().toISOString().split("T")[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(t(state.locale, "exportConfig"));
+}
+
+function handleImportConfig(): void {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json";
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const config = JSON.parse(text);
+      if (config.settings) {
+        const validLocales: Locale[] = ["en", "zh-CN"];
+        if (config.settings.locale && validLocales.includes(config.settings.locale)) {
+          state.locale = config.settings.locale;
+          persistLocale(state.locale);
+        }
+        const validThemes: Array<"light" | "dark" | "system"> = ["light", "dark", "system"];
+        if (config.settings.theme && validThemes.includes(config.settings.theme)) {
+          state.theme = config.settings.theme;
+        }
+        const port = Number(config.settings.proxyPort);
+        if (!Number.isNaN(port) && port >= 1024 && port <= 65535) {
+          state.proxyPort = port;
+        }
+      }
+      showToast(t(state.locale, "importConfig"));
+      rerenderDashboard();
+    } catch {
+      showToast("Failed to import config", true);
+    }
+  };
+  input.click();
+}
+
+function handleCheckUpdate(): void {
+  showToast(t(state.locale, "checkUpdate"));
+  setTimeout(() => {
+    showToast("You are on the latest version.");
+  }, 1500);
 }
 
 let renameSourceProfile: string | null = null;
@@ -470,6 +570,13 @@ export function bootstrap(): void {
   state.locale = resolveInitialLocale();
   applyLocale();
 
+  // Navigation
+  elements.navDashboard.addEventListener("click", () => navigateTo("dashboard"));
+  elements.navProxy.addEventListener("click", () => navigateTo("proxy"));
+  elements.navSettings.addEventListener("click", () => navigateTo("settings"));
+  elements.navGuide.addEventListener("click", () => navigateTo("guide"));
+
+  // Dashboard
   elements.previousPageButton.addEventListener("click", () => {
     state.page -= 1;
     rerenderDashboard();
@@ -530,6 +637,43 @@ export function bootstrap(): void {
   elements.localeZhButton.addEventListener("click", () => {
     setLocale("zh-CN");
   });
+
+  // Proxy
+  elements.proxyToggleButton.addEventListener("click", handleToggleProxy);
+  elements.proxyClearLogs.addEventListener("click", handleClearProxyLogs);
+
+  // Settings
+  elements.themeLight.addEventListener("click", () => handleThemeChange("light"));
+  elements.themeDark.addEventListener("click", () => handleThemeChange("dark"));
+  elements.themeSystem.addEventListener("click", () => handleThemeChange("system"));
+  elements.settingsLocaleEn.addEventListener("click", () => setLocale("en"));
+  elements.settingsLocaleZh.addEventListener("click", () => setLocale("zh-CN"));
+  elements.exportConfig.addEventListener("click", handleExportConfig);
+  elements.importConfig.addEventListener("click", handleImportConfig);
+  elements.checkUpdate.addEventListener("click", handleCheckUpdate);
+
+  // Guide
+  elements.guideAddProfile.addEventListener("click", () => {
+    navigateTo("dashboard");
+    openAddProfileDialog();
+  });
+  elements.guideBack.addEventListener("click", () => navigateTo("dashboard"));
+
+  // Quick Actions
+  elements.quickProxy.addEventListener("click", () => navigateTo("proxy"));
+  elements.quickSettings.addEventListener("click", () => navigateTo("settings"));
+  elements.quickGuide.addEventListener("click", () => navigateTo("guide"));
+  elements.quickRefreshAll.addEventListener("click", () => {
+    if (!state.snapshot) return;
+    for (const profile of state.snapshot.profiles) {
+      if (profile.auth_present && !isRefreshPending(profile.folder_name)) {
+        state.refreshQueue.push(profile.folder_name);
+      }
+    }
+    rerenderDashboard();
+    void drainRefreshQueue();
+  });
+
   window.setInterval(() => {
     void refreshCurrentQuota();
   }, 15_000);

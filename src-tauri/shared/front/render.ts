@@ -19,9 +19,28 @@ function requiredElement<T extends HTMLElement>(id: string): T {
   return element as T;
 }
 
+function optionalElement<T extends HTMLElement>(id: string): T | null {
+  const element = document.getElementById(id);
+  return element instanceof HTMLElement ? (element as T) : null;
+}
+
 const hasDeleteProfileUi = document.getElementById("delete-profile-dialog") instanceof HTMLDialogElement;
+const hasNavUi = document.getElementById("nav-dashboard") instanceof HTMLElement;
 
 export const elements = {
+  // Navigation (optional for macOS compatibility)
+  navDashboard: hasNavUi ? requiredElement<HTMLButtonElement>("nav-dashboard") : null as unknown as HTMLButtonElement,
+  navProxy: hasNavUi ? requiredElement<HTMLButtonElement>("nav-proxy") : null as unknown as HTMLButtonElement,
+  navSettings: hasNavUi ? requiredElement<HTMLButtonElement>("nav-settings") : null as unknown as HTMLButtonElement,
+  navGuide: hasNavUi ? requiredElement<HTMLButtonElement>("nav-guide") : null as unknown as HTMLButtonElement,
+
+  // Page sections (optional for macOS compatibility)
+  pageDashboard: hasNavUi ? requiredElement<HTMLElement>("page-dashboard") : null as unknown as HTMLElement,
+  pageProxy: hasNavUi ? requiredElement<HTMLElement>("page-proxy") : null as unknown as HTMLElement,
+  pageSettings: hasNavUi ? requiredElement<HTMLElement>("page-settings") : null as unknown as HTMLElement,
+  pageGuide: hasNavUi ? requiredElement<HTMLElement>("page-guide") : null as unknown as HTMLElement,
+
+  // Dashboard
   profilesHeading: requiredElement<HTMLHeadingElement>("profiles-heading"),
   profilesGrid: requiredElement<HTMLDivElement>("profiles-grid"),
   pageIndicator: requiredElement<HTMLSpanElement>("page-indicator"),
@@ -43,6 +62,66 @@ export const elements = {
   localeEnButton: requiredElement<HTMLButtonElement>("locale-en-button"),
   localeZhButton: requiredElement<HTMLButtonElement>("locale-zh-button"),
   quotaMonitorLabel: requiredElement<HTMLSpanElement>("quota-monitor-label"),
+
+  // Proxy
+  proxyHeading: requiredElement<HTMLHeadingElement>("proxy-heading"),
+  proxyStatusText: requiredElement<HTMLSpanElement>("proxy-status-text"),
+  proxyStatusDot: requiredElement<HTMLSpanElement>("proxy-status-indicator"),
+  proxyPortInput: requiredElement<HTMLInputElement>("proxy-port-input"),
+  proxyToggleButton: requiredElement<HTMLButtonElement>("proxy-toggle-button"),
+  proxyLogLabel: requiredElement<HTMLSpanElement>("proxy-log-label"),
+  proxyClearLogs: requiredElement<HTMLButtonElement>("proxy-clear-logs"),
+  proxyLogs: requiredElement<HTMLDivElement>("proxy-logs"),
+  statTotal: requiredElement<HTMLSpanElement>("stat-total"),
+  statSuccess: requiredElement<HTMLSpanElement>("stat-success"),
+  statFailed: requiredElement<HTMLSpanElement>("stat-failed"),
+  statToday: requiredElement<HTMLSpanElement>("stat-today"),
+  statTotalLabel: requiredElement<HTMLSpanElement>("stat-total-label"),
+  statSuccessLabel: requiredElement<HTMLSpanElement>("stat-success-label"),
+  statFailedLabel: requiredElement<HTMLSpanElement>("stat-failed-label"),
+  statTodayLabel: requiredElement<HTMLSpanElement>("stat-today-label"),
+  proxyPortLabel: requiredElement<HTMLSpanElement>("proxy-port-label"),
+
+  // Settings
+  settingsHeading: requiredElement<HTMLHeadingElement>("settings-heading"),
+  appearanceHeading: requiredElement<HTMLHeadingElement>("appearance-heading"),
+  proxySettingsHeading: requiredElement<HTMLHeadingElement>("proxy-settings-heading"),
+  backupHeading: requiredElement<HTMLHeadingElement>("backup-heading"),
+  aboutHeading: requiredElement<HTMLHeadingElement>("about-heading"),
+  themeLabel: requiredElement<HTMLSpanElement>("theme-label"),
+  languageLabel: requiredElement<HTMLSpanElement>("language-label"),
+  proxyPortSettingLabel: requiredElement<HTMLSpanElement>("proxy-port-setting-label"),
+  autoStartLabel: requiredElement<HTMLSpanElement>("auto-start-label"),
+  themeLight: requiredElement<HTMLButtonElement>("theme-light"),
+  themeDark: requiredElement<HTMLButtonElement>("theme-dark"),
+  themeSystem: requiredElement<HTMLButtonElement>("theme-system"),
+  settingsLocaleEn: requiredElement<HTMLButtonElement>("settings-locale-en"),
+  settingsLocaleZh: requiredElement<HTMLButtonElement>("settings-locale-zh"),
+  settingsProxyPort: requiredElement<HTMLInputElement>("settings-proxy-port"),
+  autoStartToggle: requiredElement<HTMLInputElement>("auto-start-toggle"),
+  exportConfig: requiredElement<HTMLButtonElement>("export-config"),
+  importConfig: requiredElement<HTMLButtonElement>("import-config"),
+  checkUpdate: requiredElement<HTMLButtonElement>("check-update"),
+
+  // Quick Actions
+  quickActionsHeading: requiredElement<HTMLHeadingElement>("quick-actions-heading"),
+  quickProxy: requiredElement<HTMLButtonElement>("quick-proxy"),
+  quickSettings: requiredElement<HTMLButtonElement>("quick-settings"),
+  quickGuide: requiredElement<HTMLButtonElement>("quick-guide"),
+  quickRefreshAll: requiredElement<HTMLButtonElement>("quick-refresh-all"),
+
+  // Guide
+  guideHeading: requiredElement<HTMLHeadingElement>("guide-heading"),
+  guideStep1Title: requiredElement<HTMLHeadingElement>("guide-step-1-title"),
+  guideStep1Desc: requiredElement<HTMLParagraphElement>("guide-step-1-desc"),
+  guideStep2Title: requiredElement<HTMLHeadingElement>("guide-step-2-title"),
+  guideStep2Desc: requiredElement<HTMLParagraphElement>("guide-step-2-desc"),
+  guideStep3Title: requiredElement<HTMLHeadingElement>("guide-step-3-title"),
+  guideStep3Desc: requiredElement<HTMLParagraphElement>("guide-step-3-desc"),
+  guideAddProfile: requiredElement<HTMLButtonElement>("guide-add-profile"),
+  guideBack: requiredElement<HTMLButtonElement>("guide-back"),
+
+  // Dialogs
   dialog: document.getElementById("add-profile-dialog") as HTMLDialogElement,
   addProfileForm: requiredElement<HTMLFormElement>("add-profile-form"),
   cancelAddProfileButton: requiredElement<HTMLButtonElement>("cancel-add-profile-button"),
@@ -397,6 +476,88 @@ export function renderPaging(
   elements.pageIndicator.textContent = `${paging.page} / ${paging.total_pages}`;
 }
 
+export function renderNavigation(): void {
+  if (!hasNavUi) {
+    return;
+  }
+
+  elements.navDashboard.classList.toggle("is-active", state.currentPage === "dashboard");
+  elements.navProxy.classList.toggle("is-active", state.currentPage === "proxy");
+  elements.navSettings.classList.toggle("is-active", state.currentPage === "settings");
+  elements.navGuide.classList.toggle("is-active", state.currentPage === "guide");
+
+  elements.pageDashboard.hidden = state.currentPage !== "dashboard";
+  elements.pageProxy.hidden = state.currentPage !== "proxy";
+  elements.pageSettings.hidden = state.currentPage !== "settings";
+  elements.pageGuide.hidden = state.currentPage !== "guide";
+}
+
+export function renderProxyPage(): void {
+  elements.proxyHeading.textContent = t(state.locale, "proxyHeading");
+  elements.proxyStatusText.textContent = state.proxyRunning
+    ? t(state.locale, "proxyRunning")
+    : t(state.locale, "proxyStopped");
+  elements.proxyStatusDot.classList.toggle("is-running", state.proxyRunning);
+  elements.proxyToggleButton.textContent = state.proxyRunning
+    ? t(state.locale, "proxyStop")
+    : t(state.locale, "proxyStart");
+  elements.proxyPortLabel.textContent = t(state.locale, "proxyPortLabel");
+  elements.proxyLogLabel.textContent = t(state.locale, "proxyLogs");
+  elements.proxyClearLogs.textContent = t(state.locale, "clear");
+  elements.statTotalLabel.textContent = t(state.locale, "statTotal");
+  elements.statSuccessLabel.textContent = t(state.locale, "statSuccess");
+  elements.statFailedLabel.textContent = t(state.locale, "statFailed");
+  elements.statTodayLabel.textContent = t(state.locale, "statToday");
+
+  elements.proxyLogs.innerHTML = state.proxyLogs
+    .map((log) => `<div class="proxy-log-line">${escapeHtml(log)}</div>`)
+    .join("");
+  if (state.proxyLogs.length > 0) {
+    elements.proxyLogs.scrollTop = elements.proxyLogs.scrollHeight;
+  }
+}
+
+export function renderSettingsPage(): void {
+  elements.settingsHeading.textContent = t(state.locale, "settingsHeading");
+  elements.appearanceHeading.textContent = t(state.locale, "appearanceHeading");
+  elements.proxySettingsHeading.textContent = t(state.locale, "proxySettingsHeading");
+  elements.backupHeading.textContent = t(state.locale, "backupHeading");
+  elements.aboutHeading.textContent = t(state.locale, "aboutHeading");
+  elements.themeLabel.textContent = t(state.locale, "themeLabel");
+  elements.languageLabel.textContent = t(state.locale, "languageLabel");
+  elements.proxyPortSettingLabel.textContent = t(state.locale, "proxyPortLabel");
+  elements.autoStartLabel.textContent = t(state.locale, "autoStartLabel");
+
+  elements.themeLight.textContent = t(state.locale, "themeLight");
+  elements.themeDark.textContent = t(state.locale, "themeDark");
+  elements.themeSystem.textContent = t(state.locale, "themeSystem");
+  elements.themeLight.classList.toggle("is-active", state.theme === "light");
+  elements.themeDark.classList.toggle("is-active", state.theme === "dark");
+  elements.themeSystem.classList.toggle("is-active", state.theme === "system");
+
+  elements.settingsLocaleEn.textContent = t(state.locale, "languageEnglish");
+  elements.settingsLocaleZh.textContent = t(state.locale, "languageChinese");
+  elements.settingsLocaleEn.classList.toggle("is-active", state.locale === "en");
+  elements.settingsLocaleZh.classList.toggle("is-active", state.locale === "zh-CN");
+
+  elements.settingsProxyPort.value = String(state.proxyPort);
+  elements.exportConfig.textContent = t(state.locale, "exportConfig");
+  elements.importConfig.textContent = t(state.locale, "importConfig");
+  elements.checkUpdate.textContent = t(state.locale, "checkUpdate");
+}
+
+export function renderGuidePage(): void {
+  elements.guideHeading.textContent = t(state.locale, "guideHeading");
+  elements.guideStep1Title.textContent = t(state.locale, "guideStep1Title");
+  elements.guideStep1Desc.textContent = t(state.locale, "guideStep1Desc");
+  elements.guideStep2Title.textContent = t(state.locale, "guideStep2Title");
+  elements.guideStep2Desc.textContent = t(state.locale, "guideStep2Desc");
+  elements.guideStep3Title.textContent = t(state.locale, "guideStep3Title");
+  elements.guideStep3Desc.textContent = t(state.locale, "guideStep3Desc");
+  elements.guideAddProfile.textContent = t(state.locale, "guideAddProfile");
+  elements.guideBack.textContent = t(state.locale, "guideBack");
+}
+
 export function applyLocale(): void {
   document.documentElement.lang = state.locale;
   document.title = t(state.locale, "appTitle");
@@ -404,6 +565,7 @@ export function applyLocale(): void {
   elements.profilesHeading.textContent = t(state.locale, "profilesHeading");
   elements.currentSectionHeading.textContent = t(state.locale, "currentSession");
   elements.controlDeckHeading.textContent = t(state.locale, "controlDeck");
+  elements.quickActionsHeading.textContent = t(state.locale, "quickActionsHeading");
   elements.currentLoginButton.textContent = t(state.locale, "login");
   elements.openCurrentFolderButton.textContent = t(state.locale, "openFolder");
   elements.addProfilesButton.textContent = t(state.locale, "addProfiles");
@@ -450,4 +612,9 @@ export function applyLocale(): void {
   elements.submitRenameProfileButton.textContent = t(state.locale, "rename");
   elements.cancelBaseUrlButton.textContent = t(state.locale, "cancel");
   elements.submitBaseUrlButton.textContent = t(state.locale, "save");
+
+  renderNavigation();
+  renderProxyPage();
+  renderSettingsPage();
+  renderGuidePage();
 }
