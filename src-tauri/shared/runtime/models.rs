@@ -145,6 +145,27 @@ pub struct UpdateProfileBaseUrlPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCheckPayload {
+    pub update_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenUrlPayload {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCheckResponse {
+    pub ok: bool,
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub has_update: bool,
+    pub release_url: Option<String>,
+    pub notes: Option<String>,
+    pub checked_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwitchResponse {
     pub ok: bool,
     pub profile: String,

@@ -10,6 +10,7 @@
 # Local temp/test outputs
 *.log
 tmp/
+.tmp/
 .venv/
 .pytest_cache/
 __pycache__/
@@ -19,5 +20,6 @@ src-tauri/target/
 src-tauri/gen/
 local_doc/
 agent/
+codex_history/
 .codex/
 docs/

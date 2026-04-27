@@ -17,8 +17,10 @@ pub const WINDOWS_RUNTIME_DIRNAME: &str = "windows";
 pub const MACOS_RUNTIME_DIRNAME: &str = "macos";
 pub const CONTACT_URL: &str = "https://github.com/Cmochance/Codex_Account_Switch";
 pub const RELEASES_URL: &str = "https://github.com/Cmochance/Codex_Account_Switch/releases";
+pub const UPDATE_CHECK_URL: &str =
+    "https://api.github.com/repos/Cmochance/Codex_Account_Switch/releases/latest";
 pub const XIAOHONGSHU_URL: &str = "https://www.xiaohongshu.com/explore/69df8fca000000002302203c";
-pub const DEFAULT_PAGE_SIZE: u32 = 6;
+pub const DEFAULT_PAGE_SIZE: u32 = 4;
 
 fn fallback_home_dir() -> PathBuf {
     if let Some(path) = env::var_os("USERPROFILE") {

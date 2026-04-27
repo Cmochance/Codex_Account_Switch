@@ -1,7 +1,7 @@
 use crate::errors::CommandError;
 use crate::models::{
-    ActionResponse, AddProfilePayload, ProfilePayload, RenameProfilePayload,
-    UpdateProfileBaseUrlPayload,
+    ActionResponse, AddProfilePayload, OpenUrlPayload, ProfilePayload, RenameProfilePayload,
+    UpdateCheckPayload, UpdateCheckResponse, UpdateProfileBaseUrlPayload,
 };
 
 #[cfg(target_os = "macos")]
@@ -137,6 +137,35 @@ pub fn open_releases(app: tauri::AppHandle) -> Result<ActionResponse, CommandErr
         message: "Opened releases URL.".to_string(),
         path: Some(path),
     })
+}
+
+#[tauri::command]
+pub fn open_url(
+    app: tauri::AppHandle,
+    payload: OpenUrlPayload,
+) -> Result<ActionResponse, CommandError> {
+    let path = platform_runtime::actions::open_url(&app, &payload.url)?;
+    Ok(ActionResponse {
+        ok: true,
+        message: "Opened URL.".to_string(),
+        path: Some(path),
+    })
+}
+
+#[tauri::command]
+pub async fn check_update(
+    payload: UpdateCheckPayload,
+) -> Result<UpdateCheckResponse, CommandError> {
+    let update_url = payload.update_url;
+    tauri::async_runtime::spawn_blocking(move || crate::shared::update::check_update(&update_url))
+        .await
+        .map_err(|error| {
+            CommandError::new(
+                "UPDATE_CHECK_TASK_FAILED",
+                format!("Update check task failed: {error}"),
+            )
+        })?
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]

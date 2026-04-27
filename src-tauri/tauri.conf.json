@@ -7,16 +7,16 @@
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
     "devUrl": "http://127.0.0.1:1420",
-    "frontendDist": "../dist"
+    "frontendDist": "../dist/web"
   },
   "app": {
     "windows": [
       {
         "label": "main",
         "title": "Codex Switch",
-        "width": 1440,
-        "height": 1027,
-        "minWidth": 1200,
+        "width": 1180,
+        "height": 860,
+        "minWidth": 1080,
         "minHeight": 760,
         "resizable": true,
         "decorations": false

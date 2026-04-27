@@ -1,12 +1,21 @@
 import { persistLocale, resolveInitialLocale, t, type Locale } from "@front-shared/i18n";
 import { state } from "@front-shared/state";
 import {
+  applyTheme,
+  getThemeOption,
+  isThemeId,
+  persistTheme,
+  resolveInitialTheme,
+  type ThemeId,
+} from "@front-shared/theme";
+import {
   applyCurrentQuota,
   applySnapshot,
   buildDashboardViewModel,
 } from "@front-shared/dashboard-view-model";
 import {
   addProfile,
+  checkUpdate,
   clearProfileAccount,
   deleteProfile,
   getCurrentLiveQuota,
@@ -15,6 +24,7 @@ import {
   openCodex,
   openContact,
   openReleases,
+  openUrl,
   openXiaohongshu,
   openProfileFolder,
   refreshProfile,
@@ -28,6 +38,11 @@ import {
   renderCurrentCard,
   renderPaging,
   renderProfiles,
+  renderShellOverview,
+  renderShellRoute,
+  renderThemeOptions,
+  routeFromLocation,
+  showUpdateDialog,
   showToast,
 } from "@front-shared/render";
 
@@ -36,11 +51,14 @@ type ErrorWithCode = Error & {
 };
 
 function rerenderDashboard(): void {
+  state.route = routeFromLocation();
   applyLocale();
+  renderShellRoute();
 
   const dashboard = buildDashboardViewModel();
   if (!dashboard) {
     renderPaging({ has_previous: false, has_next: false, page: 1, total_pages: 1 });
+    renderShellOverview(null);
     return;
   }
 
@@ -54,10 +72,12 @@ function rerenderDashboard(): void {
   );
   renderCurrentCard(dashboard);
   renderPaging(dashboard.paging);
+  renderShellOverview(dashboard);
 }
 
 let renameSourceProfile: string | null = null;
 let baseUrlSourceProfile: string | null = null;
+let pendingUpdateReleaseUrl: string | null = null;
 let deleteSourceProfile: string | null = null;
 
 function isRefreshPending(profile: string): boolean {
@@ -108,6 +128,30 @@ function setLocale(locale: Locale): void {
   state.locale = locale;
   persistLocale(locale);
   rerenderDashboard();
+}
+
+function setLocaleFromValue(value: string | undefined): void {
+  if (value === "en" || value === "zh-CN") {
+    setLocale(value);
+  }
+}
+
+function setTheme(theme: ThemeId): void {
+  if (state.theme === theme) {
+    return;
+  }
+
+  state.theme = theme;
+  applyTheme(theme);
+  persistTheme(theme);
+  renderThemeOptions();
+  showToast(t(state.locale, "themeChanged", { theme: t(state.locale, getThemeOption(theme).nameKey) }));
+}
+
+function setThemeFromValue(value: string | undefined): void {
+  if (isThemeId(value)) {
+    setTheme(value);
+  }
 }
 
 async function refreshCurrentQuota(showError = false): Promise<void> {
@@ -309,6 +353,50 @@ async function handleOpenReleases(): Promise<void> {
   }
 }
 
+async function handleOpenUpdateRelease(): Promise<void> {
+  const releaseUrl = pendingUpdateReleaseUrl;
+  if (!releaseUrl) {
+    await handleOpenReleases();
+    return;
+  }
+
+  try {
+    await openUrl(releaseUrl);
+    showToast(t(state.locale, "openedReleases"));
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : t(state.locale, "failedToOpenReleases"), true);
+  }
+}
+
+async function handleCheckUpdate(silent = false): Promise<void> {
+  if (!silent) {
+    showToast(t(state.locale, "checkingUpdate"));
+  }
+
+  try {
+    const update = await checkUpdate(elements.settingsUpdateUrlInput.value);
+    if (update.has_update) {
+      pendingUpdateReleaseUrl = update.release_url;
+      showUpdateDialog(update);
+      if (!silent) {
+        showToast(t(state.locale, "updateAvailable", {
+          current: update.current_version,
+          latest: update.latest_version ?? "--",
+        }));
+      }
+      return;
+    }
+
+    if (!silent) {
+      showToast(t(state.locale, "updateAlreadyLatest", { current: update.current_version }));
+    }
+  } catch (error) {
+    if (!silent) {
+      showToast(error instanceof Error ? error.message : t(state.locale, "failedToCheckUpdate"), true);
+    }
+  }
+}
+
 async function handleOpenXiaohongshu(): Promise<void> {
   try {
     await openXiaohongshu();
@@ -468,7 +556,16 @@ async function handleDeleteProfileAction(action: "delete" | "clear"): Promise<vo
 
 export function bootstrap(): void {
   state.locale = resolveInitialLocale();
+  state.theme = resolveInitialTheme();
+  state.route = routeFromLocation();
+  applyTheme(state.theme);
   applyLocale();
+  renderShellRoute();
+
+  window.addEventListener("hashchange", () => {
+    state.route = routeFromLocation();
+    renderShellRoute();
+  });
 
   elements.previousPageButton.addEventListener("click", () => {
     state.page -= 1;
@@ -487,16 +584,29 @@ export function bootstrap(): void {
   elements.openCodexButton.addEventListener("click", () => {
     void handleOpenCodex();
   });
-  elements.contactButton.addEventListener("click", () => {
+  elements.settingsGithubButton.addEventListener("click", () => {
     void handleOpenContact();
   });
-  elements.upgradeButton.addEventListener("click", () => {
-    void handleOpenReleases();
+  elements.settingsCheckUpdateButton.addEventListener("click", () => {
+    void handleCheckUpdate();
+  });
+  elements.updateDialogLaterButton.addEventListener("click", () => {
+    elements.updateDialog.close();
+  });
+  elements.updateDialogOpenButton.addEventListener("click", () => {
+    elements.updateDialog.close();
+    void handleOpenUpdateRelease();
+  });
+  elements.starButton.addEventListener("click", () => {
+    window.location.hash = "guide";
   });
   elements.xiaohongshuButton.addEventListener("click", () => {
     void handleOpenXiaohongshu();
   });
   elements.addProfilesButton.addEventListener("click", openAddProfileDialog);
+  for (const button of elements.addProfileButtons) {
+    button.addEventListener("click", openAddProfileDialog);
+  }
   elements.cancelAddProfileButton.addEventListener("click", () => {
     elements.dialog.close();
   });
@@ -530,6 +640,16 @@ export function bootstrap(): void {
   elements.localeZhButton.addEventListener("click", () => {
     setLocale("zh-CN");
   });
+  for (const button of elements.localeButtons) {
+    button.addEventListener("click", () => {
+      setLocaleFromValue(button.dataset.setLocale);
+    });
+  }
+  for (const button of elements.themeButtons) {
+    button.addEventListener("click", () => {
+      setThemeFromValue(button.dataset.themeOption);
+    });
+  }
   window.setInterval(() => {
     void refreshCurrentQuota();
   }, 15_000);
@@ -539,5 +659,6 @@ export function bootstrap(): void {
   void refreshAllData().finally(() => {
     state.loading = false;
     rerenderDashboard();
+    void handleCheckUpdate(true);
   });
 }

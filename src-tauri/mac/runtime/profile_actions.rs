@@ -311,6 +311,24 @@ pub fn open_releases(app: &tauri::AppHandle) -> AppResult<String> {
     Ok(RELEASES_URL.to_string())
 }
 
+pub fn open_url(app: &tauri::AppHandle, url: &str) -> AppResult<String> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err(AppError::new(
+            "URL_OPEN_INVALID",
+            "URL must start with http:// or https://.",
+        ));
+    }
+
+    app.opener()
+        .open_url(trimmed, None::<&str>)
+        .map_err(|error| {
+            AppError::new("URL_OPEN_FAILED", format!("Failed to open URL: {error}"))
+        })?;
+
+    Ok(trimmed.to_string())
+}
+
 pub fn open_xiaohongshu(app: &tauri::AppHandle) -> AppResult<String> {
     app.opener()
         .open_url(XIAOHONGSHU_URL, None::<&str>)

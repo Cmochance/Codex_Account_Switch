@@ -72,7 +72,19 @@ export interface ActionResponse {
   path: string | null;
 }
 
+export interface UpdateCheckResponse {
+  ok: boolean;
+  current_version: string;
+  latest_version: string | null;
+  has_update: boolean;
+  release_url: string | null;
+  notes: string | null;
+  checked_url: string;
+}
+
 export interface CommandError {
   error_code?: string;
   message?: string;
 }
+
+export type ShellRoute = "dashboard" | "profiles" | "runtime" | "settings" | "guide";

@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.5.3 - 2026-04-27
+
+- Added real update checks against the configured GitHub latest-release JSON endpoint.
+- Added automatic new-version prompting when the latest release is newer than the running app.
+- Fixed update version parsing so historical two-part tags such as `1.5` compare as `1.5.0` instead of failing.
+- Added macOS `.pkg` packaging alongside `.app` and `.dmg`.
+- Standardized future release records on full three-part semantic versions.
+
+## 1.5.2 - 2026-04-21
+
+- Windows installer uploaded as `codex_switch_1.5.2_x64-setup.exe`.
+- Historical note: this asset was uploaded under the non-standard GitHub Release tag `1.5`.
+
+## 1.5.1 - 2026-04-21
+
+- Windows installer uploaded as `codex_switch_1.5.1_x64-setup.exe`.
+- Historical note: this asset was uploaded under the non-standard GitHub Release tag `1.5`.
+
+## 1.5.0 - 2026-04-20
+
+- Added normalized installation and version-control release.
+- Uploaded macOS DMG and Windows installer assets.
+- Historical note: the GitHub Release tag was created as `1.5`; future release tags should use full semantic versions such as `1.5.3`.
+
 ## 1.4.2 - 2026-04-16
 
 - Added the new local release after GitHub tag `1.4.1`.

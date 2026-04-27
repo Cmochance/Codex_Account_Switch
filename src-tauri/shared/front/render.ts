@@ -5,11 +5,24 @@ import type {
   ProfileCard,
   QuotaSummary,
   QuotaWindow,
+  ShellRoute,
+  UpdateCheckResponse,
 } from "@front-shared/types";
-import { t } from "@front-shared/i18n";
+import { t, type MessageKey } from "@front-shared/i18n";
 import { state } from "@front-shared/state";
+import { getThemeOption, isThemeId } from "@front-shared/theme";
 
 const isWindowsUiTarget = __CODEX_UI_TARGET__ === "windows";
+const shellRoutes: readonly ShellRoute[] = ["dashboard", "profiles", "runtime", "settings", "guide"];
+
+function isShellRoute(value: string): value is ShellRoute {
+  return shellRoutes.includes(value as ShellRoute);
+}
+
+export function routeFromLocation(): ShellRoute {
+  const hash = window.location.hash.replace(/^#/, "");
+  return isShellRoute(hash) ? hash : "dashboard";
+}
 
 function requiredElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -36,8 +49,13 @@ export const elements = {
   controlDeckHeading: requiredElement<HTMLHeadingElement>("control-deck-heading"),
   addProfilesButton: requiredElement<HTMLButtonElement>("add-profiles-button"),
   openCodexButton: requiredElement<HTMLButtonElement>("open-codex-button"),
-  contactButton: requiredElement<HTMLButtonElement>("contact-button"),
-  upgradeButton: requiredElement<HTMLButtonElement>("upgrade-button"),
+  settingsGithubButton: requiredElement<HTMLButtonElement>("settings-github-button"),
+  settingsCheckUpdateButton: requiredElement<HTMLButtonElement>("settings-check-update-button"),
+  settingsUpdateUrlInput: requiredElement<HTMLInputElement>("settings-update-url-input"),
+  updateDialog: requiredElement<HTMLDialogElement>("update-dialog"),
+  updateDialogCopy: requiredElement<HTMLParagraphElement>("update-dialog-copy"),
+  updateDialogLaterButton: requiredElement<HTMLButtonElement>("update-dialog-later-button"),
+  updateDialogOpenButton: requiredElement<HTMLButtonElement>("update-dialog-open-button"),
   starButton: requiredElement<HTMLButtonElement>("star-button"),
   xiaohongshuButton: requiredElement<HTMLButtonElement>("xiaohongshu-button"),
   localeEnButton: requiredElement<HTMLButtonElement>("locale-en-button"),
@@ -95,6 +113,16 @@ export const elements = {
   cancelBaseUrlButton: requiredElement<HTMLButtonElement>("cancel-base-url-button"),
   submitBaseUrlButton: requiredElement<HTMLButtonElement>("submit-base-url-button"),
   toast: requiredElement<HTMLDivElement>("toast"),
+  routeTabs: Array.from(document.querySelectorAll<HTMLElement>("[data-route-tab]")),
+  pages: Array.from(document.querySelectorAll<HTMLElement>("[data-page]")),
+  localizedText: Array.from(document.querySelectorAll<HTMLElement>("[data-i18n-key]")),
+  localeButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-set-locale]")),
+  themeButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")),
+  addProfileButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-add-profile]")),
+  dashboardActiveProfile: requiredElement<HTMLElement>("dashboard-active-profile"),
+  dashboardProfileCount: requiredElement<HTMLElement>("dashboard-profile-count"),
+  dashboardReadyCount: requiredElement<HTMLElement>("dashboard-ready-count"),
+  dashboardMissingCount: requiredElement<HTMLElement>("dashboard-missing-count"),
 };
 
 function formatPercent(value: number | null): string {
@@ -241,12 +269,85 @@ function buildCurrentQuotaMarkup(
 export function showToast(message: string, isError = false): void {
   elements.toast.hidden = false;
   elements.toast.textContent = message;
-  elements.toast.style.borderColor = isError ? "rgba(190, 95, 86, 0.44)" : "rgba(197, 227, 236, 0.8)";
-  elements.toast.style.color = isError ? "#8f3b35" : "#52555f";
+  elements.toast.classList.toggle("is-error", isError);
   window.clearTimeout((showToast as typeof showToast & { timeoutId?: number }).timeoutId);
   (showToast as typeof showToast & { timeoutId?: number }).timeoutId = window.setTimeout(() => {
     elements.toast.hidden = true;
   }, 3200);
+}
+
+export function showUpdateDialog(update: UpdateCheckResponse): void {
+  elements.updateDialogCopy.textContent = t(state.locale, "updateDialogCopy", {
+    current: update.current_version,
+    latest: update.latest_version ?? "--",
+  });
+
+  if (!elements.updateDialog.open) {
+    elements.updateDialog.showModal();
+  }
+}
+
+export function renderThemeOptions(): void {
+  for (const button of elements.themeButtons) {
+    const themeId = button.dataset.themeOption;
+    if (!isThemeId(themeId)) {
+      continue;
+    }
+
+    const option = getThemeOption(themeId);
+    const title = t(state.locale, option.nameKey);
+    const description = t(state.locale, option.descriptionKey);
+    const titleElement = button.querySelector<HTMLElement>("[data-theme-option-title]");
+    const descriptionElement = button.querySelector<HTMLElement>("[data-theme-option-description]");
+    const isActive = option.id === state.theme;
+
+    if (titleElement) {
+      titleElement.textContent = title;
+    }
+    if (descriptionElement) {
+      descriptionElement.textContent = description;
+    }
+
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-label", `${title} ${description}`);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    button.setAttribute("title", `${title} - ${description}`);
+  }
+}
+
+export function renderShellRoute(): void {
+  for (const page of elements.pages) {
+    page.classList.toggle("active", page.dataset.page === state.route);
+  }
+
+  for (const tab of elements.routeTabs) {
+    const isActive = tab.dataset.routeTab === state.route;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-current", isActive ? "page" : "false");
+  }
+}
+
+export function renderShellOverview(dashboard: DashboardViewModel | null): void {
+  if (!dashboard || !state.snapshot) {
+    elements.dashboardActiveProfile.textContent = "--";
+    elements.dashboardProfileCount.textContent = "--";
+    elements.dashboardReadyCount.textContent = "--";
+    elements.dashboardMissingCount.textContent = "--";
+    return;
+  }
+
+  const profiles = state.snapshot.profiles;
+  const readyCount = profiles.filter((profile) => (
+    profile.auth_present && profile.has_account_identity && profile.status !== "missing_auth"
+  )).length;
+  const missingCount = profiles.length - readyCount;
+
+  elements.dashboardActiveProfile.textContent = dashboard.current_card
+    ? currentDisplayTitle(dashboard.current_card)
+    : t(state.locale, "noActiveProfile");
+  elements.dashboardProfileCount.textContent = String(profiles.length);
+  elements.dashboardReadyCount.textContent = String(readyCount);
+  elements.dashboardMissingCount.textContent = String(Math.max(0, missingCount));
 }
 
 export function renderCurrentCard(dashboard: DashboardViewModel): void {
@@ -401,6 +502,13 @@ export function applyLocale(): void {
   document.documentElement.lang = state.locale;
   document.title = t(state.locale, "appTitle");
 
+  for (const element of elements.localizedText) {
+    const key = element.dataset.i18nKey as MessageKey | undefined;
+    if (key) {
+      element.textContent = t(state.locale, key);
+    }
+  }
+
   elements.profilesHeading.textContent = t(state.locale, "profilesHeading");
   elements.currentSectionHeading.textContent = t(state.locale, "currentSession");
   elements.controlDeckHeading.textContent = t(state.locale, "controlDeck");
@@ -408,8 +516,6 @@ export function applyLocale(): void {
   elements.openCurrentFolderButton.textContent = t(state.locale, "openFolder");
   elements.addProfilesButton.textContent = t(state.locale, "addProfiles");
   elements.openCodexButton.textContent = t(state.locale, "openCodex");
-  elements.contactButton.textContent = t(state.locale, "contactUs");
-  elements.upgradeButton.textContent = t(state.locale, "upgrade");
   elements.starButton.textContent = t(state.locale, "star");
   elements.xiaohongshuButton.textContent = t(state.locale, "xiaohongshu");
   elements.previousPageButton.textContent = t(state.locale, "previous");
@@ -421,6 +527,12 @@ export function applyLocale(): void {
   elements.localeZhButton.classList.toggle("is-active", state.locale === "zh-CN");
   elements.localeEnButton.setAttribute("aria-pressed", state.locale === "en" ? "true" : "false");
   elements.localeZhButton.setAttribute("aria-pressed", state.locale === "zh-CN" ? "true" : "false");
+  for (const button of elements.localeButtons) {
+    const isActive = button.dataset.setLocale === state.locale;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  }
+  renderThemeOptions();
   elements.dialogTitle.textContent = t(state.locale, "addProfileTitle");
   elements.dialogCopy.innerHTML = t(state.locale, "addProfileCopy")
     .replace("auth.json", "<code>auth.json</code>")

@@ -1,9 +1,10 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const packageJsonPath = resolve(repoRoot, 'package.json')
+const packageLockPath = resolve(repoRoot, 'package-lock.json')
 const tauriConfigPath = resolve(repoRoot, 'src-tauri', 'tauri.conf.json')
 const cargoTomlPath = resolve(repoRoot, 'src-tauri', 'Cargo.toml')
 const defaultVersionLogPath = resolve(repoRoot, 'src-tauri', 'target', 'release', 'version.md')
@@ -104,6 +105,7 @@ const extractLatestVersionFromLog = (filePath) => {
 }
 
 const syncCargoVersion = (cargoToml, version) => {
+  const newline = cargoToml.includes('\r\n') ? '\r\n' : '\n'
   const lines = cargoToml.split(/\r?\n/)
   let inPackageSection = false
   let updated = false
@@ -127,7 +129,30 @@ const syncCargoVersion = (cargoToml, version) => {
     throw new Error('Failed to locate Cargo package version field.')
   }
 
-  return `${nextLines.join('\n')}\n`
+  return nextLines.join(newline)
+}
+
+const syncPackageLockVersion = (version) => {
+  if (!existsSync(packageLockPath)) {
+    return
+  }
+
+  const packageLock = readJson(packageLockPath)
+  let updated = false
+
+  if (packageLock.version !== version) {
+    packageLock.version = version
+    updated = true
+  }
+
+  if (packageLock.packages?.[''] && packageLock.packages[''].version !== version) {
+    packageLock.packages[''].version = version
+    updated = true
+  }
+
+  if (updated) {
+    writeJson(packageLockPath, packageLock)
+  }
 }
 
 const args = process.argv.slice(2)
@@ -171,6 +196,8 @@ const version = packageJson.version
 if (!semverPattern.test(version)) {
   throw new Error(`package.json contains an invalid semver version: ${version}`)
 }
+
+syncPackageLockVersion(version)
 
 const tauriConfig = readJson(tauriConfigPath)
 

@@ -13,8 +13,8 @@ pub use crate::shared::{config, fs_ops, metadata, paths, profiles, session_files
 pub mod actions {
     pub use super::profile_actions::{
         add_profile, clear_profile_account, delete_profile, login_current_profile, open_codex_app,
-        open_contact, open_profile_folder, open_releases, open_xiaohongshu, rename_profile,
-        update_profile_base_url,
+        open_contact, open_profile_folder, open_releases, open_url, open_xiaohongshu,
+        rename_profile, update_profile_base_url,
     };
     pub use super::refresh_runtime::refresh_profile;
 }

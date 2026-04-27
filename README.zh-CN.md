@@ -1,101 +1,133 @@
 # Codex 账号切换工具
 
-这是一个把本地多账号 Codex 切换流程整理成独立项目的工具仓库：macOS 现在把保留的命令行流程收口到 `macOS-backup/`，其中 `macOS-backup/install.sh` 作为兼容入口，优先接入原生桌面运行时，找不到原生安装器时再回退到 legacy shell 方案；Windows 使用原生桌面端。
+Codex 账号切换工具是一个本地桌面应用，用来在同一台机器上管理多个 Codex 账号。它通过本地账号备份目录保存不同账号状态，支持切换当前账号、查看账号状态和额度信息，并提供 macOS 与 Windows 原生 Tauri 桌面界面。
 
-## 功能
+`macOS-backup/` 里的 shell 脚本仍然保留，作为兼容旧流程的入口；当前主要方向是原生桌面端。
 
-- 登录后自动记录保存当前激活账号，通过切换按钮一键切换
-- 如 Codex 桌面端正在运行，切换前自动关闭，切换后自动拉起
-- Windows 控制面板支持切换、登录、打开目录、添加账号等操作
+## 当前功能
+
+- 仪表盘：显示当前账号、账号总数、可用账号和待登录账号数量。
+- 账号页：每页 4 张账号卡片，支持切换、登录刷新、重命名、删除或清空、打开账号目录、编辑 Base URL。
+- 运行时页：先放置运行时可视化界面，后续再接入更多后端能力。
+- 设置页：包含语言、主题、端口、开机自启占位、更新地址、配置备份、版本、许可证、检查更新和 GitHub 入口。
+- 引导页：展示添加账号、登录、切换账号的基础流程。
+- 支持多套浅色和深色主题、中英文界面，以及没有 Tauri API 时的本地预览数据。
+
+部分设置项和运行时条目目前只完成前端界面，后续再接入后端。
 
 ## 平台支持
 
-- macOS：使用 [`macOS-backup/`](./macOS-backup) 下的兼容 shell 脚本
-- Windows：使用 release 中的 .exe 应用
+- macOS：原生 Tauri 桌面端，同时保留 `macOS-backup/` 下的兼容脚本。
+- Windows：原生 Tauri 桌面端，通过 Release 中的 `.exe` 分发。
+
+平台专属逻辑优先放在 `src-tauri/mac/**` 或 `src-tauri/win/**` 下。`src-tauri/shared/**` 只放共享前端模块、命令契约、运行时模型和中立的跨平台逻辑。
 
 ## 仓库结构
 
-- [`macOS-backup/`](./macOS-backup)：保留的 macOS 兼容安装入口、原生桌面桥接脚本、legacy shell 兜底脚本
-- [`src-tauri/`](./src-tauri/)：Rust / Tauri 运行时根目录
-  - [`src-tauri/win/front/`](./src-tauri/win/front/)：Windows 桌面端前端壳
-  - [`src-tauri/mac/front/`](./src-tauri/mac/front/)：macOS 桌面端前端壳
-  - [`src-tauri/shared/front/`](./src-tauri/shared/front/)：共享前端桥接模块与字体资源
-  - [`src-tauri/win/runtime/`](./src-tauri/win/runtime/)：Windows 专属运行时代码
-  - [`src-tauri/mac/runtime/`](./src-tauri/mac/runtime/)：macOS 专属运行时代码
-  - [`src-tauri/shared/runtime/`](./src-tauri/shared/runtime/)：共享 CLI、模型、错误与运行时逻辑
-  - [`src-tauri/shared/platform/`](./src-tauri/shared/platform/)：跨平台生命周期 hook 层
-  - [`src-tauri/shared/commands/`](./src-tauri/shared/commands/)：共享 Tauri 命令处理层
-  - [`src-tauri/src/`](./src-tauri/src/)：为 Cargo / Tauri 保留的 crate 入口层
-- [`examples/account_backup/demo/`](./examples/account_backup/demo/)：占位 `auth.json` 模板
-- [`docs/`](./docs/)：实现说明和安全文档
-- [`windows/`](./windows/)：历史说明目录
+- `src-tauri/`：Rust 与 Tauri 应用根目录。
+- `src-tauri/mac/front/`：macOS HTML 壳、样式和窗口控制。
+- `src-tauri/win/front/`：Windows HTML 壳、样式和窗口控制。
+- `src-tauri/shared/front/`：共享前端状态、渲染、动作、主题、国际化和 Tauri 桥接。
+- `src-tauri/mac/runtime/`：macOS 运行时集成。
+- `src-tauri/win/runtime/`：Windows 运行时集成。
+- `src-tauri/shared/runtime/`：共享模型、账号数据处理、更新检查、路径、元数据和切换核心逻辑。
+- `src-tauri/shared/commands/`：暴露给前端的 Tauri 命令处理层。
+- `macOS-backup/`：旧 shell 流程和桌面桥接的兼容安装、卸载脚本。
+- `examples/account_backup/demo/`：示例 `auth.json` 模板。
+- `scripts/`：版本同步、macOS 产物布局和 macOS `.pkg` 生成脚本。
 
-## macOS 安装
+生成文件不进仓库。前端网页构建输出放在 `dist/web/`，macOS 桌面端打包产物直接落到 `dist/` 根目录。
+
+## 开发
+
+安装依赖：
 
 ```bash
-cd ~/.../Codex_Account_Switch
+npm install
+```
+
+启动前端和 Tauri 开发应用：
+
+```bash
+npm run tauri:dev
+```
+
+只构建前端：
+
+```bash
+npm run build
+```
+
+运行 Rust 测试：
+
+```bash
+npm run test:rust
+```
+
+## 桌面端打包
+
+Tauri 2 没有提供 bundle 输出目录配置。macOS 打包脚本会在运行 Tauri 前，把 `src-tauri/target/release/bundle/macos` 和 `src-tauri/target/release/bundle/dmg` 准备成指向 `dist/` 的链接。Tauri 仍然写入它自己的固定 bundle 路径，但实际 `.app` 和 `.dmg` 会直接落到 `dist/`；`.pkg` 生成脚本也直接写入 `dist/`。
+
+本地测试阶段只打包 `.app`：
+
+```bash
+npm run tauri:build:macos-app
+```
+
+`.app` 写入 `dist/` 后，会删除构建过程中生成的裸 macOS 可执行中间产物。
+
+最终发布阶段打包 `.dmg` 和 `.pkg`：
+
+```bash
+npm run tauri:build:macos-release
+```
+
+最终发布流程会把 `.app` 作为打包输入，随后从 `dist/` 中移除 `.app`，只把发布用安装包保留在 `dist/` 根目录。`dist/` 根目录里的旧版本 `.dmg` 和 `.pkg` 会移动到 `dist/history/` 下对应的版本命名文件夹中；重复构建当前版本时会替换当前根目录安装包，不再额外备份。
+
+预期本地产物结构：
+
+```text
+dist/
+  codex_switch_<version>_<arch>.dmg
+  codex_switch_<version>_<arch>.pkg
+  history/
+    v<old-version>/
+      ...
+  web/
+    ...
+```
+
+## 版本与发布
+
+- 项目版本保存在 `package.json`，并同步到 Tauri 和 Cargo 元数据。
+- GitHub Release 标签使用完整语义版本号，例如 `1.5.3`。
+- 每个补丁版本单独创建一个 Release 标签。
+- 不要把补丁版本产物上传到旧的两段式标签下，例如不要继续把 `1.5.x` 上传到 `1.5`。
+- macOS 安装包作为 Release 资产发布，不提交到 Git。
+
+常用命令：
+
+```bash
+npm run version:sync
+npm run version:set -- 1.5.4
+```
+
+## macOS 兼容脚本
+
+通过兼容入口安装：
+
+```bash
 bash macOS-backup/install.sh
 source ~/.zshrc
 ```
 
-兼容安装入口支持三种模式：
+支持三种模式：
 
-- `auto`：默认模式，优先尝试原生桌面安装器，找不到时回退到 legacy shell 安装
-- `desktop`：强制使用原生桌面安装器，找不到就直接报错
-- `legacy`：强制使用原来的 shell 安装流程
+- `auto`：优先尝试原生桌面运行时，找不到时回退到 legacy shell 流程。
+- `desktop`：强制使用原生桌面运行时。
+- `legacy`：强制使用原来的 shell 版 `codex-switch.sh` 流程。
 
-示例：
-
-```bash
-bash macOS-backup/install.sh --mode auto
-bash macOS-backup/install.sh --mode desktop
-bash macOS-backup/install.sh --mode legacy
-```
-
-`desktop` 模式下，安装入口会：
-
-- 委托原生 `codex_switch` 安装器执行安装
-- 把原生运行时保存在 `~/.codex/account_backup/macos/`
-- 由原生运行时写入受管理的 `~/.codex/bin/codex` shim
-- 在 `~/.zshrc` 中注入 PATH 钩子，让 shell 优先使用受管理 shim
-
-`legacy` 模式下，安装入口保留原有 shell 行为：
-
-- 把 `macOS-backup/codex-switch.sh` 复制到 `~/.codex/account_backup/codex-switch.sh`
-- 创建 `~/.codex/account_backup/a` 到 `~/.codex/account_backup/d`
-- 为所有缺失的 `~/.codex/account_backup/<profile>/auth.json` 写入示例模板
-- 如果当前存在 `~/.codex/auth.json`，则复制到 `~/.codex/account_backup/a/auth.json`
-- 如果当前存在真实根目录 auth 且尚未设置激活账号，则初始化 `a` 为当前激活账号
-- 在 `~/.zshrc` 中注入 `codex()` wrapper
-
-## Windows 安装
-
-- 在仓库 release 中下载最新版本 .exe 桌面端应用
-
-## macOS 本地打包
-
-如果你要生成可拖拽安装的 `.dmg`：
-
-```bash
-npm run tauri:build:macos-dmg
-```
-
-构建完成后，产物默认位于：
-
-- `src-tauri/target/release/bundle/macos/codex_switch.app`
-- `src-tauri/target/release/bundle/macos/codex_switch_*.dmg`
-
-## macOS 使用
-
-```打开终端
-codex switch list  列出当前账号列表
-codex switch a     切换到目录 a 下的账号
-codex switch b     切换到目录 b 下的账号
-```
-
-如果你要新增默认 `a` 到 `d` 之外的账号目录，需要先手动创建目标目录，并放入有效的 `auth.json`，然后再执行切换。
-
-## macOS 卸载
+卸载：
 
 ```bash
 bash macOS-backup/uninstall.sh
@@ -103,8 +135,12 @@ bash macOS-backup/uninstall.sh --remove-script
 source ~/.zshrc
 ```
 
-兼容卸载入口同样支持 `--mode auto|desktop|legacy`。
+卸载脚本只移除受管理的命令接入层，不会删除账号备份目录；账号目录需要时手动清理。
 
-- `desktop` 模式会先清理原生 shell 钩子，再委托原生运行时卸载。
-- `legacy` 模式会移除旧的 shell wrapper 块。
-- 默认情况下，卸载脚本只删除受管理的命令接入层，不会删除你的账号目录。账号目录如果要清理，需要你手动删除。
+## Windows 安装
+
+在仓库 Releases 页面下载最新 Windows `.exe`。
+
+## 账号数据
+
+账号数据只保存在本机。导出的配置或账号备份可能包含 API Key 或认证数据，只应保存在可信设备上。

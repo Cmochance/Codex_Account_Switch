@@ -7,3 +7,4 @@ pub mod profiles_index;
 pub mod session_files;
 pub mod session_usage;
 pub mod switch_core;
+pub mod update;

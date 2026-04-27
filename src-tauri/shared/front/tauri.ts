@@ -9,6 +9,7 @@ import type {
   ProfilesSnapshotResponse,
   QuotaSummary,
   SwitchResponse,
+  UpdateCheckResponse,
 } from "@front-shared/types";
 
 type NativeCommandError = Error & {
@@ -134,7 +135,7 @@ let previewCurrentCard: CurrentCard = {
 let previewCurrentQuota: QuotaSummary = quota(84, "3小时后刷新", 61, "2天4小时后刷新");
 
 let previewSnapshot: ProfilesSnapshotResponse = {
-  page_size: 6,
+  page_size: 4,
   profiles: clone(previewProfiles),
   current_card: clone(previewCurrentCard),
   current_quota_card: clone(previewCurrentQuota),
@@ -150,7 +151,7 @@ function mockAction(message: string, path: string | null = null): Promise<Action
 
 function refreshPreviewSnapshot(): void {
   previewSnapshot = {
-    page_size: 6,
+    page_size: 4,
     profiles: clone(previewSnapshot.profiles),
     current_card: clone(previewCurrentCard),
     current_quota_card: clone(previewCurrentQuota),
@@ -298,6 +299,18 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
         }
         return mockAction("Cleared in preview mode") as Promise<T>;
       }
+      case "check_update":
+        return Promise.resolve({
+          ok: true,
+          current_version: "1.5.0",
+          latest_version: "1.5.0",
+          has_update: false,
+          release_url: "https://github.com/Cmochance/Codex_Account_Switch/releases",
+          notes: null,
+          checked_url: "preview",
+        }) as Promise<T>;
+      case "open_url":
+        return mockAction("Opened URL in preview mode", "preview:url") as Promise<T>;
       case "open_profile_folder":
       case "open_codex":
       case "login_current_profile":
@@ -381,6 +394,18 @@ export function openContact(): Promise<ActionResponse> {
 
 export function openReleases(): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("open_releases");
+}
+
+export function openUrl(url: string): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("open_url", {
+    payload: { url },
+  });
+}
+
+export function checkUpdate(updateUrl: string): Promise<UpdateCheckResponse> {
+  return invokeCommand<UpdateCheckResponse>("check_update", {
+    payload: { update_url: updateUrl },
+  });
 }
 
 export function openXiaohongshu(): Promise<ActionResponse> {

@@ -214,14 +214,12 @@ button.pager-pill:hover:not(:disabled) {
 }
 
 .profile-title-account {
-  font-family: var(--font-display);
-  line-height: 0.98;
-  letter-spacing: -0.014em;
-  color: var(--text-strong);
-}
-
-.profile-title-account {
-  font-size: clamp(2rem, 2.1vw, 2.375rem);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: 0;
+  color: var(--text-body);
   overflow-wrap: anywhere;
 }
 
@@ -430,8 +428,14 @@ button.pager-pill:disabled {
 }
 
 .current-account-topbar {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
+
+.current-account-heading {
+  min-width: 0;
 }
 
 .current-utility-cluster {

@@ -1,7 +1,7 @@
 {
   "name": "codex_switch",
   "private": true,
-  "version": "1.5.2",
+  "version": "1.5.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,11 @@
     "version:sync:release": "node scripts/version-sync.mjs --set-from-version-log src-tauri/target/release/version.md",
     "version:set": "node scripts/version-sync.mjs --set",
     "build": "npm run version:sync && tsc && vite build",
+    "macos:artifacts:prepare:app": "node scripts/macos-artifacts.mjs --phase=prepare --mode=app",
+    "macos:artifacts:prepare:release": "node scripts/macos-artifacts.mjs --phase=prepare --mode=release",
+    "macos:artifacts:finalize:app": "node scripts/macos-artifacts.mjs --phase=finalize --mode=app",
+    "macos:artifacts:finalize:release": "node scripts/macos-artifacts.mjs --phase=finalize --mode=release",
+    "macos:pkg": "node scripts/create-macos-pkg.mjs",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "check:rust:windows": "cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --lib",
@@ -19,7 +24,9 @@
     "tauri:build:windows": "npm run version:sync:release && tauri build --target x86_64-pc-windows-msvc",
     "tauri:build:portable": "npm run version:sync && tauri build --no-bundle",
     "tauri:build:windows:portable": "npm run version:sync && tauri build --target x86_64-pc-windows-msvc --no-bundle",
-    "tauri:build:macos-dmg": "npm run version:sync && tauri build --bundles app,dmg --no-sign && sh -c 'for f in src-tauri/target/release/bundle/dmg/*.dmg; do [ -e \"$f\" ] || exit 0; mv -f \"$f\" src-tauri/target/release/bundle/macos/; done'"
+    "tauri:build:macos-dmg": "npm run tauri:build:macos-release",
+    "tauri:build:macos-app": "npm run version:sync && npm run macos:artifacts:prepare:app && tauri build --bundles app --no-sign && npm run macos:artifacts:finalize:app",
+    "tauri:build:macos-release": "npm run version:sync && npm run macos:artifacts:prepare:release && tauri build --bundles app,dmg --no-sign && npm run macos:pkg && npm run macos:artifacts:finalize:release"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1"
