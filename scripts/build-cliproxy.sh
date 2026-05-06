@@ -16,15 +16,23 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
+# CLIProxyAPI lives outside this repo (docs/ is gitignored). Clone it on
+# first run so a fresh checkout — including CI runners — can build the
+# sidecar without manual prep.
+CLIPROXY_REPO_URL="${CLIPROXY_REPO_URL:-https://github.com/router-for-me/CLIProxyAPI.git}"
 if [[ ! -d "${SOURCE_DIR}" ]]; then
-  echo "[build-cliproxy] Source not found at ${SOURCE_DIR}." >&2
-  echo "                 Re-clone with: git clone --depth 1 https://github.com/router-for-me/CLIProxyAPI.git docs/CLIProxyAPI" >&2
-  exit 1
+  if ! command -v git >/dev/null 2>&1; then
+    echo "[build-cliproxy] git not available; cannot clone ${CLIPROXY_REPO_URL}." >&2
+    exit 1
+  fi
+  echo "[build-cliproxy] Source missing at ${SOURCE_DIR}; cloning from ${CLIPROXY_REPO_URL}." >&2
+  mkdir -p "$(dirname "${SOURCE_DIR}")"
+  git clone --depth 1 "${CLIPROXY_REPO_URL}" "${SOURCE_DIR}"
 fi
 
 mkdir -p "${OUTPUT_DIR}"
 
-resolve_triple() {
+resolve_host_triple() {
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) echo "aarch64-apple-darwin" ;;
     Darwin-x86_64) echo "x86_64-apple-darwin" ;;
@@ -34,29 +42,39 @@ resolve_triple() {
   esac
 }
 
-resolve_goarch() {
-  case "$(uname -m)" in
-    arm64|aarch64) echo "arm64" ;;
-    x86_64) echo "amd64" ;;
+# Derive Go's GOOS / GOARCH from the requested Rust target triple so that
+# `build-cliproxy.sh x86_64-apple-darwin` produced on an arm64 host still
+# cross-compiles to an Intel binary instead of relabeling a host build.
+goos_for_triple() {
+  case "$1" in
+    *darwin*)  echo "darwin" ;;
+    *linux*)   echo "linux" ;;
+    *windows*) echo "windows" ;;
     *) echo "" ;;
   esac
 }
 
-resolve_goos() {
-  case "$(uname -s)" in
-    Darwin) echo "darwin" ;;
-    Linux) echo "linux" ;;
+goarch_for_triple() {
+  case "$1" in
+    aarch64*|arm64*) echo "arm64" ;;
+    x86_64*|amd64*)  echo "amd64" ;;
     *) echo "" ;;
   esac
 }
 
 TRIPLE_OVERRIDE="${1:-}"
-TRIPLE="${TRIPLE_OVERRIDE:-$(resolve_triple)}"
-GOARCH_VALUE="$(resolve_goarch)"
-GOOS_VALUE="$(resolve_goos)"
+TRIPLE="${TRIPLE_OVERRIDE:-$(resolve_host_triple)}"
 
-if [[ -z "${TRIPLE}" || -z "${GOARCH_VALUE}" || -z "${GOOS_VALUE}" ]]; then
+if [[ -z "${TRIPLE}" ]]; then
   echo "[build-cliproxy] Unsupported host. Pass a Rust target triple as the first argument." >&2
+  exit 1
+fi
+
+GOOS_VALUE="$(goos_for_triple "${TRIPLE}")"
+GOARCH_VALUE="$(goarch_for_triple "${TRIPLE}")"
+
+if [[ -z "${GOOS_VALUE}" || -z "${GOARCH_VALUE}" ]]; then
+  echo "[build-cliproxy] Could not derive GOOS/GOARCH from triple '${TRIPLE}'." >&2
   exit 1
 fi
 

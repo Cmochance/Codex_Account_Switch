@@ -26,9 +26,24 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
+# CLIProxyAPI lives outside this repo (docs/ is gitignored). Clone it on
+# first run so a fresh checkout can build the sidecar without manual prep.
+$CliProxyRepoUrl = if ($env:CLIPROXY_REPO_URL) { $env:CLIPROXY_REPO_URL } else { "https://github.com/router-for-me/CLIProxyAPI.git" }
 if (-not (Test-Path $SourceDir)) {
-  Write-Error "Source not found at $SourceDir. Re-clone with: git clone --depth 1 https://github.com/router-for-me/CLIProxyAPI.git docs/CLIProxyAPI"
-  exit 1
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Error "git not available; cannot clone $CliProxyRepoUrl."
+    exit 1
+  }
+  Write-Host "[build-cliproxy] Source missing at $SourceDir; cloning from $CliProxyRepoUrl."
+  $parent = Split-Path -Parent $SourceDir
+  if (-not (Test-Path $parent)) {
+    New-Item -ItemType Directory -Path $parent | Out-Null
+  }
+  & git clone --depth 1 $CliProxyRepoUrl $SourceDir
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "git clone failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+  }
 }
 
 if (-not (Test-Path $OutputDir)) {

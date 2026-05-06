@@ -94,6 +94,11 @@ pub fn switch_profile_with_home<H: PlatformHooks + ?Sized>(
     hooks.sync_root_openai_base_url_for_profile(&profile_name, Some(&codex_home))?;
     set_active_marker(&profile_name, &backup_root)?;
     load_profiles_index(Some(&codex_home))?;
+    // Forwarding (when enabled) needs to see the new profile's auth tokens
+    // immediately so the in-flight sidecar doesn't keep using the previous
+    // profile's credentials. Best-effort: a sidecar hiccup does not roll back
+    // the switch we just performed.
+    super::gateway::refresh_auths_best_effort(Some(&codex_home));
     let warnings = hooks.reopen_codex_app_if_needed(app_was_running, Some(&codex_home));
 
     Ok(SwitchResponse {

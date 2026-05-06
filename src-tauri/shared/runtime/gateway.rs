@@ -706,15 +706,30 @@ pub fn update_settings(
 }
 
 /// Re-sync auths into the gateway directory. Useful after add/remove/refresh
-/// operations on profiles while forwarding is active.
-#[allow(dead_code)]
+/// operations on profiles while forwarding is active. No-op (returns 0) when
+/// forwarding is currently disabled.
 pub fn refresh_auths(codex_home: Option<&Path>) -> AppResult<u32> {
     let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
-    let state = read_state(&codex_home);
-    if !state.enabled {
+    if !read_state(&codex_home).enabled {
         return Ok(0);
     }
     sync_auths(&codex_home)
+}
+
+/// Best-effort variant of `refresh_auths` for command handlers that mutate
+/// profiles. Errors are swallowed so a sidecar hiccup does not block the
+/// caller's primary operation; the next refresh tick on the UI will surface
+/// any persistent issue.
+pub fn refresh_auths_best_effort(codex_home: Option<&Path>) {
+    let _ = refresh_auths(codex_home);
+}
+
+/// Cheap predicate exposing the persisted `enabled` flag without spinning
+/// anything up. Used by `config.rs` to gate per-profile root-URL writes when
+/// forwarding owns the root endpoint.
+pub fn is_enabled(codex_home: Option<&Path>) -> bool {
+    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    read_state(&codex_home).enabled
 }
 
 /// Gracefully shut down the sidecar (called on app exit). Does not change the

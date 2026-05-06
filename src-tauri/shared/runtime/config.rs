@@ -68,6 +68,21 @@ fn sync_root_openai_base_url_value(
     codex_home: Option<&Path>,
 ) -> AppResult<()> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
+    if super::gateway::is_enabled(Some(&codex_home)) {
+        // Forwarding owns the root URL while it is enabled; per-profile
+        // derivations would clobber the proxy endpoint. The gateway module
+        // writes its own value through `force_root_openai_base_url`, which
+        // bypasses this guard via the lower-level helper below.
+        return Ok(());
+    }
+    write_root_openai_base_url_value(desired_base_url, Some(&codex_home))
+}
+
+fn write_root_openai_base_url_value(
+    desired_base_url: Option<&str>,
+    codex_home: Option<&Path>,
+) -> AppResult<()> {
+    let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
     let config_path = get_root_config_path(Some(&codex_home));
     let current = fs::read_to_string(&config_path).unwrap_or_default();
     let mut lines = current
@@ -178,12 +193,14 @@ pub fn sync_root_openai_base_url_for_current_profile(codex_home: Option<&Path>) 
 /// Force the root config.toml `openai_base_url` to the supplied value.
 ///
 /// Pass `None` to remove the assignment. Used by the gateway module so the proxy
-/// endpoint stays in place regardless of which profile is active.
+/// endpoint stays in place regardless of which profile is active. This is the
+/// privileged write path that bypasses the gateway-enabled guard in
+/// `sync_root_openai_base_url_value`.
 pub fn force_root_openai_base_url(
     base_url: Option<&str>,
     codex_home: Option<&Path>,
 ) -> AppResult<()> {
-    sync_root_openai_base_url_value(base_url, codex_home)
+    write_root_openai_base_url_value(base_url, codex_home)
 }
 
 /// Read the current `openai_base_url` assignment out of the root config.toml.
