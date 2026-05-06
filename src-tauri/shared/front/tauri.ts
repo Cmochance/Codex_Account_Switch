@@ -180,6 +180,7 @@ function toError(error: unknown): Error {
 let previewGatewayStatus: GatewayStatus = {
   enabled: false,
   running: false,
+  listening: false,
   port: 8317,
   endpoint: "http://127.0.0.1:8317/v1",
   session_affinity: true,

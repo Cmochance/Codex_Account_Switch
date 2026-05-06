@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::errors::{AppError, AppResult};
 
@@ -41,12 +42,37 @@ pub fn remove_path(path: &Path) -> AppResult<()> {
     }
 }
 
-pub fn copy_entry(src: &Path, dst: &Path) -> AppResult<()> {
-    if src.is_dir() {
-        replace_tree(src, dst)
-    } else {
-        remove_path(dst)?;
-        if let Some(parent) = dst.parent() {
+/// Path used for the staging file inside an atomic write / copy. Sits next to
+/// the target so the final `fs::rename` stays on the same filesystem (a
+/// requirement for POSIX rename atomicity).
+fn atomic_temp_path(target: &Path) -> AppResult<PathBuf> {
+    let file_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            AppError::new(
+                "FS_INVALID_PATH",
+                format!(
+                    "Refusing to write to a path without a file name: {}",
+                    target.display()
+                ),
+            )
+        })?;
+    let pid = std::process::id();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    Ok(target.with_file_name(format!(".{file_name}.tmp.{pid}.{nonce}")))
+}
+
+/// Write `contents` to `target` atomically: stage to a sibling temp file then
+/// rename into place. Concurrent readers (e.g. the Codex VSCode extension
+/// watching `~/.codex/auth.json`) only ever see the previous full contents or
+/// the new full contents, never a half-written file.
+pub fn atomic_write_bytes(target: &Path, contents: impl AsRef<[u8]>) -> AppResult<()> {
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|error| {
                 AppError::new(
                     "FS_CREATE_FAILED",
@@ -57,18 +83,88 @@ pub fn copy_entry(src: &Path, dst: &Path) -> AppResult<()> {
                 )
             })?;
         }
+    }
 
-        fs::copy(src, dst).map_err(|error| {
-            AppError::new(
-                "FS_COPY_FAILED",
-                format!(
-                    "Failed to copy {} -> {}: {error}",
-                    src.display(),
-                    dst.display()
-                ),
-            )
-        })?;
-        Ok(())
+    let temp = atomic_temp_path(target)?;
+    let cleanup = || {
+        let _ = fs::remove_file(&temp);
+    };
+
+    if let Err(error) = fs::write(&temp, contents.as_ref()) {
+        cleanup();
+        return Err(AppError::new(
+            "FS_WRITE_FAILED",
+            format!("Failed to stage write to {}: {error}", temp.display()),
+        ));
+    }
+
+    fs::rename(&temp, target).map_err(|error| {
+        cleanup();
+        AppError::new(
+            "FS_WRITE_FAILED",
+            format!(
+                "Failed to publish atomic write {} -> {}: {error}",
+                temp.display(),
+                target.display()
+            ),
+        )
+    })
+}
+
+/// Atomic file-to-file copy that preserves the source mode (so e.g.
+/// `auth.json`'s 0600 permissions survive). Uses `fs::copy` for the staging
+/// step — `fs::copy` on POSIX preserves the mode of the source — followed by
+/// `fs::rename` to publish.
+pub fn atomic_copy_file(src: &Path, dst: &Path) -> AppResult<()> {
+    if let Some(parent) = dst.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|error| {
+                AppError::new(
+                    "FS_CREATE_FAILED",
+                    format!(
+                        "Failed to create parent directory {}: {error}",
+                        parent.display()
+                    ),
+                )
+            })?;
+        }
+    }
+
+    let temp = atomic_temp_path(dst)?;
+    let cleanup = || {
+        let _ = fs::remove_file(&temp);
+    };
+
+    if let Err(error) = fs::copy(src, &temp) {
+        cleanup();
+        return Err(AppError::new(
+            "FS_COPY_FAILED",
+            format!(
+                "Failed to stage copy {} -> {}: {error}",
+                src.display(),
+                temp.display()
+            ),
+        ));
+    }
+
+    fs::rename(&temp, dst).map_err(|error| {
+        cleanup();
+        AppError::new(
+            "FS_COPY_FAILED",
+            format!(
+                "Failed to publish atomic copy {} -> {}: {error}",
+                temp.display(),
+                dst.display()
+            ),
+        )
+    })
+}
+
+pub fn copy_entry(src: &Path, dst: &Path) -> AppResult<()> {
+    if src.is_dir() {
+        replace_tree(src, dst)
+    } else {
+        atomic_copy_file(src, dst)
     }
 }
 
@@ -218,24 +314,70 @@ pub fn set_active_marker(profile: &str, backup_root: &Path) -> AppResult<()> {
     }
 
     let marker = backup_root.join(profile).join(ACTIVE_MARKER_FILE);
-    fs::write(&marker, format!("activated_at={}\n", utc_timestamp())).map_err(|error| {
-        AppError::new(
-            "FS_WRITE_FAILED",
-            format!(
-                "Failed to write active marker {}: {error}",
-                marker.display()
-            ),
-        )
-    })?;
+    atomic_write_bytes(&marker, format!("activated_at={}\n", utc_timestamp()))?;
 
     let current_profile_file = get_current_profile_file(backup_root.parent());
-    fs::write(&current_profile_file, format!("{profile}\n")).map_err(|error| {
-        AppError::new(
-            "FS_WRITE_FAILED",
-            format!(
-                "Failed to write current profile marker {}: {error}",
-                current_profile_file.display()
-            ),
-        )
-    })
+    atomic_write_bytes(&current_profile_file, format!("{profile}\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{atomic_copy_file, atomic_write_bytes};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("codex-switch-fs-ops-{name}-{unique}"))
+    }
+
+    #[test]
+    fn atomic_write_bytes_creates_parent_and_replaces_existing() {
+        let root = temp_dir("atomic-write");
+        let target = root.join("nested").join("config.toml");
+        atomic_write_bytes(&target, b"first\n").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "first\n");
+
+        atomic_write_bytes(&target, b"second\n").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "second\n");
+
+        // No staging file should be left behind on success.
+        let parent = target.parent().unwrap();
+        let leftovers = fs::read_dir(parent)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".config.toml.tmp"))
+            .count();
+        assert_eq!(leftovers, 0);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn atomic_copy_file_round_trip_preserves_contents() {
+        let root = temp_dir("atomic-copy");
+        let src = root.join("auth.json");
+        let dst = root.join("dest").join("auth.json");
+        fs::create_dir_all(root.join("dest")).unwrap();
+        fs::write(&src, b"{\"auth_mode\":\"chatgpt\"}").unwrap();
+
+        atomic_copy_file(&src, &dst).unwrap();
+        assert_eq!(fs::read(&dst).unwrap(), b"{\"auth_mode\":\"chatgpt\"}");
+
+        // No staging file left behind.
+        let leftovers = fs::read_dir(dst.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".auth.json.tmp"))
+            .count();
+        assert_eq!(leftovers, 0);
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }

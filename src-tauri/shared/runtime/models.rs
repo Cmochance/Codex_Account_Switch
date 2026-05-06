@@ -182,8 +182,18 @@ pub struct ActionResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayStatus {
+    /// User intent: forwarding should be on. Persisted in `state.json`.
     pub enabled: bool,
+    /// Whether this app instance currently owns a sidecar `Child` handle.
+    /// May be `false` even when something is listening on the port (e.g.
+    /// after a GUI restart with an orphan sidecar).
     pub running: bool,
+    /// True when a TCP probe to `127.0.0.1:port` succeeds. This is the
+    /// authoritative signal for "is forwarding actually serving traffic
+    /// right now?" and is what downstream Codex clients ultimately depend
+    /// on. The UI surfaces this so users can tell `enabled but listening = false`
+    /// (sidecar died) apart from `enabled and listening` (healthy).
+    pub listening: bool,
     pub port: u16,
     pub endpoint: String,
     pub session_affinity: bool,
