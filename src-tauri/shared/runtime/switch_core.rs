@@ -83,7 +83,16 @@ pub fn switch_profile_with_home<H: PlatformHooks + ?Sized>(
         ));
     }
 
-    let app_was_running = hooks.quit_codex_app_if_running()?;
+    // When forwarding is active, the running Codex talks to the local
+    // sidecar instead of OpenAI directly, so the auth swap is enough — we
+    // must not quit/reopen the app. That bypass IS the value proposition of
+    // this feature; a restart here would defeat the whole point.
+    let gateway_active = super::gateway::is_enabled(Some(&codex_home));
+    let app_was_running = if gateway_active {
+        false
+    } else {
+        hooks.quit_codex_app_if_running()?
+    };
     let current_profile = resolve_current_profile(&backup_root);
     if let Some(current_profile) = current_profile.as_deref() {
         backup_root_state_to_profile(current_profile, &codex_home, &backup_root)?;
@@ -94,7 +103,16 @@ pub fn switch_profile_with_home<H: PlatformHooks + ?Sized>(
     hooks.sync_root_openai_base_url_for_profile(&profile_name, Some(&codex_home))?;
     set_active_marker(&profile_name, &backup_root)?;
     load_profiles_index(Some(&codex_home))?;
-    let warnings = hooks.reopen_codex_app_if_needed(app_was_running, Some(&codex_home));
+    // Forwarding (when enabled) needs to see the new profile's auth tokens
+    // immediately so the in-flight sidecar doesn't keep using the previous
+    // profile's credentials. Best-effort: a sidecar hiccup does not roll back
+    // the switch we just performed.
+    super::gateway::refresh_auths_best_effort(Some(&codex_home));
+    let warnings = if gateway_active {
+        Vec::new()
+    } else {
+        hooks.reopen_codex_app_if_needed(app_was_running, Some(&codex_home))
+    };
 
     Ok(SwitchResponse {
         ok: true,
@@ -119,6 +137,7 @@ mod tests {
 
     struct FakeHooks {
         app_was_running: bool,
+        quit_calls: Mutex<u32>,
         reopen_calls: Mutex<Vec<bool>>,
     }
 
@@ -126,6 +145,7 @@ mod tests {
         fn new(app_was_running: bool) -> Self {
             Self {
                 app_was_running,
+                quit_calls: Mutex::new(0),
                 reopen_calls: Mutex::new(Vec::new()),
             }
         }
@@ -137,6 +157,7 @@ mod tests {
         }
 
         fn quit_codex_app_if_running(&self) -> AppResult<bool> {
+            *self.quit_calls.lock().unwrap() += 1;
             Ok(self.app_was_running)
         }
 
@@ -208,6 +229,46 @@ mod tests {
         assert!(profile_b_dir.join(".active_profile").is_file());
         assert!(get_profiles_index_path(Some(&codex_home)).is_file());
         assert_eq!(*hooks.reopen_calls.lock().unwrap(), vec![true]);
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn switch_profile_skips_app_lifecycle_when_gateway_is_enabled() {
+        let codex_home = temp_codex_home("switch-gateway-on");
+        let backup_root = codex_home.join("account_backup");
+        let profile_a_dir = backup_root.join("a");
+        let profile_b_dir = backup_root.join("b");
+        let gateway_dir = backup_root.join("gateway");
+
+        fs::create_dir_all(&profile_a_dir).unwrap();
+        fs::create_dir_all(&profile_b_dir).unwrap();
+        fs::create_dir_all(&gateway_dir).unwrap();
+        fs::write(codex_home.join("auth.json"), "root-auth-before-switch\n").unwrap();
+        fs::write(profile_a_dir.join("auth.json"), "profile-a-auth\n").unwrap();
+        fs::write(profile_b_dir.join("auth.json"), "profile-b-auth\n").unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
+        // Mark the gateway as enabled so switch_core treats this as a
+        // forwarding-active session and skips the quit/reopen lifecycle.
+        fs::write(
+            gateway_dir.join("state.json"),
+            r#"{"enabled":true,"port":8317,"session_affinity":true,"strategy":"round-robin","external_base_url_backup":null}"#,
+        )
+        .unwrap();
+
+        let hooks = FakeHooks::new(true);
+        let response = switch_profile_with_home(&hooks, "b", Some(&codex_home)).unwrap();
+
+        assert!(response.ok);
+        assert_eq!(response.profile, "b");
+        // Auth swap still happens.
+        assert_eq!(
+            fs::read_to_string(codex_home.join("auth.json")).unwrap(),
+            "profile-b-auth\n"
+        );
+        // The platform lifecycle hooks must not run when forwarding is on.
+        assert_eq!(*hooks.quit_calls.lock().unwrap(), 0);
+        assert!(hooks.reopen_calls.lock().unwrap().is_empty());
 
         let _ = fs::remove_dir_all(&codex_home);
     }

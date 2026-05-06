@@ -10,6 +10,13 @@ use crate::macos as platform_runtime;
 #[cfg(not(target_os = "macos"))]
 use crate::windows as platform_runtime;
 
+/// Re-sync cliproxy auth files when forwarding is enabled. Called after every
+/// profile mutation that changes auth contents on disk. No-op when the gateway
+/// is off.
+fn after_auth_mutation() {
+    crate::shared::gateway::refresh_auths_best_effort(None);
+}
+
 #[tauri::command]
 pub fn open_codex() -> Result<ActionResponse, CommandError> {
     let path = platform_runtime::actions::open_codex_app()?;
@@ -23,6 +30,7 @@ pub fn open_codex() -> Result<ActionResponse, CommandError> {
 #[tauri::command]
 pub fn login_current_profile() -> Result<ActionResponse, CommandError> {
     let path = platform_runtime::actions::login_current_profile()?;
+    after_auth_mutation();
     Ok(ActionResponse {
         ok: true,
         message: "Logged in current profile.".to_string(),
@@ -40,6 +48,7 @@ pub async fn refresh_profile(payload: ProfilePayload) -> Result<ActionResponse, 
     .map_err(|error| {
         CommandError::new("REFRESH_FAILED", format!("Refresh task failed: {error}"))
     })??;
+    after_auth_mutation();
     Ok(ActionResponse {
         ok: true,
         message: "Refreshed profile auth.".to_string(),
@@ -51,6 +60,7 @@ pub async fn refresh_profile(payload: ProfilePayload) -> Result<ActionResponse, 
 pub fn rename_profile(payload: RenameProfilePayload) -> Result<ActionResponse, CommandError> {
     let path =
         platform_runtime::actions::rename_profile(&payload.profile, &payload.new_folder_name)?;
+    after_auth_mutation();
     Ok(ActionResponse {
         ok: true,
         message: "Renamed profile folder.".to_string(),
@@ -61,6 +71,7 @@ pub fn rename_profile(payload: RenameProfilePayload) -> Result<ActionResponse, C
 #[tauri::command]
 pub fn delete_profile(payload: ProfilePayload) -> Result<ActionResponse, CommandError> {
     let path = platform_runtime::actions::delete_profile(&payload.profile)?;
+    after_auth_mutation();
     Ok(ActionResponse {
         ok: true,
         message: "Deleted profile.".to_string(),
@@ -71,6 +82,7 @@ pub fn delete_profile(payload: ProfilePayload) -> Result<ActionResponse, Command
 #[tauri::command]
 pub fn clear_profile_account(payload: ProfilePayload) -> Result<ActionResponse, CommandError> {
     let path = platform_runtime::actions::clear_profile_account(&payload.profile)?;
+    after_auth_mutation();
     Ok(ActionResponse {
         ok: true,
         message: "Cleared profile account.".to_string(),
@@ -112,6 +124,7 @@ pub fn add_profile(payload: AddProfilePayload) -> Result<ActionResponse, Command
         &payload.folder_name,
         payload.openai_base_url.as_deref(),
     )?;
+    after_auth_mutation();
     Ok(ActionResponse {
         ok: true,
         message: "Created profile template.".to_string(),

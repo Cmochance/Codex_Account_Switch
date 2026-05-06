@@ -179,3 +179,25 @@ pub struct ActionResponse {
     pub message: String,
     pub path: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub port: u16,
+    pub endpoint: String,
+    pub session_affinity: bool,
+    pub strategy: String,
+    pub active_auths: u32,
+    pub last_error: Option<String>,
+    pub sidecar_available: bool,
+    pub config_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct GatewayUpdatePayload {
+    pub port: Option<u16>,
+    pub session_affinity: Option<bool>,
+    pub strategy: Option<String>,
+}
