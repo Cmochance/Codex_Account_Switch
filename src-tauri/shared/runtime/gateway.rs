@@ -237,7 +237,10 @@ fn parse_jwt_claims(jwt: &str) -> (String, String) {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let exp = claims.get("exp").and_then(Value::as_i64).unwrap_or_default();
+    let exp = claims
+        .get("exp")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
     let expired = if exp > 0 {
         Utc.timestamp_opt(exp, 0)
             .single()
@@ -526,10 +529,7 @@ fn spawn_sidecar_locked(
     let child = command.spawn().map_err(|error| {
         AppError::new(
             "GATEWAY_SPAWN_FAILED",
-            format!(
-                "Failed to spawn sidecar at {}: {error}",
-                binary.display()
-            ),
+            format!("Failed to spawn sidecar at {}: {error}", binary.display()),
         )
     })?;
     **slot = Some(child);
@@ -586,7 +586,10 @@ fn restore_root_url(state: &GatewayState, codex_home: &Path) -> AppResult<()> {
     }
 }
 
-fn build_status(codex_home: &Path, state: &GatewayState) -> AppResult<crate::models::GatewayStatus> {
+fn build_status(
+    codex_home: &Path,
+    state: &GatewayState,
+) -> AppResult<crate::models::GatewayStatus> {
     let mut slot = lock_process();
     let running = process_running(&mut slot);
     drop(slot);
@@ -608,7 +611,9 @@ fn build_status(codex_home: &Path, state: &GatewayState) -> AppResult<crate::mod
 
 /// Return the current gateway status without mutating any state.
 pub fn status(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     ensure_gateway_dirs(&codex_home)?;
     let state = read_state(&codex_home);
     build_status(&codex_home, &state)
@@ -626,7 +631,9 @@ pub fn status(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStat
 /// stays in place and downstream Codex clients keep working off the
 /// fallback while the user investigates.
 pub fn restore_on_startup(codex_home: Option<&Path>) -> AppResult<()> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     ensure_gateway_dirs(&codex_home)?;
     let mut state = read_state(&codex_home);
     if !state.enabled {
@@ -670,7 +677,9 @@ fn enable_internal(codex_home: &Path, state: &mut GatewayState) -> AppResult<()>
 
 /// Enable forwarding using the current persisted state (or defaults if none).
 pub fn enable(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let mut state = read_state(&codex_home);
     state.enabled = true;
     enable_internal(&codex_home, &mut state)?;
@@ -680,7 +689,9 @@ pub fn enable(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStat
 
 /// Disable forwarding, stop the sidecar, and restore the per-profile base URL.
 pub fn disable(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let mut state = read_state(&codex_home);
     state.enabled = false;
     shutdown_only();
@@ -697,7 +708,9 @@ pub fn update_settings(
     payload: crate::models::GatewayUpdatePayload,
     codex_home: Option<&Path>,
 ) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let mut state = read_state(&codex_home);
     if let Some(port) = payload.port {
         if port < 1024 {
@@ -737,7 +750,9 @@ pub fn update_settings(
 /// operations on profiles while forwarding is active. No-op (returns 0) when
 /// forwarding is currently disabled.
 pub fn refresh_auths(codex_home: Option<&Path>) -> AppResult<u32> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     if !read_state(&codex_home).enabled {
         return Ok(0);
     }
@@ -757,7 +772,9 @@ pub fn refresh_auths_best_effort(codex_home: Option<&Path>) {
 /// caller cares whether forwarding is currently serving traffic.
 #[allow(dead_code)]
 pub fn is_enabled(codex_home: Option<&Path>) -> bool {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     read_state(&codex_home).enabled
 }
 
@@ -783,7 +800,9 @@ pub fn is_listening(port: u16) -> bool {
 /// switch). When `enabled = true` but the sidecar is dead, `is_active`
 /// returns `false`, allowing fallbacks to restore a working configuration.
 pub fn is_active(codex_home: Option<&Path>) -> bool {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let state = read_state(&codex_home);
     state.enabled && is_listening(state.port)
 }
@@ -799,7 +818,9 @@ pub fn shutdown_for_exit() {
 /// back to either the captured external endpoint or per-profile values. Used
 /// by the UI "reset" button.
 pub fn force_recover(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let mut state = read_state(&codex_home);
     state.enabled = false;
     shutdown_only();
@@ -872,4 +893,3 @@ mod tests {
         let _ = fs::remove_dir_all(&codex_home);
     }
 }
-
