@@ -8,6 +8,7 @@ import {
 import {
   getCurrentLiveQuota,
   getProfilesSnapshot,
+  refreshActiveProfileQuotaSilent,
   refreshProfile,
 } from "@front-shared/tauri";
 import {
@@ -84,6 +85,27 @@ export async function refreshCurrentQuota(showError = false): Promise<void> {
     if (showError) {
       showToast(error instanceof Error ? error.message : "Failed to refresh quota.", true);
     }
+  }
+}
+
+/// Silent companion to `refreshCurrentQuota`. Asks the backend to ping the
+/// ChatGPT API for the active OAuth profile and apply the result on
+/// success. Backend is responsible for the staleness gate (>5 min) and for
+/// silently swallowing HTTP / parse / non-OAuth errors. Front-end just
+/// calls this on a 5-min ticker so the 5h-window remaining percent stays
+/// fresh even when the user hasn't run Codex recently.
+export async function refreshActiveQuotaSilently(): Promise<void> {
+  if (state.loading || !state.snapshot) {
+    return;
+  }
+
+  try {
+    applyCurrentQuota(await refreshActiveProfileQuotaSilent());
+    rerenderDashboard();
+  } catch {
+    // Intentional: silent. The legacy 15s JSONL polling continues to drive
+    // the visible quota so a transient network error here is invisible to
+    // the user.
   }
 }
 

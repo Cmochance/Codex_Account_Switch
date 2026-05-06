@@ -213,6 +213,7 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
       case "get_profiles_snapshot":
         return clone(previewSnapshot) as T;
       case "get_current_live_quota":
+      case "refresh_active_profile_quota_silent":
         return {
           profile: previewCurrentCard.folder_name,
           quota: clone(previewCurrentQuota),
@@ -397,6 +398,10 @@ export function getProfilesSnapshot(): Promise<ProfilesSnapshotResponse> {
 
 export function getCurrentLiveQuota(): Promise<CurrentQuotaResponse> {
   return invokeCommand<CurrentQuotaResponse>("get_current_live_quota");
+}
+
+export function refreshActiveProfileQuotaSilent(): Promise<CurrentQuotaResponse> {
+  return invokeCommand<CurrentQuotaResponse>("refresh_active_profile_quota_silent");
 }
 
 export function switchProfile(profile: string): Promise<SwitchResponse> {

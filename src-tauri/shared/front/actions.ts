@@ -9,6 +9,7 @@ import {
 } from "@front-shared/render";
 
 import {
+  refreshActiveQuotaSilently,
   refreshAllData,
   refreshCurrentQuota,
   rerenderDashboard,
@@ -150,6 +151,17 @@ export function bootstrap(): void {
   window.setInterval(() => {
     void refreshCurrentQuota();
   }, 15_000);
+
+  // Slower silent ticker (5 min) for the active OAuth profile. The backend
+  // ChatGPT-API path keeps the 5-hour-window remaining percent fresh even
+  // when the user hasn't run Codex recently, so the dashboard reflects
+  // real-time quota consumption rather than the last session's snapshot.
+  // Backend gates on >5 min staleness so this is at most one HTTP call
+  // per tick. Failures are silent — the 15s JSONL polling above keeps
+  // working as the visible source of truth.
+  window.setInterval(() => {
+    void refreshActiveQuotaSilently();
+  }, 5 * 60_000);
 
   // Probe the gateway backend silently before starting the 5s poll. When the
   // forwarding feature is not wired up yet (e.g. the backend PR has not
