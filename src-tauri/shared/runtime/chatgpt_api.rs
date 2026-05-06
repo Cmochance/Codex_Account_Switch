@@ -40,8 +40,58 @@ use serde_json::Value;
 use crate::errors::{AppError, AppResult};
 use crate::models::{QuotaSummary, QuotaWindow};
 
-use super::fs_ops::atomic_write_bytes;
 use super::paths::get_backup_root;
+
+// Lightweight atomic write — stage to a sibling temp file, fsync-free rename
+// into place. v1.5.3's `fs_ops` predates the shared `atomic_write_bytes`
+// helper; this inline version keeps `auth.json` writes from being torn while
+// avoiding a larger backport of the 1.6.x fs_ops module.
+fn atomic_write_bytes(target: &std::path::Path, contents: impl AsRef<[u8]>) -> AppResult<()> {
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                AppError::new(
+                    "FS_CREATE_FAILED",
+                    format!(
+                        "Failed to create parent directory {}: {error}",
+                        parent.display()
+                    ),
+                )
+            })?;
+        }
+    }
+    let mut temp = target.to_path_buf();
+    let suffix = format!(
+        ".{}.tmp",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let mut name = temp
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(&suffix);
+    temp.set_file_name(name);
+    if let Err(error) = std::fs::write(&temp, contents.as_ref()) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(AppError::new(
+            "FS_WRITE_FAILED",
+            format!("Failed to stage write to {}: {error}", temp.display()),
+        ));
+    }
+    std::fs::rename(&temp, target).map_err(|error| {
+        let _ = std::fs::remove_file(&temp);
+        AppError::new(
+            "FS_WRITE_FAILED",
+            format!(
+                "Failed to publish atomic write to {}: {error}",
+                target.display()
+            ),
+        )
+    })
+}
 
 const ISSUER: &str = "https://auth.openai.com";
 /// Public OAuth client id used by the ChatGPT desktop / Codex CLI flow.
