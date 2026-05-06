@@ -142,6 +142,64 @@
             <p class="page-copy" data-i18n-key="runtimeSubtitle">Front-end layout for runtime visibility before backend wiring.</p>
           </div>
 
+          <article class="settings-panel gateway-panel" id="gateway-panel">
+            <div class="gateway-header">
+              <div class="gateway-header-text">
+                <span class="setting-status" id="gateway-status-pill" data-gateway-pill="off" data-i18n-key="gatewayStatusOff">Off</span>
+                <strong id="gateway-title" data-i18n-key="gatewayTitle">Protocol Forwarding</strong>
+                <p id="gateway-subtitle" data-i18n-key="gatewaySubtitle">Run all profiles through a single local endpoint so Codex never has to restart.</p>
+              </div>
+              <label class="gateway-toggle">
+                <input type="checkbox" id="gateway-toggle-input" />
+                <span class="gateway-toggle-track" aria-hidden="true"></span>
+                <span class="gateway-toggle-text" id="gateway-toggle-label" data-i18n-key="gatewayToggleOff">Disabled</span>
+              </label>
+            </div>
+
+            <p class="gateway-warning" id="gateway-warning" hidden></p>
+
+            <div class="gateway-meta-grid">
+              <div class="gateway-meta">
+                <span class="gateway-meta-label" data-i18n-key="gatewayEndpoint">Endpoint</span>
+                <span class="gateway-meta-value" id="gateway-endpoint-value">--</span>
+              </div>
+              <div class="gateway-meta">
+                <span class="gateway-meta-label" data-i18n-key="gatewayActiveAuths">Active accounts</span>
+                <span class="gateway-meta-value" id="gateway-auths-value">--</span>
+              </div>
+              <div class="gateway-meta">
+                <span class="gateway-meta-label" data-i18n-key="gatewaySidecar">Sidecar</span>
+                <span class="gateway-meta-value" id="gateway-sidecar-value">--</span>
+              </div>
+              <div class="gateway-meta">
+                <span class="gateway-meta-label" data-i18n-key="gatewayConfigDir">Config dir</span>
+                <span class="gateway-meta-value gateway-meta-value--mono" id="gateway-config-dir-value">--</span>
+              </div>
+            </div>
+
+            <div class="gateway-controls">
+              <label class="gateway-field">
+                <span data-i18n-key="gatewayPortLabel">Port</span>
+                <input id="gateway-port-input" class="settings-input" type="number" min="1024" max="65535" inputmode="numeric" value="8317" />
+              </label>
+              <label class="gateway-field">
+                <span data-i18n-key="gatewayStrategyLabel">Routing</span>
+                <select id="gateway-strategy-select" class="settings-input">
+                  <option value="round-robin" data-i18n-key="gatewayStrategyRoundRobin">Round robin</option>
+                  <option value="fill-first" data-i18n-key="gatewayStrategyFillFirst">Fill first</option>
+                </select>
+              </label>
+              <label class="gateway-field gateway-field--inline">
+                <input type="checkbox" id="gateway-affinity-input" />
+                <span data-i18n-key="gatewayAffinityLabel">Session affinity</span>
+              </label>
+              <button class="ghost-button" type="button" id="gateway-apply-button" data-i18n-key="gatewayApply">Apply</button>
+              <button class="ghost-button" type="button" id="gateway-recover-button" data-i18n-key="gatewayRecover">Reset</button>
+            </div>
+
+            <p class="gateway-footnote" id="gateway-footnote" data-i18n-key="gatewayFootnote">Only ChatGPT/OAuth profiles route through the gateway today. API-key profiles keep using the existing switch flow.</p>
+          </article>
+
           <div class="settings-grid runtime-grid">
             <article class="setting-card">
               <span class="setting-status is-live" data-i18n-key="runtimeDraftStatus">UI draft</span>
@@ -310,7 +368,7 @@
             autocomplete="off"
             placeholder="https://example.com/v1"
           />
-          <span id="add-base-url-copy" class="field-copy warning-copy">非 API 账号添加 Base Url 会导致账号失效，清空后可恢复。</span>
+          <span id="add-base-url-copy" class="field-copy">Must start with http:// or https://. Only fill this for API KEY logins, otherwise Codex will fail.</span>
         </label>
 
         <p id="dialog-error" class="dialog-error" hidden></p>
@@ -347,15 +405,15 @@
       <div class="dialog-form">
         <div class="dialog-copy">
           <h3 id="delete-profile-dialog-title">Delete Profile</h3>
-          <p id="delete-profile-dialog-copy">请确认彻底删除卡片还是仅清空卡片绑定的账号。</p>
+          <p id="delete-profile-dialog-copy">Please confirm whether to permanently delete this card or only clear the account bound to it.</p>
         </div>
 
         <p id="delete-profile-dialog-error" class="dialog-error" hidden></p>
 
         <div class="dialog-actions dialog-actions-wide">
-          <button id="delete-profile-button" class="ghost-button danger-button" type="button">删除卡片</button>
-          <button id="clear-profile-account-button" class="ghost-button" type="button">清空账号</button>
-          <button id="cancel-delete-profile-button" class="primary-button" type="button">取消</button>
+          <button id="delete-profile-button" class="ghost-button danger-button" type="button">Delete Card</button>
+          <button id="clear-profile-account-button" class="ghost-button" type="button">Clear Account</button>
+          <button id="cancel-delete-profile-button" class="primary-button" type="button">Cancel</button>
         </div>
       </div>
     </dialog>
@@ -364,7 +422,7 @@
       <form id="base-url-form" class="dialog-form" method="dialog">
         <div class="dialog-copy">
           <h3 id="base-url-dialog-title">Custom Base Url</h3>
-          <p id="base-url-dialog-copy" class="warning-copy">非 API 账号添加 Base Url 会导致账号失效，清空后可恢复。</p>
+          <p id="base-url-dialog-copy">Must start with http:// or https://. Only fill this for API KEY logins, otherwise Codex will fail.</p>
         </div>
 
         <label class="field">

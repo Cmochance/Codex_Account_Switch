@@ -6,9 +6,7 @@
     "moduleResolution": "Bundler",
     "baseUrl": ".",
     "paths": {
-      "@front-shared/*": ["src-tauri/shared/front/*"],
-      "@win-front/*": ["src-tauri/win/front/*"],
-      "@mac-front/*": ["src-tauri/mac/front/*"]
+      "@front-shared/*": ["src-tauri/shared/front/*"]
     },
     "strict": true,
     "resolveJsonModule": true,
@@ -18,5 +16,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src-tauri/win/front", "src-tauri/mac/front", "src-tauri/shared/front"]
+  "include": ["src-tauri/shared/front"]
 }

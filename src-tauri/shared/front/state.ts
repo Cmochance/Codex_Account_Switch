@@ -1,4 +1,4 @@
-import type { ProfilesSnapshotResponse, QuotaSummary, ShellRoute } from "@front-shared/types";
+import type { GatewayStatus, ProfilesSnapshotResponse, QuotaSummary, ShellRoute } from "@front-shared/types";
 import type { Locale } from "@front-shared/i18n";
 import type { ThemeId } from "@front-shared/theme";
 
@@ -15,4 +15,6 @@ export const state = {
   pageSize: 4,
   snapshot: null as ProfilesSnapshotResponse | null,
   currentQuota: null as QuotaSummary | null,
+  gateway: null as GatewayStatus | null,
+  gatewayBusy: false,
 };

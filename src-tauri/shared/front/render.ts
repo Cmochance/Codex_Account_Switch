@@ -1,6 +1,7 @@
 import type {
   CurrentCard,
   DashboardViewModel,
+  GatewayStatus,
   PagingInfo,
   ProfileCard,
   QuotaSummary,
@@ -123,6 +124,23 @@ export const elements = {
   dashboardProfileCount: requiredElement<HTMLElement>("dashboard-profile-count"),
   dashboardReadyCount: requiredElement<HTMLElement>("dashboard-ready-count"),
   dashboardMissingCount: requiredElement<HTMLElement>("dashboard-missing-count"),
+  gatewayPanel: requiredElement<HTMLElement>("gateway-panel"),
+  gatewayStatusPill: requiredElement<HTMLElement>("gateway-status-pill"),
+  gatewayTitle: requiredElement<HTMLElement>("gateway-title"),
+  gatewaySubtitle: requiredElement<HTMLElement>("gateway-subtitle"),
+  gatewayToggleInput: requiredElement<HTMLInputElement>("gateway-toggle-input"),
+  gatewayToggleLabel: requiredElement<HTMLElement>("gateway-toggle-label"),
+  gatewayWarning: requiredElement<HTMLElement>("gateway-warning"),
+  gatewayEndpointValue: requiredElement<HTMLElement>("gateway-endpoint-value"),
+  gatewayAuthsValue: requiredElement<HTMLElement>("gateway-auths-value"),
+  gatewaySidecarValue: requiredElement<HTMLElement>("gateway-sidecar-value"),
+  gatewayConfigDirValue: requiredElement<HTMLElement>("gateway-config-dir-value"),
+  gatewayPortInput: requiredElement<HTMLInputElement>("gateway-port-input"),
+  gatewayStrategySelect: requiredElement<HTMLSelectElement>("gateway-strategy-select"),
+  gatewayAffinityInput: requiredElement<HTMLInputElement>("gateway-affinity-input"),
+  gatewayApplyButton: requiredElement<HTMLButtonElement>("gateway-apply-button"),
+  gatewayRecoverButton: requiredElement<HTMLButtonElement>("gateway-recover-button"),
+  gatewayFootnote: requiredElement<HTMLElement>("gateway-footnote"),
 };
 
 function formatPercent(value: number | null): string {
@@ -562,4 +580,66 @@ export function applyLocale(): void {
   elements.submitRenameProfileButton.textContent = t(state.locale, "rename");
   elements.cancelBaseUrlButton.textContent = t(state.locale, "cancel");
   elements.submitBaseUrlButton.textContent = t(state.locale, "save");
+  elements.gatewayApplyButton.textContent = t(state.locale, "gatewayApply");
+  elements.gatewayRecoverButton.textContent = t(state.locale, "gatewayRecover");
+  for (const option of Array.from(elements.gatewayStrategySelect.options)) {
+    const key = option.dataset.i18nKey as MessageKey | undefined;
+    if (key) {
+      option.textContent = t(state.locale, key);
+    }
+  }
+  if (state.gateway) {
+    renderGateway(state.gateway);
+  }
+}
+
+export function renderGateway(status: GatewayStatus): void {
+  const { gatewayStatusPill, gatewayToggleInput, gatewayToggleLabel } = elements;
+  const pillKey = !status.sidecar_available && status.enabled
+    ? "gatewayStatusError"
+    : status.running
+      ? "gatewayStatusOn"
+      : status.enabled
+        ? "gatewayStatusError"
+        : "gatewayStatusOff";
+  gatewayStatusPill.textContent = t(state.locale, pillKey);
+  gatewayStatusPill.dataset.gatewayPill = status.running ? "on" : status.enabled ? "error" : "off";
+  gatewayStatusPill.classList.toggle("is-live", status.running);
+
+  gatewayToggleInput.checked = status.enabled;
+  gatewayToggleLabel.textContent = t(state.locale, status.enabled ? "gatewayToggleOn" : "gatewayToggleOff");
+
+  elements.gatewayEndpointValue.textContent = status.endpoint;
+  elements.gatewayAuthsValue.textContent = String(status.active_auths);
+  elements.gatewaySidecarValue.textContent = t(
+    state.locale,
+    status.sidecar_available ? "gatewaySidecarReady" : "gatewaySidecarMissing",
+  );
+  elements.gatewayConfigDirValue.textContent = status.config_dir;
+  elements.gatewayConfigDirValue.title = status.config_dir;
+
+  if (document.activeElement !== elements.gatewayPortInput) {
+    elements.gatewayPortInput.value = String(status.port);
+  }
+  if (document.activeElement !== elements.gatewayStrategySelect) {
+    elements.gatewayStrategySelect.value = status.strategy;
+  }
+  if (document.activeElement !== elements.gatewayAffinityInput) {
+    elements.gatewayAffinityInput.checked = status.session_affinity;
+  }
+
+  const warningParts: string[] = [];
+  if (!status.sidecar_available) {
+    warningParts.push(t(state.locale, "gatewayWarningSidecarMissing"));
+  }
+  if (status.last_error) {
+    warningParts.push(status.last_error);
+  }
+  if (warningParts.length === 0) {
+    elements.gatewayWarning.hidden = true;
+    elements.gatewayWarning.textContent = "";
+  } else {
+    elements.gatewayWarning.hidden = false;
+    elements.gatewayWarning.textContent = warningParts.join(" · ");
+  }
 }

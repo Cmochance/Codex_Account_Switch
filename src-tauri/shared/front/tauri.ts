@@ -5,6 +5,8 @@ import type {
   CommandError,
   CurrentCard,
   CurrentQuotaResponse,
+  GatewayStatus,
+  GatewayUpdatePayload,
   ProfileCard,
   ProfilesSnapshotResponse,
   QuotaSummary,
@@ -175,6 +177,35 @@ function toError(error: unknown): Error {
   return new Error("Unknown native command error.");
 }
 
+let previewGatewayStatus: GatewayStatus = {
+  enabled: false,
+  running: false,
+  port: 8317,
+  endpoint: "http://127.0.0.1:8317/v1",
+  session_affinity: true,
+  strategy: "round-robin",
+  active_auths: 0,
+  last_error: null,
+  sidecar_available: false,
+  config_dir: "(preview)",
+};
+
+function applyPreviewGatewayUpdate(payload: GatewayUpdatePayload | undefined): GatewayStatus {
+  if (payload) {
+    if (typeof payload.port === "number") {
+      previewGatewayStatus.port = payload.port;
+      previewGatewayStatus.endpoint = `http://127.0.0.1:${payload.port}/v1`;
+    }
+    if (typeof payload.session_affinity === "boolean") {
+      previewGatewayStatus.session_affinity = payload.session_affinity;
+    }
+    if (typeof payload.strategy === "string" && payload.strategy.length > 0) {
+      previewGatewayStatus.strategy = payload.strategy;
+    }
+  }
+  return clone(previewGatewayStatus);
+}
+
 async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!hasTauriRuntime) {
     switch (command) {
@@ -319,6 +350,34 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
       case "open_contact":
       case "open_xiaohongshu":
         return mockAction(`${command} completed in preview mode`) as Promise<T>;
+      case "get_gateway_status":
+        return clone(previewGatewayStatus) as T;
+      case "enable_gateway":
+        previewGatewayStatus = {
+          ...previewGatewayStatus,
+          enabled: true,
+          running: false,
+          last_error: "Sidecar not installed in preview mode.",
+        };
+        return clone(previewGatewayStatus) as T;
+      case "disable_gateway":
+        previewGatewayStatus = {
+          ...previewGatewayStatus,
+          enabled: false,
+          running: false,
+          last_error: null,
+        };
+        return clone(previewGatewayStatus) as T;
+      case "update_gateway_settings":
+        return applyPreviewGatewayUpdate(args?.payload as GatewayUpdatePayload | undefined) as T;
+      case "recover_gateway":
+        previewGatewayStatus = {
+          ...previewGatewayStatus,
+          enabled: false,
+          running: false,
+          last_error: null,
+        };
+        return clone(previewGatewayStatus) as T;
       default:
         return Promise.reject(new Error(`Unsupported preview command: ${command}`));
     }
@@ -410,4 +469,24 @@ export function checkUpdate(updateUrl: string): Promise<UpdateCheckResponse> {
 
 export function openXiaohongshu(): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("open_xiaohongshu");
+}
+
+export function getGatewayStatus(): Promise<GatewayStatus> {
+  return invokeCommand<GatewayStatus>("get_gateway_status");
+}
+
+export function enableGateway(): Promise<GatewayStatus> {
+  return invokeCommand<GatewayStatus>("enable_gateway");
+}
+
+export function disableGateway(): Promise<GatewayStatus> {
+  return invokeCommand<GatewayStatus>("disable_gateway");
+}
+
+export function updateGatewaySettings(payload: GatewayUpdatePayload): Promise<GatewayStatus> {
+  return invokeCommand<GatewayStatus>("update_gateway_settings", { payload });
+}
+
+export function recoverGateway(): Promise<GatewayStatus> {
+  return invokeCommand<GatewayStatus>("recover_gateway");
 }
