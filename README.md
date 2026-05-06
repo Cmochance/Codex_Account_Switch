@@ -162,6 +162,20 @@ source ~/.zshrc
 
 在仓库 Releases 页面下载最新 Windows `.exe`。
 
+## 故障排查
+
+### 切号后 VSCode / Codex 扩展无法连接
+
+绝大多数情况下问题出在 Gateway（协议转发）状态。打开 GUI 的 Runtime 页查看「转发」面板：
+
+- **`Off` 但 VSCode 仍连不上**：检查 `~/.codex/config.toml` 的 `openai_base_url` 是否还指向某个 `127.0.0.1:<端口>`。如果是，说明之前启用 Gateway 时备份的外部 endpoint 没成功还原 — 把这一行手动删掉，然后重启 VSCode。
+- **`On` 但状态徽章是红色 / 警告 "未监听"**：sidecar 进程死了（系统 OOM、端口被抢占、二进制不存在等）。点击「重置」让本应用还原 root URL，再点切换让 VSCode 用直连 OpenAI；想恢复转发就重新打开开关。
+- **`On` 状态正常但仍报错**：可能是 sidecar 还没读到新切号的 auth.json（≤5s 窗口）。等几秒重试；持续失败查看 `~/.codex/account_backup/gateway/cliproxy.log`。
+
+### 切号失败：`SWITCH_IN_PROGRESS`
+
+旧版 GUI 强退后可能留下 `~/.codex/account_backup/.switch.lock`。1.6.0 起会自动清理超过 60 秒的陈旧锁；如果你在更早的版本碰到这个错误，手动删除该文件即可。
+
 ## 账号数据
 
 账号数据只保存在本机。导出的配置或账号备份可能包含 API Key 或认证数据，只应保存在可信设备上。

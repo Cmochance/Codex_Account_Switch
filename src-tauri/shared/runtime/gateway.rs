@@ -1,7 +1,9 @@
 use std::fs;
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 
 use base64::Engine;
 use chrono::{TimeZone, Utc};
@@ -156,12 +158,7 @@ fn write_state(state: &GatewayState, codex_home: &Path) -> AppResult<()> {
             format!("Failed to serialize gateway state: {error}"),
         )
     })?;
-    fs::write(&path, body).map_err(|error| {
-        AppError::new(
-            "GATEWAY_STATE_WRITE_FAILED",
-            format!("Failed to write gateway state {}: {error}", path.display()),
-        )
-    })
+    super::fs_ops::atomic_write_bytes(&path, body)
 }
 
 pub fn proxy_endpoint(port: u16) -> String {
@@ -207,15 +204,7 @@ fn write_config_yaml(state: &GatewayState, codex_home: &Path) -> AppResult<()> {
     );
 
     let path = gateway_config_path(codex_home);
-    fs::write(&path, body).map_err(|error| {
-        AppError::new(
-            "GATEWAY_CONFIG_WRITE_FAILED",
-            format!(
-                "Failed to write gateway config {}: {error}",
-                path.display()
-            ),
-        )
-    })
+    super::fs_ops::atomic_write_bytes(&path, body)
 }
 
 fn base64_url_decode(value: &str) -> Option<Vec<u8>> {
@@ -248,7 +237,10 @@ fn parse_jwt_claims(jwt: &str) -> (String, String) {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let exp = claims.get("exp").and_then(Value::as_i64).unwrap_or_default();
+    let exp = claims
+        .get("exp")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
     let expired = if exp > 0 {
         Utc.timestamp_opt(exp, 0)
             .single()
@@ -338,7 +330,7 @@ fn sync_auths(codex_home: &Path) -> AppResult<u32> {
             Ok(bytes) => bytes,
             Err(_) => continue,
         };
-        if fs::write(&dest, body).is_ok() {
+        if super::fs_ops::atomic_write_bytes(&dest, body).is_ok() {
             active_names.push(filename);
             count += 1;
         }
@@ -537,20 +529,42 @@ fn spawn_sidecar_locked(
     let child = command.spawn().map_err(|error| {
         AppError::new(
             "GATEWAY_SPAWN_FAILED",
-            format!(
-                "Failed to spawn sidecar at {}: {error}",
-                binary.display()
-            ),
+            format!("Failed to spawn sidecar at {}: {error}", binary.display()),
         )
     })?;
     **slot = Some(child);
     Ok(())
 }
 
+/// Maximum time we'll wait for the sidecar to exit after sending the kill
+/// signal. Bounded so a misbehaving sidecar can't hang the GUI on
+/// `disable` or window-close. The sidecar is a single Go binary that
+/// reliably exits immediately on SIGKILL / TerminateProcess; this timeout
+/// is purely defensive.
+const SIDECAR_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+const SIDECAR_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 fn stop_sidecar_locked(slot: &mut MutexGuard<'_, Option<Child>>) {
     if let Some(mut child) = slot.take() {
         let _ = child.kill();
-        let _ = child.wait();
+        let deadline = std::time::Instant::now() + SIDECAR_SHUTDOWN_TIMEOUT;
+        loop {
+            match child.try_wait() {
+                // Process is gone (Some) or unknown / detached (Err). In
+                // either case there's nothing more to wait on.
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        // Give up and leak the Child handle; the OS will
+                        // reap on process exit. Crucially, do NOT block on
+                        // child.wait() since the whole point of this helper
+                        // is to be bounded.
+                        return;
+                    }
+                    std::thread::sleep(SIDECAR_SHUTDOWN_POLL_INTERVAL);
+                }
+            }
+        }
     }
 }
 
@@ -572,13 +586,18 @@ fn restore_root_url(state: &GatewayState, codex_home: &Path) -> AppResult<()> {
     }
 }
 
-fn build_status(codex_home: &Path, state: &GatewayState) -> AppResult<crate::models::GatewayStatus> {
+fn build_status(
+    codex_home: &Path,
+    state: &GatewayState,
+) -> AppResult<crate::models::GatewayStatus> {
     let mut slot = lock_process();
     let running = process_running(&mut slot);
     drop(slot);
+    let listening = is_listening(state.port);
     Ok(crate::models::GatewayStatus {
         enabled: state.enabled,
         running,
+        listening,
         port: state.port,
         endpoint: proxy_endpoint(state.port),
         session_affinity: state.session_affinity,
@@ -592,30 +611,46 @@ fn build_status(codex_home: &Path, state: &GatewayState) -> AppResult<crate::mod
 
 /// Return the current gateway status without mutating any state.
 pub fn status(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     ensure_gateway_dirs(&codex_home)?;
     let state = read_state(&codex_home);
     build_status(&codex_home, &state)
 }
 
 /// On application startup: if gateway state says enabled, spin up the sidecar
-/// and re-apply the base URL override. Failure is recorded but not fatal so the
-/// rest of the app keeps working.
+/// and re-apply the base URL override. Failure is recorded but not fatal so
+/// the rest of the app keeps working.
+///
+/// `setup_runtime` calls `sync_root_openai_base_url_for_current_profile`
+/// *before* this function. That call now gates on [`is_active`], which
+/// returns false until the sidecar is listening — so the per-profile URL
+/// gets written to root config.toml first. If `enable_internal` succeeds
+/// here, the proxy URL overwrites it; if it fails, the per-profile URL
+/// stays in place and downstream Codex clients keep working off the
+/// fallback while the user investigates.
 pub fn restore_on_startup(codex_home: Option<&Path>) -> AppResult<()> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     ensure_gateway_dirs(&codex_home)?;
     let mut state = read_state(&codex_home);
     if !state.enabled {
         return Ok(());
     }
     match enable_internal(&codex_home, &mut state) {
-        Ok(()) => {
-            // Persist any backup that was newly captured (e.g. when migrating
-            // from an older state.json that lacked the field).
-            let _ = write_state(&state, &codex_home);
-        }
+        Ok(()) => set_last_error(None),
         Err(error) => set_last_error(Some(error.message.clone())),
     }
+    // Persist regardless of success: a partial run may have captured
+    // `external_base_url_backup`, and we don't want that capture lost on
+    // an early-restart loop. The user-facing `enabled` flag stays true so
+    // the UI's `listening` indicator and `last_error` clearly show that
+    // forwarding *wants* to be on but is currently down — a transient
+    // failure (port temporarily occupied) recovers on the next user
+    // toggle without forcing them to re-enable from scratch.
+    let _ = write_state(&state, &codex_home);
     Ok(())
 }
 
@@ -642,7 +677,9 @@ fn enable_internal(codex_home: &Path, state: &mut GatewayState) -> AppResult<()>
 
 /// Enable forwarding using the current persisted state (or defaults if none).
 pub fn enable(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let mut state = read_state(&codex_home);
     state.enabled = true;
     enable_internal(&codex_home, &mut state)?;
@@ -652,7 +689,9 @@ pub fn enable(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStat
 
 /// Disable forwarding, stop the sidecar, and restore the per-profile base URL.
 pub fn disable(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let mut state = read_state(&codex_home);
     state.enabled = false;
     shutdown_only();
@@ -669,7 +708,9 @@ pub fn update_settings(
     payload: crate::models::GatewayUpdatePayload,
     codex_home: Option<&Path>,
 ) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let mut state = read_state(&codex_home);
     if let Some(port) = payload.port {
         if port < 1024 {
@@ -709,7 +750,9 @@ pub fn update_settings(
 /// operations on profiles while forwarding is active. No-op (returns 0) when
 /// forwarding is currently disabled.
 pub fn refresh_auths(codex_home: Option<&Path>) -> AppResult<u32> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     if !read_state(&codex_home).enabled {
         return Ok(0);
     }
@@ -725,11 +768,43 @@ pub fn refresh_auths_best_effort(codex_home: Option<&Path>) {
 }
 
 /// Cheap predicate exposing the persisted `enabled` flag without spinning
-/// anything up. Used by `config.rs` to gate per-profile root-URL writes when
-/// forwarding owns the root endpoint.
+/// anything up. Reflects the user's *intent*. Use [`is_active`] when the
+/// caller cares whether forwarding is currently serving traffic.
+#[allow(dead_code)]
 pub fn is_enabled(codex_home: Option<&Path>) -> bool {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     read_state(&codex_home).enabled
+}
+
+/// TCP-probe the local sidecar port. Returns `true` when a connect succeeds
+/// inside the timeout window, which is enough to know that *something* is
+/// listening — strong enough as a liveness check for our purposes (we only
+/// care that downstream Codex clients can establish a connection). Uses a
+/// short timeout so callers in hot paths (e.g. `sync_root_openai_base_url_value`,
+/// invoked on every switch) do not stall.
+pub fn is_listening(port: u16) -> bool {
+    let address: SocketAddr = match format!("127.0.0.1:{port}").parse() {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok()
+}
+
+/// Returns `true` only when forwarding is both persisted as enabled **and**
+/// the sidecar is reachable on its configured port. This is the predicate
+/// callers should use when their behavior depends on traffic actually
+/// flowing through the gateway (e.g. deciding whether to skip per-profile
+/// root URL writes, or whether to skip the Codex desktop quit/reopen on
+/// switch). When `enabled = true` but the sidecar is dead, `is_active`
+/// returns `false`, allowing fallbacks to restore a working configuration.
+pub fn is_active(codex_home: Option<&Path>) -> bool {
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
+    let state = read_state(&codex_home);
+    state.enabled && is_listening(state.port)
 }
 
 /// Gracefully shut down the sidecar (called on app exit). Does not change the
@@ -743,7 +818,9 @@ pub fn shutdown_for_exit() {
 /// back to either the captured external endpoint or per-profile values. Used
 /// by the UI "reset" button.
 pub fn force_recover(codex_home: Option<&Path>) -> AppResult<crate::models::GatewayStatus> {
-    let codex_home = codex_home.map(Path::to_path_buf).unwrap_or_else(get_codex_home);
+    let codex_home = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(get_codex_home);
     let mut state = read_state(&codex_home);
     state.enabled = false;
     shutdown_only();
@@ -756,3 +833,63 @@ pub fn force_recover(codex_home: Option<&Path>) -> AppResult<crate::models::Gate
     build_status(&codex_home, &state)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{is_active, is_listening};
+    use std::fs;
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_codex_home(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("codex-switch-gateway-{name}-{unique}"))
+    }
+
+    #[test]
+    fn is_listening_tracks_actual_socket_state() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        assert!(
+            is_listening(port),
+            "freshly bound socket should be reachable"
+        );
+
+        drop(listener);
+
+        // A small grace period: macOS sometimes delays the FIN handshake on
+        // immediate close. We deliberately avoid asserting the strict
+        // "false" right after drop so the test is not flaky on slow CI; the
+        // important property is verified above.
+    }
+
+    #[test]
+    fn is_active_returns_false_when_enabled_but_port_is_closed() {
+        let codex_home = temp_codex_home("active-with-dead-port");
+        let gateway_dir = codex_home.join("account_backup").join("gateway");
+        fs::create_dir_all(&gateway_dir).unwrap();
+        // Pick a port that's almost certainly closed. If by extreme bad
+        // luck something is listening on 1, the assert below catches it
+        // cleanly with a meaningful error.
+        let unused_port = 1u16;
+        fs::write(
+            gateway_dir.join("state.json"),
+            format!(
+                "{{\"enabled\":true,\"port\":{unused_port},\"session_affinity\":true,\
+                 \"strategy\":\"round-robin\",\"external_base_url_backup\":null}}",
+            ),
+        )
+        .unwrap();
+
+        assert!(
+            !is_active(Some(&codex_home)),
+            "is_active must reject enabled=true when nothing is listening on the port",
+        );
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+}

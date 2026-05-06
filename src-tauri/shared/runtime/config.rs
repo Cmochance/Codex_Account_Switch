@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::{AppError, AppResult};
 
+use super::fs_ops::atomic_write_bytes;
 use super::metadata::load_profile_metadata;
 use super::paths::{get_backup_root, get_codex_home, get_root_config_path, validate_profile_name};
 use super::profiles::resolve_current_profile;
@@ -68,11 +69,15 @@ fn sync_root_openai_base_url_value(
     codex_home: Option<&Path>,
 ) -> AppResult<()> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
-    if super::gateway::is_enabled(Some(&codex_home)) {
-        // Forwarding owns the root URL while it is enabled; per-profile
-        // derivations would clobber the proxy endpoint. The gateway module
-        // writes its own value through `force_root_openai_base_url`, which
-        // bypasses this guard via the lower-level helper below.
+    if super::gateway::is_active(Some(&codex_home)) {
+        // Forwarding owns the root URL while it is *actively* serving
+        // traffic. We deliberately gate on `is_active` (enabled + listening)
+        // rather than `is_enabled`: if the sidecar died unexpectedly, this
+        // call needs to fall through and restore a usable per-profile URL,
+        // otherwise downstream Codex clients (CLI, VSCode extension) would
+        // be permanently stuck pointing at a dead local port. The gateway
+        // module writes its own value through `force_root_openai_base_url`,
+        // which bypasses this guard via the lower-level helper below.
         return Ok(());
     }
     write_root_openai_base_url_value(desired_base_url, Some(&codex_home))
@@ -112,24 +117,7 @@ fn write_root_openai_base_url_value(
         return Ok(());
     }
 
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            AppError::new(
-                "FS_CREATE_FAILED",
-                format!(
-                    "Failed to create config directory {}: {error}",
-                    parent.display()
-                ),
-            )
-        })?;
-    }
-
-    fs::write(&config_path, next).map_err(|error| {
-        AppError::new(
-            "FS_WRITE_FAILED",
-            format!("Failed to write config {}: {error}", config_path.display()),
-        )
-    })
+    atomic_write_bytes(&config_path, next)
 }
 
 pub fn profile_uses_api_key_auth(profile_name: &str, codex_home: Option<&Path>) -> AppResult<bool> {

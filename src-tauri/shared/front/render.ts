@@ -595,16 +595,20 @@ export function applyLocale(): void {
 
 export function renderGateway(status: GatewayStatus): void {
   const { gatewayStatusPill, gatewayToggleInput, gatewayToggleLabel } = elements;
+  // Authoritative health = TCP probe (`listening`). The pre-existing
+  // `running` field only tracks "this GUI instance owns a child handle"
+  // and goes stale across restarts / orphan sidecars.
+  const isHealthy = status.listening;
   const pillKey = !status.sidecar_available && status.enabled
     ? "gatewayStatusError"
-    : status.running
+    : isHealthy
       ? "gatewayStatusOn"
       : status.enabled
         ? "gatewayStatusError"
         : "gatewayStatusOff";
   gatewayStatusPill.textContent = t(state.locale, pillKey);
-  gatewayStatusPill.dataset.gatewayPill = status.running ? "on" : status.enabled ? "error" : "off";
-  gatewayStatusPill.classList.toggle("is-live", status.running);
+  gatewayStatusPill.dataset.gatewayPill = isHealthy ? "on" : status.enabled ? "error" : "off";
+  gatewayStatusPill.classList.toggle("is-live", isHealthy);
 
   gatewayToggleInput.checked = status.enabled;
   gatewayToggleLabel.textContent = t(state.locale, status.enabled ? "gatewayToggleOn" : "gatewayToggleOff");
@@ -631,6 +635,13 @@ export function renderGateway(status: GatewayStatus): void {
   const warningParts: string[] = [];
   if (!status.sidecar_available) {
     warningParts.push(t(state.locale, "gatewayWarningSidecarMissing"));
+  }
+  // enabled but the TCP probe says nothing is listening → sidecar died
+  // unexpectedly. Surface it explicitly so users don't sit there with a
+  // green-looking toggle while their VSCode Codex extension silently
+  // fails to connect.
+  if (status.enabled && !status.listening && status.sidecar_available) {
+    warningParts.push(t(state.locale, "gatewayWarningNotListening"));
   }
   if (status.last_error) {
     warningParts.push(status.last_error);

@@ -90,8 +90,12 @@ export interface CommandError {
 export type ShellRoute = "dashboard" | "profiles" | "runtime" | "settings" | "guide";
 
 export interface GatewayStatus {
+  /** User intent: forwarding should be on. */
   enabled: boolean;
+  /** This GUI instance currently owns a sidecar child handle. */
   running: boolean;
+  /** TCP probe to 127.0.0.1:port succeeded. Authoritative health signal. */
+  listening: boolean;
   port: number;
   endpoint: string;
   session_affinity: boolean;
