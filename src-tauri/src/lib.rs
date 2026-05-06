@@ -54,7 +54,17 @@ pub fn run() {
             commands::actions::check_update,
             commands::actions::open_xiaohongshu,
             commands::switch::switch_profile,
+            commands::gateway::get_gateway_status,
+            commands::gateway::enable_gateway,
+            commands::gateway::disable_gateway,
+            commands::gateway::update_gateway_settings,
+            commands::gateway::recover_gateway,
         ])
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) && window.label() == "main" {
+                shared::gateway::shutdown_for_exit();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
