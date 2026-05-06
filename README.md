@@ -8,7 +8,7 @@ Codex 账号切换工具是一个本地桌面应用，用来在同一台机器�
 
 - 仪表盘：显示当前账号、账号总数、可用账号和待登录账号数量。
 - 账号页：每页 4 张账号卡片，支持切换、登录刷新、重命名、删除或清空、打开账号目录、编辑 Base URL。
-- 运行时页：协议转发（Gateway）开关。开启后所有 ChatGPT/OAuth 账号经由本地 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) sidecar 转发到 OpenAI，切号过程不再重启 Codex。详见下文「协议转发」章节。
+- 运行时页：协议转发（Gateway）开关。开启后所有 ChatGPT/OAuth 账号经由本地 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) sidecar 统一路由，切号过程不再重启 Codex。详见下文「协议转发」章节。
 - 设置页：包含语言、主题、端口、开机自启占位、更新地址、配置备份、版本、许可证、检查更新和 GitHub 入口。
 - 引导页：展示添加账号、登录、切换账号的基础流程。
 - 支持多套浅色和深色主题、中英文界面，以及没有 Tauri API 时的本地预览数据。
@@ -31,7 +31,7 @@ Codex 账号切换工具是一个本地桌面应用，用来在同一台机器�
 - `src-tauri/shared/platform/`：`PlatformHooks` 抽象，被 mac/win 各自的实现注入。
 - `src-tauri/mac/runtime/`：macOS 平台壳（窗口、进程、平台 hooks）。
 - `src-tauri/win/runtime/`：Windows 平台壳（窗口、进程、平台 hooks）。
-- `src-tauri/binaries/`：Tauri `externalBin` 拷入安装包的 sidecar 二进制（gitignored；由 `scripts/build-cliproxy.*` 生成）。
+- `src-tauri/binaries/`：打包时由 Tauri `externalBin` 拷入安装包的 sidecar 二进制（gitignored；由 `scripts/build-cliproxy.*` 生成）。
 - `macOS-backup/`：旧 shell 流程和桌面桥接的兼容安装、卸载脚本。
 - `examples/account_backup/demo/`：示例 `auth.json` 模板。
 - `scripts/`：版本同步、macOS 产物布局、macOS `.pkg` 生成、CLIProxyAPI sidecar 编译脚本。
@@ -66,7 +66,7 @@ npm run test:rust
 
 ## 协议转发（Gateway）
 
-Gateway 是「免重启切号」的实现路径。开启后会在本机起一个 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) sidecar，把所有 ChatGPT/OAuth 账号挂在同一个本地端点（默认 `http://127.0.0.1:8317/v1`）背后。Codex 一直只跟这个本地端点通话，切号时只换底层 auth 文件，进程不再被 quit/relaunch。
+Gateway 是「免重启切号」的实现路径。开启后会在本机起一个 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) sidecar，把所有 ChatGPT/OAuth 账号挂在同一个本地端点（默认 `http://127.0.0.1:8317/v1`）背后统一路由。Codex 一直只跟这个本地端点通话，切号时只换底层 auth 文件，进程不再被 quit/relaunch。
 
 工作机制要点：
 
@@ -80,8 +80,8 @@ Gateway 是「免重启切号」的实现路径。开启后会在本机起一个
 
 - 需要 Go 工具链（`go` 在 PATH 里）。
 - `scripts/build-cliproxy.sh`（macOS / Linux）和 `scripts/build-cliproxy.ps1`（Windows）会在 `docs/CLIProxyAPI` 缺失时自动 `git clone --depth 1` 上游仓库；可以用 `CLIPROXY_REPO_URL` 环境变量指向自建镜像。
-- 产物落到 `src-tauri/binaries/cliproxy-<rust-target-triple>[.exe]`。Tauri 通过 `externalBin` 在打包时按目标三元组挑选对应的二进制并放进安装包。
-- 所有 `npm run tauri:build*` 都已在前置步骤调用 `npm run build:sidecar[:windows]`，干净的克隆 / CI runner 也能直接打包。
+- 产物落到 `src-tauri/binaries/cliproxy-<rust-target-triple>[.exe]`。打包脚本通过 `src-tauri/tauri.sidecar.conf.json` 中的 Tauri `externalBin` 按目标三元组挑选对应的二进制并放进安装包。
+- 所有打包用 `npm run tauri:build*` 都已在前置步骤调用 `npm run build:sidecar[:windows]`，干净的克隆 / CI runner 也能直接打包；普通 `cargo check` / `cargo test` 不需要先生成 sidecar。
 
 `docs/CLIProxyAPI` 已在 `.gitignore` 里（整个 `docs/` 目录都不入库），不会污染主仓库历史。
 
