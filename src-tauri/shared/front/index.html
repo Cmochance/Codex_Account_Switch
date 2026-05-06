@@ -72,10 +72,6 @@
             </article>
 
             <section class="overview-panel">
-              <div class="page-title-block">
-                <h2 class="section-title" data-i18n-key="dashboardOverviewTitle">Dashboard</h2>
-              </div>
-
               <div class="status-grid">
                 <article class="status-card status-card--active-profile">
                   <span data-i18n-key="metricActiveProfile">Active profile</span>
@@ -116,7 +112,6 @@
             <section class="profiles-stage">
               <div class="profiles-header">
                 <div>
-                  <p class="page-kicker" data-i18n-key="navProfiles">Profiles</p>
                   <h2 id="profiles-heading" class="section-title">Profiles</h2>
                 </div>
 
@@ -136,12 +131,6 @@
         </section>
 
         <section class="page" id="page-runtime" data-page="runtime">
-          <div class="page-title-block">
-            <p class="page-kicker" data-i18n-key="navRuntime">Runtime</p>
-            <h2 class="section-title" data-i18n-key="runtimeTitle">Runtime Console</h2>
-            <p class="page-copy" data-i18n-key="runtimeSubtitle">Front-end layout for runtime visibility before backend wiring.</p>
-          </div>
-
           <article class="settings-panel gateway-panel" id="gateway-panel">
             <div class="gateway-header">
               <div class="gateway-header-text">
@@ -199,29 +188,6 @@
 
             <p class="gateway-footnote" id="gateway-footnote" data-i18n-key="gatewayFootnote">Only ChatGPT/OAuth profiles route through the gateway today. API-key profiles keep using the existing switch flow.</p>
           </article>
-
-          <div class="settings-grid runtime-grid">
-            <article class="setting-card">
-              <span class="setting-status is-live" data-i18n-key="runtimeDraftStatus">UI draft</span>
-              <strong data-i18n-key="runtimeCodexApp">Codex desktop app</strong>
-              <p data-i18n-key="runtimeCodexAppCopy">Launch and activation controls will stay connected to the existing platform runtime.</p>
-            </article>
-            <article class="setting-card">
-              <span class="setting-status" data-i18n-key="runtimeDeferredStatus">Not wired</span>
-              <strong data-i18n-key="runtimeShellShim">Shell shim</strong>
-              <p data-i18n-key="runtimeShellShimCopy">Future controls can expose the managed command path without changing profile data.</p>
-            </article>
-            <article class="setting-card">
-              <span class="setting-status" data-i18n-key="runtimeDeferredStatus">Not wired</span>
-              <strong data-i18n-key="runtimeAuthRefresh">Auth refresh</strong>
-              <p data-i18n-key="runtimeAuthRefreshCopy">Queue, retry, and last-run details can be shown here after backend support lands.</p>
-            </article>
-            <article class="setting-card">
-              <span class="setting-status" data-i18n-key="runtimeDeferredStatus">Not wired</span>
-              <strong data-i18n-key="runtimeBackupRoot">Backup root</strong>
-              <p data-i18n-key="runtimeBackupRootCopy">Profile storage and autosave paths can be surfaced here in a later phase.</p>
-            </article>
-          </div>
         </section>
 
         <section class="page" id="page-settings" data-page="settings">
@@ -254,40 +220,9 @@
               </div>
             </div>
             <label class="settings-row settings-row--field">
-              <strong data-i18n-key="settingsForwardPort">Forward port</strong>
-              <input class="settings-input" type="number" min="1" max="65535" inputmode="numeric" value="18082" />
-            </label>
-            <label class="settings-row settings-row--field">
-              <strong data-i18n-key="settingsAdminPort">Admin port</strong>
-              <input class="settings-input" type="number" min="1" max="65535" inputmode="numeric" value="18081" />
-            </label>
-            <div class="settings-row">
-              <strong data-i18n-key="settingsLaunchAtLogin">Launch at login</strong>
-              <label class="settings-switch">
-                <input type="checkbox" />
-                <span aria-hidden="true"></span>
-              </label>
-            </div>
-            <label class="settings-row settings-row--field">
               <strong data-i18n-key="settingsUpdateUrl">Update URL</strong>
               <input id="settings-update-url-input" class="settings-input" type="url" value="https://api.github.com/repos/Cmochance/Codex_Account_Switch/releases/latest" />
             </label>
-            <div class="settings-row settings-row--stacked">
-              <strong data-i18n-key="settingsConfigBackup">Configuration backup</strong>
-              <div class="settings-row-content">
-                <div class="settings-action-row">
-                  <button class="settings-action-button" type="button" data-i18n-key="settingsBackupNow">Back up now</button>
-                  <button class="settings-action-button" type="button" data-i18n-key="settingsExportConfig">Export config</button>
-                  <button class="settings-action-button" type="button" data-i18n-key="settingsImportConfig">Import config</button>
-                </div>
-                <p class="settings-value" data-i18n-key="settingsNoBackup">No backups yet</p>
-                <p class="settings-help" data-i18n-key="settingsBackupCopy">Exported configs include API keys. Keep them only on trusted devices.</p>
-              </div>
-            </div>
-            <div class="settings-row">
-              <strong data-i18n-key="settingsVersion">Version</strong>
-              <span class="settings-value settings-value--strong">1.5.0</span>
-            </div>
             <div class="settings-row">
               <strong data-i18n-key="settingsLicense">License</strong>
               <span class="settings-value settings-value--strong">MIT License</span>
@@ -312,7 +247,6 @@
           <div class="guide-hero">
             <span class="guide-mark" aria-hidden="true"></span>
             <div>
-              <p class="page-kicker" data-i18n-key="navGuide">Guide</p>
               <h2 class="section-title" data-i18n-key="guideTitle">Usage Guide</h2>
               <p class="page-copy" data-i18n-key="guideSubtitle">A compact flow for adding, logging in, and switching accounts.</p>
             </div>
@@ -351,7 +285,7 @@
       <form id="add-profile-form" class="dialog-form" method="dialog">
         <div class="dialog-copy">
           <h3 id="dialog-title">Add Profile</h3>
-          <p id="dialog-copy">Create a new backup folder with template <code>auth.json</code> and <code>profile.json</code>.</p>
+          <p id="dialog-copy">Create a new profile backup folder.</p>
         </div>
 
         <label class="field">
