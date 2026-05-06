@@ -33,8 +33,6 @@
 :root {
   color-scheme: light;
   --canvas-bg: #f2efea;
-  --canvas-bg-soft: #f7f4ef;
-  --surface: rgba(250, 248, 244, 0.92);
   --surface-strong: rgba(255, 253, 249, 0.94);
   --surface-muted: rgba(246, 243, 238, 0.92);
   --surface-pressed: rgba(173, 180, 205, 0.92);
@@ -47,7 +45,6 @@
   --track: #ebe7e1;
   --blue-fill: #8fd4f3;
   --pink-fill: #eba6c6;
-  --gray-fill: #b5bccf;
   --monitor-dot: #94dbf1;
   --focus-ring: rgba(143, 212, 243, 0.95);
   --app-background:
@@ -65,12 +62,10 @@
     linear-gradient(180deg, rgba(250, 248, 244, 0.98), rgba(243, 239, 234, 0.98));
   --profile-muted-background: linear-gradient(180deg, rgba(248, 246, 242, 0.98), rgba(240, 236, 231, 0.98));
   --dialog-background: linear-gradient(180deg, rgba(250, 248, 244, 0.98), rgba(243, 239, 234, 0.98));
-  --control-surface: rgba(248, 245, 240, 0.86);
   --locale-background: rgba(248, 245, 240, 0.86);
   --route-tabs-background: rgba(248, 245, 240, 0.88);
   --monitor-background: rgba(248, 245, 240, 0.92);
   --pager-row-background: rgba(248, 245, 240, 0.9);
-  --control-surface-strong: rgba(248, 245, 240, 0.92);
   --control-surface-soft: rgba(251, 249, 245, 0.92);
   --control-surface-current: rgba(239, 235, 229, 0.98);
   --control-hover: rgba(255, 255, 255, 0.98);
@@ -115,7 +110,6 @@
   --gray-fill-gradient: linear-gradient(90deg, #b9bfd1, #b0b6c8);
   --shadow-soft: 0 24px 56px rgba(118, 110, 102, 0.08);
   --shadow-card: 0 18px 42px rgba(133, 123, 113, 0.08);
-  --radius-shell: 28px;
   --radius-card: 24px;
   --radius-profile: 22px;
   --radius-metric: 18px;
@@ -126,8 +120,6 @@
 
 :root[data-theme="mica"] {
   --canvas-bg: #f4f6f2;
-  --canvas-bg-soft: #fbfcf7;
-  --surface: rgba(253, 254, 250, 0.93);
   --surface-strong: rgba(255, 255, 252, 0.96);
   --surface-muted: rgba(244, 247, 242, 0.92);
   --surface-pressed: rgba(143, 163, 176, 0.94);
@@ -140,7 +132,6 @@
   --track: #e7ece8;
   --blue-fill: #83d3dc;
   --pink-fill: #e5aab9;
-  --gray-fill: #b4bec3;
   --monitor-dot: #8ad8df;
   --focus-ring: rgba(126, 205, 215, 0.95);
   --app-background:
@@ -158,12 +149,10 @@
     linear-gradient(180deg, rgba(253, 254, 250, 0.98), rgba(242, 247, 242, 0.98));
   --profile-muted-background: linear-gradient(180deg, rgba(247, 249, 244, 0.98), rgba(236, 242, 236, 0.98));
   --dialog-background: linear-gradient(180deg, rgba(253, 254, 250, 0.98), rgba(242, 247, 242, 0.98));
-  --control-surface: rgba(248, 250, 246, 0.88);
   --locale-background: rgba(248, 250, 246, 0.86);
   --route-tabs-background: rgba(248, 250, 246, 0.88);
   --monitor-background: rgba(248, 251, 247, 0.92);
   --pager-row-background: rgba(248, 250, 246, 0.9);
-  --control-surface-strong: rgba(248, 251, 247, 0.94);
   --control-surface-soft: rgba(254, 255, 251, 0.94);
   --control-surface-current: rgba(235, 241, 235, 0.98);
   --control-hover: rgba(255, 255, 253, 0.98);
@@ -193,8 +182,6 @@
 
 :root[data-theme="pine"] {
   --canvas-bg: #eef2ed;
-  --canvas-bg-soft: #f7faf5;
-  --surface: rgba(251, 253, 248, 0.94);
   --surface-strong: rgba(255, 255, 250, 0.95);
   --surface-muted: rgba(242, 247, 240, 0.92);
   --surface-pressed: rgba(111, 145, 128, 0.94);
@@ -207,7 +194,6 @@
   --track: #e3eade;
   --blue-fill: #76c9bc;
   --pink-fill: #dda0aa;
-  --gray-fill: #aebaae;
   --monitor-dot: #58bfa8;
   --focus-ring: rgba(118, 201, 188, 0.95);
   --app-background:
@@ -225,12 +211,10 @@
     linear-gradient(180deg, rgba(252, 255, 249, 0.98), rgba(239, 247, 237, 0.98));
   --profile-muted-background: linear-gradient(180deg, rgba(245, 249, 242, 0.98), rgba(233, 242, 231, 0.98));
   --dialog-background: linear-gradient(180deg, rgba(252, 255, 249, 0.98), rgba(239, 247, 237, 0.98));
-  --control-surface: rgba(247, 250, 244, 0.88);
   --locale-background: rgba(247, 250, 244, 0.86);
   --route-tabs-background: rgba(247, 250, 244, 0.88);
   --monitor-background: rgba(248, 252, 246, 0.92);
   --pager-row-background: rgba(247, 250, 244, 0.9);
-  --control-surface-strong: rgba(248, 252, 246, 0.94);
   --control-surface-soft: rgba(253, 255, 250, 0.94);
   --control-surface-current: rgba(232, 240, 229, 0.98);
   --control-hover: rgba(255, 255, 250, 0.98);
@@ -260,8 +244,6 @@
 
 :root[data-theme="sea-salt"] {
   --canvas-bg: #eef3f5;
-  --canvas-bg-soft: #f7fbfc;
-  --surface: rgba(251, 254, 254, 0.94);
   --surface-strong: rgba(255, 255, 255, 0.95);
   --surface-muted: rgba(241, 247, 249, 0.92);
   --surface-pressed: rgba(111, 141, 157, 0.94);
@@ -274,7 +256,6 @@
   --track: #e2e9ec;
   --blue-fill: #70c7df;
   --pink-fill: #dba2b3;
-  --gray-fill: #b0bdc5;
   --monitor-dot: #68bfd4;
   --focus-ring: rgba(112, 199, 223, 0.95);
   --app-background:
@@ -292,12 +273,10 @@
     linear-gradient(180deg, rgba(252, 255, 255, 0.98), rgba(238, 247, 250, 0.98));
   --profile-muted-background: linear-gradient(180deg, rgba(245, 250, 251, 0.98), rgba(232, 241, 245, 0.98));
   --dialog-background: linear-gradient(180deg, rgba(252, 255, 255, 0.98), rgba(238, 247, 250, 0.98));
-  --control-surface: rgba(247, 251, 252, 0.88);
   --locale-background: rgba(247, 251, 252, 0.86);
   --route-tabs-background: rgba(247, 251, 252, 0.88);
   --monitor-background: rgba(248, 252, 253, 0.92);
   --pager-row-background: rgba(247, 251, 252, 0.9);
-  --control-surface-strong: rgba(248, 252, 253, 0.94);
   --control-surface-soft: rgba(253, 255, 255, 0.94);
   --control-surface-current: rgba(232, 240, 244, 0.98);
   --control-hover: rgba(255, 255, 255, 0.98);
@@ -328,8 +307,6 @@
 :root[data-theme="jade-night"] {
   color-scheme: dark;
   --canvas-bg: #151816;
-  --canvas-bg-soft: #1b211d;
-  --surface: rgba(35, 41, 35, 0.94);
   --surface-strong: rgba(43, 50, 43, 0.95);
   --surface-muted: rgba(29, 35, 30, 0.94);
   --surface-pressed: rgba(84, 119, 105, 0.94);
@@ -342,7 +319,6 @@
   --track: #303831;
   --blue-fill: #67c3ad;
   --pink-fill: #d99390;
-  --gray-fill: #69756d;
   --monitor-dot: #78d4b7;
   --focus-ring: rgba(103, 195, 173, 0.95);
   --app-background:
@@ -360,12 +336,10 @@
     linear-gradient(180deg, rgba(40, 48, 41, 0.98), rgba(29, 35, 30, 0.98));
   --profile-muted-background: linear-gradient(180deg, rgba(33, 39, 34, 0.98), rgba(24, 30, 25, 0.98));
   --dialog-background: linear-gradient(180deg, rgba(40, 48, 41, 0.98), rgba(29, 35, 30, 0.98));
-  --control-surface: rgba(31, 38, 33, 0.88);
   --locale-background: rgba(31, 38, 33, 0.86);
   --route-tabs-background: rgba(31, 38, 33, 0.88);
   --monitor-background: rgba(36, 43, 37, 0.92);
   --pager-row-background: rgba(31, 38, 33, 0.9);
-  --control-surface-strong: rgba(36, 43, 37, 0.94);
   --control-surface-soft: rgba(42, 50, 43, 0.94);
   --control-surface-current: rgba(25, 31, 27, 0.98);
   --control-hover: rgba(49, 59, 51, 0.98);
@@ -1273,8 +1247,7 @@ html[data-theme] body {
   background: var(--app-background);
 }
 
-html[data-theme] .window-shell,
-html[data-theme] .window-shell--macos {
+html[data-theme] .window-shell {
   background: var(--shell-background);
 }
 
@@ -2416,4 +2389,176 @@ button.pager-pill:disabled {
   .dialog-actions {
     display: grid;
   }
+}
+
+.gateway-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 22px 24px;
+  border-radius: 18px;
+  border: 1px solid var(--panel-border, rgba(0, 0, 0, 0.08));
+  background: var(--panel-background, rgba(255, 255, 255, 0.65));
+}
+
+.gateway-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.gateway-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gateway-header-text strong {
+  font-size: 16px;
+}
+
+.gateway-header-text p {
+  font-size: 13px;
+  opacity: 0.78;
+  margin: 0;
+}
+
+.gateway-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.gateway-toggle input {
+  appearance: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  margin: 0;
+}
+
+.gateway-toggle input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.gateway-toggle input:checked {
+  background: rgba(72, 145, 220, 0.85);
+}
+
+.gateway-toggle input:checked::after {
+  transform: translateX(16px);
+}
+
+.gateway-toggle input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.gateway-toggle-track {
+  display: none;
+}
+
+.gateway-toggle-text {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.gateway-warning {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(220, 80, 70, 0.12);
+  color: rgba(176, 50, 40, 0.95);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gateway-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.gateway-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.gateway-meta-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.gateway-meta-value {
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.gateway-meta-value--mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+
+.gateway-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.gateway-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 140px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.gateway-field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: auto;
+  padding-top: 18px;
+}
+
+.gateway-footnote {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.setting-status[data-gateway-pill="error"] {
+  color: rgba(176, 50, 40, 0.95);
+}
+
+.setting-status[data-gateway-pill="on"] {
+  color: rgba(36, 132, 84, 0.95);
 }
