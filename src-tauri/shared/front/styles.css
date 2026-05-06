@@ -734,3 +734,32 @@ button.pager-pill:disabled {
     display: grid;
   }
 }
+
+/* Platform overrides ---------------------------------------------------- */
+
+html[data-platform="macos"] .window-titlebar {
+  display: none;
+}
+
+html[data-platform="macos"]:not([data-theme]) .window-shell {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.76), transparent 24rem),
+    radial-gradient(circle at 100% 100%, rgba(233, 227, 219, 0.48), transparent 24rem),
+    linear-gradient(180deg, rgba(250, 248, 244, 0.98), rgba(244, 240, 235, 0.98));
+}
+
+html[data-platform="macos"] .dashboard {
+  padding-top: 18px;
+}
+
+@media (max-width: 860px) {
+  html[data-platform="macos"] .dashboard {
+    padding-top: 18px;
+  }
+}
+
+@media (max-width: 560px) {
+  html[data-platform="macos"] .dashboard {
+    padding-top: 16px;
+  }
+}

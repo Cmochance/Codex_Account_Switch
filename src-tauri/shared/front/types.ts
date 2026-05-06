@@ -88,3 +88,22 @@ export interface CommandError {
 }
 
 export type ShellRoute = "dashboard" | "profiles" | "runtime" | "settings" | "guide";
+
+export interface GatewayStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  endpoint: string;
+  session_affinity: boolean;
+  strategy: string;
+  active_auths: number;
+  last_error: string | null;
+  sidecar_available: boolean;
+  config_dir: string;
+}
+
+export interface GatewayUpdatePayload {
+  port?: number;
+  session_affinity?: boolean;
+  strategy?: string;
+}

@@ -1,10 +1,34 @@
 # Repository AGENTS
 
-## Platform Isolation
+## Code Sharing Policy
 
-- Windows and macOS should be developed independently whenever practical.
-- Do not introduce shared modules or shared runtime paths unless the behavior is a necessary cross-platform contract, disk format, or build/versioning concern.
-- Do not extract or expand shared modules for platform-specific behavior unless the shared code is strictly necessary for identical cross-platform contracts, on-disk formats, or version/build plumbing.
-- When syncing a feature from one platform to the other, prefer implementing or adapting it under `src-tauri/win/**` or `src-tauri/mac/**` first. Use `src-tauri/shared/**` only for unavoidable neutral contracts.
-- For Windows-only changes, use Windows-only compile, check, test, and build commands; do not run validation paths that require compiling `src-tauri/mac/**` unless the task explicitly touches macOS.
-- Windows Vite/Tauri build commands should be run with escalation by default. In this repository, sandboxed builds are known to fail with `spawn EPERM` while starting `esbuild` from the Vite/Tauri `beforeBuildCommand`.
+This repository is now maintained by a single developer. Earlier guidance that
+required Windows and macOS to be kept strictly independent is obsolete and has
+been removed. The current policy favors sharing.
+
+- Default to placing code under `src-tauri/shared/**` whenever the behavior can
+  be expressed once for both platforms. Front-end (`src-tauri/shared/front/**`),
+  cross-platform runtime logic, command surface, models, and on-disk formats
+  all belong here.
+- Keep `src-tauri/mac/**` and `src-tauri/win/**` as thin platform shells. They
+  should only contain code that genuinely cannot be shared: OS-specific
+  windowing, process integration, and the platform `hooks` implementations
+  routed through `src-tauri/shared/platform/`.
+- When a feature has divergent behavior on the two platforms, prefer expressing
+  the differences via the existing `PlatformHooks` trait (or a new trait) in
+  `shared/platform/hooks` rather than forking the implementation across `mac/`
+  and `win/`.
+- When porting an existing Windows-first feature, lift the common parts into
+  `shared/` first, then leave only the platform-specific glue under `win/`.
+- Refactors that move code from `mac/` or `win/` into `shared/` are encouraged
+  whenever the diff confirms the logic is identical or trivially parameterizable.
+
+## Build Notes
+
+- Windows Vite/Tauri build commands should be run with escalation by default.
+  Sandboxed builds in this repository are known to fail with `spawn EPERM`
+  while starting `esbuild` from the Vite/Tauri `beforeBuildCommand`.
+- The CLIProxyAPI sidecar is built out-of-tree via
+  `scripts/build-cliproxy.sh` (macOS/Linux) or `scripts/build-cliproxy.ps1`
+  (Windows). The output lands in `src-tauri/binaries/` (gitignored), and Tauri
+  bundles it as an external resource at package time.
