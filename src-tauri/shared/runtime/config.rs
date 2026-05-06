@@ -30,11 +30,30 @@ fn is_openai_base_url_assignment(line: &str) -> bool {
         .is_some_and(|rest| rest.trim_start().starts_with('='))
 }
 
+fn toml_basic_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\u{0008}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{000C}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            ch if (ch as u32) < 0x20 || ch == '\u{007F}' => {
+                out.push_str(&format!("\\u{:04X}", ch as u32));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn render_openai_base_url_assignment(base_url: &str) -> String {
-    format!(
-        "openai_base_url = {}",
-        serde_json::to_string(base_url).unwrap_or_else(|_| format!("\"{base_url}\""))
-    )
+    format!("openai_base_url = {}", toml_basic_string(base_url))
 }
 
 fn load_normalized_profile_base_url(profile_name: &str, codex_home: &Path) -> Option<String> {
@@ -154,4 +173,43 @@ pub fn sync_root_openai_base_url_for_current_profile(codex_home: Option<&Path>) 
     };
 
     sync_root_openai_base_url_for_profile(&current_profile, Some(&codex_home))
+}
+
+/// Force the root config.toml `openai_base_url` to the supplied value.
+///
+/// Pass `None` to remove the assignment. Used by the gateway module so the proxy
+/// endpoint stays in place regardless of which profile is active.
+pub fn force_root_openai_base_url(
+    base_url: Option<&str>,
+    codex_home: Option<&Path>,
+) -> AppResult<()> {
+    sync_root_openai_base_url_value(base_url, codex_home)
+}
+
+/// Read the current `openai_base_url` assignment out of the root config.toml.
+///
+/// Returns `None` when the file is absent or the assignment is missing. Used by
+/// the gateway module to capture an externally-managed endpoint before
+/// overwriting it, so disable/recover can restore the prior value.
+pub fn read_root_openai_base_url(codex_home: Option<&Path>) -> Option<String> {
+    let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
+    let config_path = get_root_config_path(Some(&codex_home));
+    let content = fs::read_to_string(&config_path).ok()?;
+    for line in content.lines() {
+        if !is_openai_base_url_assignment(line) {
+            continue;
+        }
+        let (_, value_part) = line.split_once('=')?;
+        let trimmed = value_part.trim();
+        let unquoted = trimmed
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .unwrap_or(trimmed);
+        let normalized = unquoted.trim();
+        if normalized.is_empty() {
+            return None;
+        }
+        return Some(normalized.to_string());
+    }
+    None
 }

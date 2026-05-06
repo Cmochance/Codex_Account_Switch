@@ -33,6 +33,7 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
+    "externalBin": ["binaries/cliproxy"],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

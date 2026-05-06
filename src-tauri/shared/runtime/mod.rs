@@ -1,5 +1,6 @@
 pub mod config;
 pub mod fs_ops;
+pub mod gateway;
 pub mod metadata;
 pub mod paths;
 pub mod profiles;

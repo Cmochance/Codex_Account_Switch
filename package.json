@@ -9,6 +9,8 @@
     "version:sync:release": "node scripts/version-sync.mjs --set-from-version-log src-tauri/target/release/version.md",
     "version:set": "node scripts/version-sync.mjs --set",
     "build": "npm run version:sync && tsc && vite build",
+    "build:sidecar": "bash scripts/build-cliproxy.sh",
+    "build:sidecar:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-cliproxy.ps1 -TargetTriple x86_64-pc-windows-msvc",
     "macos:artifacts:prepare:app": "node scripts/macos-artifacts.mjs --phase=prepare --mode=app",
     "macos:artifacts:prepare:release": "node scripts/macos-artifacts.mjs --phase=prepare --mode=release",
     "macos:artifacts:finalize:app": "node scripts/macos-artifacts.mjs --phase=finalize --mode=app",
@@ -20,13 +22,13 @@
     "test:rust:windows": "cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc",
     "tauri": "tauri",
     "tauri:dev": "npm run version:sync && tauri dev",
-    "tauri:build": "npm run version:sync:release && tauri build",
-    "tauri:build:windows": "npm run version:sync:release && tauri build --target x86_64-pc-windows-msvc",
-    "tauri:build:portable": "npm run version:sync && tauri build --no-bundle",
-    "tauri:build:windows:portable": "npm run version:sync && tauri build --target x86_64-pc-windows-msvc --no-bundle",
+    "tauri:build": "npm run version:sync:release && npm run build:sidecar && tauri build",
+    "tauri:build:windows": "npm run version:sync:release && npm run build:sidecar:windows && tauri build --target x86_64-pc-windows-msvc",
+    "tauri:build:portable": "npm run version:sync && npm run build:sidecar && tauri build --no-bundle",
+    "tauri:build:windows:portable": "npm run version:sync && npm run build:sidecar:windows && tauri build --target x86_64-pc-windows-msvc --no-bundle",
     "tauri:build:macos-dmg": "npm run tauri:build:macos-release",
-    "tauri:build:macos-app": "npm run version:sync && npm run macos:artifacts:prepare:app && tauri build --bundles app --no-sign && npm run macos:artifacts:finalize:app",
-    "tauri:build:macos-release": "npm run version:sync && npm run macos:artifacts:prepare:release && tauri build --bundles app,dmg --no-sign && npm run macos:pkg && npm run macos:artifacts:finalize:release"
+    "tauri:build:macos-app": "npm run version:sync && npm run build:sidecar && npm run macos:artifacts:prepare:app && tauri build --bundles app --no-sign && npm run macos:artifacts:finalize:app",
+    "tauri:build:macos-release": "npm run version:sync && npm run build:sidecar && npm run macos:artifacts:prepare:release && tauri build --bundles app,dmg --no-sign && npm run macos:pkg && npm run macos:artifacts:finalize:release"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1"
