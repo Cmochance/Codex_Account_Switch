@@ -114,8 +114,18 @@
   --radius-profile: 22px;
   --radius-metric: 18px;
   --radius-pill: 999px;
-  --font-display: "Cormorant Garamond Custom", "Times New Roman", serif;
-  --font-body: "IBM Plex Sans Custom", "Noto Sans SC Custom", "Segoe UI", sans-serif;
+  /* CJK fallback chain: try the loaded webfont (Noto Sans SC Custom)
+     first, then OS-level Chinese fonts, before falling through to
+     generic serif/sans-serif. Without these, headings rendered with
+     --font-display would land on system serif on Windows, which often
+     ships without a proper Chinese serif — leaving Chinese characters
+     as tofu boxes or rendered with mismatched fallback fonts. */
+  --font-display: "Cormorant Garamond Custom", "Times New Roman",
+    "Noto Sans SC Custom", "PingFang SC", "Microsoft YaHei",
+    "Source Han Sans SC", "Hiragino Sans GB", serif;
+  --font-body: "IBM Plex Sans Custom", "Noto Sans SC Custom",
+    "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB",
+    "Source Han Sans SC", "Segoe UI", sans-serif;
 }
 
 :root[data-theme="mica"] {
