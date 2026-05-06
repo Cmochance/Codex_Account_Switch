@@ -22,12 +22,16 @@ function setBusy(busy: boolean): void {
   elements.gatewayRecoverButton.disabled = busy;
 }
 
-export async function loadGatewayStatus(): Promise<void> {
+export async function loadGatewayStatus(options?: { silent?: boolean }): Promise<boolean> {
   try {
     const status = await getGatewayStatus();
     applyStatus(status);
+    return true;
   } catch (error) {
-    showToast(error instanceof Error ? error.message : "Failed to load gateway status", true);
+    if (!options?.silent) {
+      showToast(error instanceof Error ? error.message : "Failed to load gateway status", true);
+    }
+    return false;
   }
 }
 

@@ -150,13 +150,22 @@ export function bootstrap(): void {
   window.setInterval(() => {
     void refreshCurrentQuota();
   }, 15_000);
-  window.setInterval(() => {
-    void loadGatewayStatus();
-  }, 5_000);
+
+  // Probe the gateway backend silently before starting the 5s poll. When the
+  // forwarding feature is not wired up yet (e.g. the backend PR has not
+  // landed), the probe fails quietly and the panel stays in its initial
+  // state — manual toggle clicks still surface the underlying error.
+  void loadGatewayStatus({ silent: true }).then((available) => {
+    if (!available) {
+      return;
+    }
+    window.setInterval(() => {
+      void loadGatewayStatus({ silent: true });
+    }, 5_000);
+  });
 
   state.loading = true;
   rerenderDashboard();
-  void loadGatewayStatus();
   void refreshAllData().finally(() => {
     state.loading = false;
     rerenderDashboard();
