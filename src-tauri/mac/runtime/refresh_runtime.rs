@@ -152,6 +152,40 @@ fn prepare_refresh_runtime_home(codex_home: &Path, profile_dir: &Path) -> AppRes
     Ok(runtime_home)
 }
 
+/// Best-effort attempt to refresh a profile's quota by hitting the ChatGPT
+/// backend directly. Returns:
+///   * `Ok(Some(path))` — quota was refreshed via HTTP and persisted.
+///   * `Ok(None)` — HTTP path was not applicable or returned an empty
+///     payload; caller should fall back to the legacy `codex exec` path.
+///   * `Err(_)` — only propagated if `sync_profile_metadata_from_auth_and_quota`
+///     fails after a successful HTTP fetch (the metadata write itself is
+///     considered authoritative).
+fn try_refresh_via_chatgpt_api(
+    profile_name: &str,
+    codex_home: &Path,
+    profile_dir: &Path,
+) -> AppResult<Option<String>> {
+    let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api(profile_name, codex_home) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let Some(quota) = snapshot.quota else {
+        return Ok(None);
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok());
+    crate::shared::metadata::sync_profile_metadata_from_auth_and_quota(
+        profile_name,
+        quota,
+        now_ms,
+        Some(codex_home),
+    )?;
+    load_profiles_index(Some(codex_home))?;
+    Ok(Some(profile_dir.to_string_lossy().into_owned()))
+}
+
 pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
     let codex_home = get_codex_home();
     let backup_root = get_backup_root(Some(&codex_home));
@@ -172,6 +206,17 @@ pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
         ));
     }
     ensure_refreshable_auth(&auth_path)?;
+
+    // Fast path for ChatGPT/OAuth profiles: hit the same private backend
+    // endpoint the Codex CLI itself uses to read live rate limits, instead
+    // of running a real `codex exec` round-trip just to provoke a session
+    // file write. Falls through to the legacy path on any failure so
+    // existing behavior is preserved as a safety net.
+    if crate::shared::chatgpt_api::profile_supports_api_refresh(&profile_dir) {
+        if let Some(profile_path) = try_refresh_via_chatgpt_api(&profile_name, &codex_home, &profile_dir)? {
+            return Ok(profile_path);
+        }
+    }
 
     let runtime_codex_home = prepare_refresh_runtime_home(&codex_home, &profile_dir)?;
     let refresh_started_at_ms = std::time::SystemTime::now()
