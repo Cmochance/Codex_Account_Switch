@@ -1,3 +1,4 @@
+pub mod chatgpt_api;
 pub mod config;
 pub mod fs_ops;
 pub mod gateway;
