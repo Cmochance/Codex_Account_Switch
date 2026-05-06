@@ -1,4 +1,6 @@
 import {
+  copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -175,6 +177,49 @@ const removeBuildExecutables = () => {
 const currentInstallers = () => listDir(distRoot)
   .filter((path) => isInstaller(path) && artifactVersion(path) === packageVersion)
 
+// CI runners regularly produce bundles inside `bundle/{dmg,macos}/` even
+// when the `prepare:release` symlink to `dist/` was set up first — most
+// likely because `bundle_dmg.sh` rewrites the `dmg/` directory mid-flight
+// and discards the link. To make the publish step independent of that
+// quirk, copy any current-version artifact found in `bundle/` into
+// `dist/` before asserting. No-op locally where the symlink scheme works.
+const adoptArtifactsFromBundle = () => {
+  const dmgSource = join(bundleRoot, 'dmg')
+  for (const path of listDir(dmgSource)) {
+    if (extension(path) !== '.dmg') {
+      continue
+    }
+    if (artifactVersion(path) !== packageVersion) {
+      continue
+    }
+    const dest = join(distRoot, basename(path))
+    if (path === dest) {
+      continue
+    }
+    if (existsSync(dest)) {
+      continue
+    }
+    copyFileSync(path, dest)
+    console.log(`Adopted ${relativePath(path)} -> ${relativePath(dest)}`)
+  }
+
+  const macosSource = join(bundleRoot, 'macos')
+  for (const path of listDir(macosSource)) {
+    if (!isAppBundle(path)) {
+      continue
+    }
+    const dest = join(distRoot, basename(path))
+    if (path === dest) {
+      continue
+    }
+    if (existsSync(dest)) {
+      continue
+    }
+    cpSync(path, dest, { recursive: true, dereference: false })
+    console.log(`Adopted ${relativePath(path)} -> ${relativePath(dest)}`)
+  }
+}
+
 const assertCurrentReleaseInstallers = () => {
   const installers = currentInstallers().map((path) => basename(path))
   const hasDmg = installers.some((name) => name.endsWith('.dmg'))
@@ -201,6 +246,11 @@ if (phase === 'prepare') {
   removeLooseExecutablesInDist()
   removeBuildExecutables()
 } else {
+  // Pull artifacts out of `bundle/` before any cleanup so the rest of
+  // finalize sees the full publish-ready set in `dist/`, regardless of
+  // whether the `prepare` symlinks took effect.
+  adoptArtifactsFromBundle()
+
   if (mode === 'release') {
     removeDistApps()
   }
