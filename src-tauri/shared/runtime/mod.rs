@@ -1,10 +1,12 @@
 pub mod chatgpt_api;
 pub mod config;
 pub mod fs_ops;
+pub mod login_runtime;
 pub mod metadata;
 pub mod paths;
 pub mod profiles;
 pub mod profiles_index;
+pub mod runtime_isolation;
 pub mod session_files;
 pub mod session_usage;
 pub mod switch_core;

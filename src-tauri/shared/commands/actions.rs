@@ -30,6 +30,29 @@ pub fn login_current_profile() -> Result<ActionResponse, CommandError> {
     })
 }
 
+/// Per-card login: drives `codex login` against a sandboxed CODEX_HOME so
+/// the OAuth handshake writes a fresh `auth.json` for `payload.profile`,
+/// even when that profile is not the currently active one. Avoids the
+/// switch-then-login-then-switch round-trip the dashboard used to require.
+///
+/// Long-running (blocks until the user finishes the OAuth flow in the
+/// browser), so it spawns onto the blocking runtime to keep Tauri's main
+/// thread responsive.
+#[tauri::command]
+pub async fn login_profile(payload: ProfilePayload) -> Result<ActionResponse, CommandError> {
+    let profile = payload.profile;
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        platform_runtime::actions::login_profile(&profile)
+    })
+    .await
+    .map_err(|error| CommandError::new("LOGIN_FAILED", format!("Login task failed: {error}")))??;
+    Ok(ActionResponse {
+        ok: true,
+        message: "Logged in profile.".to_string(),
+        path: Some(path),
+    })
+}
+
 #[tauri::command]
 pub async fn refresh_profile(payload: ProfilePayload) -> Result<ActionResponse, CommandError> {
     let profile = payload.profile;

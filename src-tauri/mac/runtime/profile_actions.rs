@@ -16,8 +16,11 @@ use crate::shared::paths::{
     get_backup_root, get_codex_home, validate_profile_name, ACTIVE_MARKER_FILE, CONTACT_URL,
     RELEASES_URL, XIAOHONGSHU_URL,
 };
+use crate::shared::login_runtime::login_profile_with_home;
 use crate::shared::profiles::resolve_current_profile;
 use crate::shared::profiles_index::load_profiles_index;
+
+use super::cli_shim::get_login_runtime_dir;
 
 const AUTH_TEMPLATE: &str = include_str!("../../../examples/account_backup/demo/auth.json.example");
 
@@ -39,6 +42,13 @@ fn normalize_openai_base_url(openai_base_url: &str) -> AppResult<Option<String>>
 
 pub fn open_codex_app() -> AppResult<String> {
     platform::open_or_activate_codex_app(None)
+}
+
+pub fn login_profile(profile_name: &str) -> AppResult<String> {
+    let codex_home = get_codex_home();
+    let runtime_home = get_login_runtime_dir(&codex_home);
+    let hooks = platform::current_hooks();
+    login_profile_with_home(hooks, profile_name, Some(&codex_home), &runtime_home)
 }
 
 pub fn login_current_profile() -> AppResult<String> {
