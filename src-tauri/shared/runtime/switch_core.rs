@@ -149,7 +149,11 @@ mod tests {
             Vec::new()
         }
 
-        fn run_codex_login(&self, _codex_home: &Path) -> AppResult<()> {
+        fn run_codex_login(
+            &self,
+            _cli_codex_home: &Path,
+            _runtime_codex_home: &Path,
+        ) -> AppResult<()> {
             unreachable!("not used in switch_core tests")
         }
 

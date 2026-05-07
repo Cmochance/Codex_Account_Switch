@@ -205,7 +205,13 @@ pub fn login_profile_with_home<H: PlatformHooks + ?Sized>(
         )
     })?;
 
-    hooks.run_codex_login(runtime_home)?;
+    // Resolve the real codex binary against the live `~/.codex` (so the
+    // user's managed-shim filter and install-state cache work), but
+    // point the spawned process's CODEX_HOME at our sandboxed runtime
+    // dir. Without this split, a Windows codex shim that does
+    // `%CODEX_HOME%\\account_backup\\windows\\codex_switch_cli` would
+    // fail to find the script under the empty runtime home.
+    hooks.run_codex_login(&codex_home, runtime_home)?;
 
     let runtime_auth = runtime_home.join(RUNTIME_AUTH_FILENAME);
     if !runtime_auth.is_file() {
@@ -300,9 +306,13 @@ mod tests {
         ) -> Vec<String> {
             unreachable!("not used in login_runtime tests")
         }
-        fn run_codex_login(&self, codex_home: &Path) -> AppResult<()> {
+        fn run_codex_login(
+            &self,
+            _cli_codex_home: &Path,
+            runtime_codex_home: &Path,
+        ) -> AppResult<()> {
             *self.call_count.lock().unwrap() += 1;
-            fs::write(codex_home.join("auth.json"), &self.auth_payload).unwrap();
+            fs::write(runtime_codex_home.join("auth.json"), &self.auth_payload).unwrap();
             Ok(())
         }
         fn run_codex_auth_refresh(
@@ -440,7 +450,7 @@ mod tests {
             fn reopen_codex_app_if_needed(&self, _: bool, _: Option<&Path>) -> Vec<String> {
                 unreachable!()
             }
-            fn run_codex_login(&self, _: &Path) -> AppResult<()> {
+            fn run_codex_login(&self, _: &Path, _: &Path) -> AppResult<()> {
                 Ok(())
             }
             fn run_codex_auth_refresh(&self, _: &Path, _: &Path) -> AppResult<()> {

@@ -266,8 +266,14 @@ fn build_auth_refresh_command(real_codex_path: &Path, runtime_codex_home: &Path)
     command
 }
 
-fn build_login_command(codex_home: &Path) -> Command {
-    let mut command = if let Some(real_codex_path) = resolve_real_codex_cli(Some(codex_home)) {
+/// Build the `codex login` command. Resolution of the real codex
+/// binary is anchored on `cli_codex_home` (the live `~/.codex`) so the
+/// managed-shim filter works correctly even when `runtime_codex_home`
+/// is a sandboxed sibling that doesn't have its own install state.
+/// `runtime_codex_home` is what the spawned process sees as
+/// `CODEX_HOME` and is where it will write `auth.json`.
+fn build_login_command(cli_codex_home: &Path, runtime_codex_home: &Path) -> Command {
+    let mut command = if let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) {
         let mut command = Command::new(real_codex_path);
         command.arg("login");
         command
@@ -277,8 +283,8 @@ fn build_login_command(codex_home: &Path) -> Command {
         command
     };
 
-    command.current_dir(codex_home);
-    command.env("CODEX_HOME", codex_home);
+    command.current_dir(runtime_codex_home);
+    command.env("CODEX_HOME", runtime_codex_home);
     command
 }
 
@@ -339,8 +345,10 @@ pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) 
     Err(AppError::new("AUTH_REFRESH_FAILED", message))
 }
 
-pub fn run_codex_login(codex_home: &Path) -> AppResult<()> {
-    let output = build_login_command(codex_home).output().map_err(|error| {
+pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
+    let output = build_login_command(cli_codex_home, runtime_codex_home)
+        .output()
+        .map_err(|error| {
         AppError::new(
             "LOGIN_COMMAND_FAILED",
             format!("Failed to start `codex login`: {error}"),
@@ -427,8 +435,12 @@ impl PlatformHooks for MacosPlatformHooks {
         reopen_codex_app_if_needed(app_was_running, codex_home)
     }
 
-    fn run_codex_login(&self, codex_home: &Path) -> AppResult<()> {
-        run_codex_login(codex_home)
+    fn run_codex_login(
+        &self,
+        cli_codex_home: &Path,
+        runtime_codex_home: &Path,
+    ) -> AppResult<()> {
+        run_codex_login(cli_codex_home, runtime_codex_home)
     }
 
     fn run_codex_auth_refresh(

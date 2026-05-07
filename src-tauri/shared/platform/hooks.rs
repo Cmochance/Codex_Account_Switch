@@ -10,7 +10,17 @@ pub trait PlatformHooks: Send + Sync {
         app_was_running: bool,
         codex_home: Option<&Path>,
     ) -> Vec<String>;
-    fn run_codex_login(&self, codex_home: &Path) -> AppResult<()>;
+    /// Run `codex login`. `cli_codex_home` is the live `~/.codex` and
+    /// drives codex-binary resolution (so the user's managed shim is
+    /// filtered out correctly). `runtime_codex_home` is what the spawned
+    /// codex sees as `CODEX_HOME` — for the legacy "log in as the
+    /// active profile" flow they are the same, but the per-card login
+    /// flow points it at a sandboxed sibling.
+    fn run_codex_login(
+        &self,
+        cli_codex_home: &Path,
+        runtime_codex_home: &Path,
+    ) -> AppResult<()>;
     fn run_codex_auth_refresh(
         &self,
         cli_codex_home: &Path,
