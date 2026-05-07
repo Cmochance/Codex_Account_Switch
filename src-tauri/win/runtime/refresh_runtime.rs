@@ -10,19 +10,15 @@ use super::metadata::{sync_profile_metadata_from_auth, sync_profile_metadata_fro
 use super::paths::{
     get_backup_root, get_codex_home, get_refresh_runtime_dir, validate_profile_name,
 };
+use super::runtime_isolation::{
+    prune_runtime_extra_features, seed_runtime_shared_assets, RUNTIME_AUTH_FILENAME,
+    RUNTIME_PROFILE_METADATA_FILENAME,
+};
 use super::session_files::{collect_jsonl_files, file_modified_ms};
 use super::session_usage::load_latest_local_quota_snapshot_since;
 
-const REFRESH_RUNTIME_SHARED_FILES: [&str; 4] = [
-    "models_cache.json",
-    "version.json",
-    ".codex-global-state.json",
-    "cap_sid",
-];
-const REFRESH_RUNTIME_SHARED_DIRS: [&str; 3] = ["plugins", "cache", "sqlite"];
-const REFRESH_RUNTIME_REMOVED_FILES: [&str; 1] = ["AGENTS.md"];
-const REFRESH_RUNTIME_REMOVED_DIRS: [&str; 4] = ["rules", "skills", "vendor_imports", "memories"];
-const REFRESH_RUNTIME_PROFILE_FILES: [&str; 2] = ["auth.json", "profile.json"];
+const REFRESH_RUNTIME_PROFILE_FILES: [&str; 2] =
+    [RUNTIME_AUTH_FILENAME, RUNTIME_PROFILE_METADATA_FILENAME];
 
 fn generated_refresh_session_files(
     runtime_home: &Path,
@@ -86,50 +82,6 @@ fn ensure_refreshable_auth(auth_path: &Path) -> AppResult<()> {
     }
 }
 
-fn seed_refresh_runtime_shared_assets(codex_home: &Path, runtime_home: &Path) -> AppResult<()> {
-    fs::create_dir_all(runtime_home).map_err(|error| {
-        AppError::new(
-            "REFRESH_RUNTIME_CREATE_FAILED",
-            format!(
-                "Failed to create refresh runtime home {}: {error}",
-                runtime_home.display()
-            ),
-        )
-    })?;
-
-    for entry_name in REFRESH_RUNTIME_SHARED_FILES {
-        let src = codex_home.join(entry_name);
-        let dst = runtime_home.join(entry_name);
-        if src.exists() {
-            copy_entry(&src, &dst)?;
-        } else {
-            remove_path(&dst)?;
-        }
-    }
-
-    for entry_name in REFRESH_RUNTIME_SHARED_DIRS {
-        let src = codex_home.join(entry_name);
-        let dst = runtime_home.join(entry_name);
-        if src.exists() && !dst.exists() {
-            copy_entry(&src, &dst)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn prune_refresh_runtime_extra_features(runtime_home: &Path) -> AppResult<()> {
-    for entry_name in REFRESH_RUNTIME_REMOVED_FILES {
-        remove_path(&runtime_home.join(entry_name))?;
-    }
-
-    for entry_name in REFRESH_RUNTIME_REMOVED_DIRS {
-        remove_path(&runtime_home.join(entry_name))?;
-    }
-
-    Ok(())
-}
-
 fn overlay_profile_refresh_files(profile_dir: &Path, runtime_home: &Path) -> AppResult<()> {
     for entry_name in REFRESH_RUNTIME_PROFILE_FILES {
         let src = profile_dir.join(entry_name);
@@ -146,8 +98,8 @@ fn overlay_profile_refresh_files(profile_dir: &Path, runtime_home: &Path) -> App
 
 fn prepare_refresh_runtime_home(codex_home: &Path, profile_dir: &Path) -> AppResult<PathBuf> {
     let runtime_home = get_refresh_runtime_dir(Some(codex_home));
-    seed_refresh_runtime_shared_assets(codex_home, &runtime_home)?;
-    prune_refresh_runtime_extra_features(&runtime_home)?;
+    seed_runtime_shared_assets(codex_home, &runtime_home)?;
+    prune_runtime_extra_features(&runtime_home)?;
     overlay_profile_refresh_files(profile_dir, &runtime_home)?;
     Ok(runtime_home)
 }

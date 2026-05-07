@@ -13,9 +13,10 @@ use super::metadata::{
     load_profile_metadata, save_profile_metadata, sync_profile_metadata_from_auth,
     sync_profile_openai_base_url,
 };
+use super::login_runtime::login_profile_with_home;
 use super::paths::{
-    get_backup_root, get_codex_home, validate_profile_name, ACTIVE_MARKER_FILE, CONTACT_URL,
-    RELEASES_URL, XIAOHONGSHU_URL,
+    get_backup_root, get_codex_home, get_login_runtime_dir, validate_profile_name,
+    ACTIVE_MARKER_FILE, CONTACT_URL, RELEASES_URL, XIAOHONGSHU_URL,
 };
 use super::profiles::resolve_current_profile;
 
@@ -39,6 +40,13 @@ fn normalize_openai_base_url(openai_base_url: &str) -> AppResult<Option<String>>
 
 pub fn open_codex_app() -> AppResult<String> {
     platform::open_or_activate_codex_app(None)
+}
+
+pub fn login_profile(profile_name: &str) -> AppResult<String> {
+    let codex_home = get_codex_home();
+    let runtime_home = get_login_runtime_dir(Some(&codex_home));
+    let hooks = platform::current_hooks();
+    login_profile_with_home(hooks, profile_name, Some(&codex_home), &runtime_home)
 }
 
 pub fn login_current_profile() -> AppResult<String> {

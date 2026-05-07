@@ -8,6 +8,7 @@ export const state = {
   refreshQueue: [] as string[],
   refreshActiveProfile: null as string | null,
   refreshWorkerActive: false,
+  loginActiveProfile: null as string | null,
   currentProfile: null as string | null,
   route: "dashboard" as ShellRoute,
   locale: "en" as Locale,

@@ -381,6 +381,7 @@ export function renderProfiles(
   onSwitch: (profile: string) => void,
   onRefresh: (profile: string) => void,
   onBaseUrl: (profile: string) => void,
+  onLogin: (profile: string) => void,
 ): void {
   if (!dashboard.profiles.length) {
     elements.profilesGrid.innerHTML =
@@ -394,15 +395,21 @@ export function renderProfiles(
       const refreshQueued =
         !refreshRunning && state.refreshQueue.includes(profile.folder_name);
       const refreshPending = refreshRunning || refreshQueued;
+      const loginRunning = state.loginActiveProfile === profile.folder_name;
+      // Any in-flight login (on this card or any other) blocks new logins
+      // because the OAuth port and `.switch.lock` are global resources.
+      const loginPending = state.loginActiveProfile !== null;
+      const cardBusy = refreshPending || loginRunning;
       const deleteDisabled =
-        state.loading || refreshPending || profile.status === "current";
+        state.loading || cardBusy || profile.status === "current";
       const renameDisabled =
-        state.loading || refreshPending || profile.status === "current";
+        state.loading || cardBusy || profile.status === "current";
       const refreshDisabled =
-        !profile.auth_present || state.loading || refreshPending;
-      const baseDisabled = state.loading || refreshPending;
+        !profile.auth_present || state.loading || cardBusy || loginPending;
+      const baseDisabled = state.loading || cardBusy;
       const switchDisabled =
-        !profile.auth_present || state.loading || refreshPending || profile.status === "current";
+        !profile.auth_present || state.loading || cardBusy || loginPending || profile.status === "current";
+      const loginDisabled = state.loading || cardBusy || loginPending;
       const unavailable = isProfileUnavailable(profile);
       const refreshTitle = refreshRunning
         ? t(state.locale, "profileRefreshRunning")
@@ -460,6 +467,25 @@ export function renderProfiles(
             <button
               class="profile-action-button"
               type="button"
+              title="${
+                loginRunning
+                  ? t(state.locale, "profileLoginRunning")
+                  : loginDisabled
+                    ? t(state.locale, "profileLoginDisabled")
+                    : t(state.locale, "profileLoginReady")
+              }"
+              data-login-profile="${profile.folder_name}"
+              ${loginDisabled ? "disabled" : ""}
+            >
+              ${
+                loginRunning
+                  ? '<span class="button-spinner" aria-hidden="true"></span>'
+                  : t(state.locale, "loginButton")
+              }
+            </button>
+            <button
+              class="profile-action-button"
+              type="button"
               title="${t(state.locale, "profileBaseReady")}"
               data-base-url-profile="${profile.folder_name}"
               ${baseDisabled ? "disabled" : ""}
@@ -486,6 +512,7 @@ export function renderProfiles(
   }
   bindProfileButtons("data-rename-profile", onRename);
   bindProfileButtons("data-refresh-profile", onRefresh);
+  bindProfileButtons("data-login-profile", onLogin);
   bindProfileButtons("data-base-url-profile", onBaseUrl);
   bindProfileButtons("data-switch-profile", onSwitch);
 }

@@ -12,6 +12,7 @@ pub const INSTALL_STATE_FILENAME: &str = "install_state.json";
 pub const PROFILES_INDEX_FILENAME: &str = "profiles.json";
 pub const PROFILE_METADATA_FILENAME: &str = "profile.json";
 pub const REFRESH_RUNTIME_DIRNAME: &str = "refresh_runtime";
+pub const LOGIN_RUNTIME_DIRNAME: &str = "login_runtime";
 pub const SWITCH_LOCK_FILENAME: &str = ".switch.lock";
 pub const WINDOWS_RUNTIME_DIRNAME: &str = "windows";
 pub const MACOS_RUNTIME_DIRNAME: &str = "macos";
@@ -70,6 +71,10 @@ pub fn get_runtime_dir(codex_home: Option<&Path>) -> PathBuf {
 
 pub fn get_refresh_runtime_dir(codex_home: Option<&Path>) -> PathBuf {
     get_runtime_dir(codex_home).join(REFRESH_RUNTIME_DIRNAME)
+}
+
+pub fn get_login_runtime_dir(codex_home: Option<&Path>) -> PathBuf {
+    get_runtime_dir(codex_home).join(LOGIN_RUNTIME_DIRNAME)
 }
 
 pub fn get_install_state_file(codex_home: Option<&Path>) -> PathBuf {

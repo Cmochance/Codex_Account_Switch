@@ -42,6 +42,7 @@ pub fn run() {
             commands::dashboard::refresh_active_profile_quota_silent,
             commands::actions::open_codex,
             commands::actions::login_current_profile,
+            commands::actions::login_profile,
             commands::actions::refresh_profile,
             commands::actions::rename_profile,
             commands::actions::delete_profile,
