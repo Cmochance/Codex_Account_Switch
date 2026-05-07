@@ -27,6 +27,7 @@ import {
   openUrl,
   openXiaohongshu,
   openProfileFolder,
+  refreshActiveProfileQuotaSilent,
   refreshProfile,
   renameProfile,
   switchProfile,
@@ -166,6 +167,22 @@ async function refreshCurrentQuota(showError = false): Promise<void> {
     if (showError) {
       showToast(error instanceof Error ? error.message : "Failed to refresh quota.", true);
     }
+  }
+}
+
+// Silent companion to refreshCurrentQuota. Backend gates on >5min staleness
+// and silently swallows non-OAuth / HTTP / parse failures, so any error here
+// just means "skip this tick".
+async function refreshActiveQuotaSilently(): Promise<void> {
+  if (state.loading || !state.snapshot) {
+    return;
+  }
+
+  try {
+    applyCurrentQuota(await refreshActiveProfileQuotaSilent());
+    rerenderDashboard();
+  } catch {
+    // Intentional: silent ticker, never surface errors to the user.
   }
 }
 
@@ -653,6 +670,14 @@ export function bootstrap(): void {
   window.setInterval(() => {
     void refreshCurrentQuota();
   }, 15_000);
+
+  // Slower silent ticker (5 min) — backend hits the ChatGPT API directly so
+  // the 5h-window remaining percent stays accurate even when no Codex
+  // session has run recently. The 15s JSONL poll above remains the visible
+  // source of truth.
+  window.setInterval(() => {
+    void refreshActiveQuotaSilently();
+  }, 5 * 60_000);
 
   state.loading = true;
   rerenderDashboard();
