@@ -44,8 +44,8 @@ pub fn open_or_activate_codex_app(codex_home: Option<&Path>) -> AppResult<String
     current_hooks().open_or_activate_codex_app(codex_home)
 }
 
-pub fn run_codex_login(codex_home: &Path) -> AppResult<()> {
-    current_hooks().run_codex_login(codex_home)
+pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
+    current_hooks().run_codex_login(cli_codex_home, runtime_codex_home)
 }
 
 pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {

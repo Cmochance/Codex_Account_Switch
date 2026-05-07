@@ -69,7 +69,7 @@ pub fn login_current_profile() -> AppResult<String> {
         ));
     }
 
-    platform::run_codex_login(&codex_home)?;
+    platform::run_codex_login(&codex_home, &codex_home)?;
 
     if !codex_home.join("auth.json").is_file() {
         return Err(AppError::new(
