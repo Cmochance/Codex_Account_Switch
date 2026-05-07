@@ -1,23 +1,45 @@
 # Codex 账号切换工具
 
-Codex 账号切换工具是一个本地桌面应用，用来在同一台机器上管理多个 Codex 账号。它通过本地账号备份目录保存不同账号状态，支持切换当前账号、查看账号状态和额度信息，并提供 macOS 与 Windows 原生 Tauri 桌面界面。
+[![GitHub stars](https://img.shields.io/github/stars/Cmochance/Codex_Account_Switch?style=social)](https://github.com/Cmochance/Codex_Account_Switch/stargazers)
+[![License](https://img.shields.io/github/license/Cmochance/Codex_Account_Switch)](LICENSE.txt)
+[![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange?logo=rust)](https://www.rust-lang.org/)
+[![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri)](https://v2.tauri.app/)
+[![Downloads](https://img.shields.io/github/downloads/Cmochance/Codex_Account_Switch/total?label=downloads)](https://github.com/Cmochance/Codex_Account_Switch/releases)
 
-`macOS-backup/` 里的 shell 脚本仍然保留，作为兼容旧流程的入口；当前主要方向是原生桌面端。
+Codex 账号切换工具是一个面向 **OpenAI Codex CLI** 的本地账号管理桌面应用。它在同一台机器上保存多个 Codex 账号的本地备份，提供 macOS 与 Windows 原生 Tauri 桌面界面，支持一键切换当前账号、查看账号状态与额度，并通过本地 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) sidecar 实现「免重启切号」的协议转发（Gateway）。
+
+和 `farion1231/cc-switch` 这类偏 Anthropic / Claude Code 的工具不同，本项目专注 OpenAI Codex CLI 的多账号生命周期：登录、刷新、备份、切换、额度查询都在同一个桌面应用里完成；启用 Gateway 后所有 ChatGPT/OAuth 账号挂在同一个本地端点背后，切号过程不再 quit/relaunch Codex 进程。
+
+`macOS-backup/` 里的 shell 脚本仍然保留，作为兼容旧流程的入口；当前主线方向是原生桌面端。
+
+## 项目状态
+
+- 当前版本：**v1.6.0**(Gateway 稳定版，引入 CLIProxyAPI sidecar + 直连 ChatGPT-API 额度刷新)
+- 已验证账号类型：ChatGPT (OAuth)、API Key (per-profile `openai_base_url`)
+- 平台：macOS arm64 / Windows x86_64 由 GitHub Actions `release.yml` 工作流统一打包，macOS x86_64 因 GitHub 上游 Intel runner 排队不再随版本发布
+- 数据位置：账号备份固定在 `~/.codex/account_backup/`，Gateway 状态在 `account_backup/gateway/state.json`
+- v1.6.x 链路稳定性改动：Gateway 启用瞬间快照 `openai_base_url` 防误覆写；切号 / 登录 / 刷新 / 重命名 / 删除 / 添加自动 best-effort 同步 sidecar；Switch 路径在 Gateway 开启时跳过 quit/reopen Codex；陈旧 `.switch.lock`（>60s）自动清理
+
+> 如果使用过程中出现问题，欢迎提交 PR 协助作者完善，会及时处理，非常感谢。
+
+### 更新日志
+
+逐版本变更详见 [GitHub Releases](https://github.com/Cmochance/Codex_Account_Switch/releases)。
 
 ## 当前功能
 
 - 仪表盘：显示当前账号、账号总数、可用账号和待登录账号数量。
 - 账号页：每页 4 张账号卡片，支持切换、登录刷新、重命名、删除或清空、打开账号目录、编辑 Base URL。
-- 运行时页：协议转发（Gateway）开关。开启后所有 ChatGPT/OAuth 账号经由本地 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) sidecar 统一路由，切号过程不再重启 Codex。详见下文「协议转发」章节。
+- 运行时页：协议转发（Gateway）开关。开启后所有 ChatGPT/OAuth 账号经由本地 CLIProxyAPI sidecar 统一路由，切号过程不再重启 Codex。详见下文「协议转发」章节。
 - 设置页：包含语言、主题、端口、开机自启占位、更新地址、配置备份、版本、许可证、检查更新和 GitHub 入口。
 - 引导页：展示添加账号、登录、切换账号的基础流程。
-- 支持多套浅色和深色主题、中英文界面，以及没有 Tauri API 时的本地预览数据。
+- 多套浅色 / 深色主题、中英文界面，以及没有 Tauri API 时的本地预览数据。
 
 部分设置项目前只完成前端界面，后续再接入后端。
 
 ## 平台支持
 
-- macOS：原生 Tauri 桌面端，同时保留 `macOS-backup/` 下的兼容脚本。
+- macOS：原生 Tauri 桌面端（arm64 由 release 链路分发；Intel 用户可本地用 `npm run tauri:build:macos-release` 自行打包），同时保留 `macOS-backup/` 下的兼容脚本。
 - Windows：原生 Tauri 桌面端，通过 Release 中的 `.exe` 分发。
 
 代码默认放在 `src-tauri/shared/**`（前端、命令、运行时模型、跨平台逻辑都在这里）。`src-tauri/mac/**` 与 `src-tauri/win/**` 仅承载真正的平台壳代码：窗口装饰、进程接入、平台专属的 `PlatformHooks` 实现。
@@ -37,6 +59,29 @@ Codex 账号切换工具是一个本地桌面应用，用来在同一台机器�
 - `scripts/`：版本同步、macOS 产物布局、macOS `.pkg` 生成、CLIProxyAPI sidecar 编译脚本。
 
 生成文件不进仓库。前端网页构建输出放在 `dist/web/`，macOS 桌面端打包产物直接落到 `dist/` 根目录。
+
+## 下载
+
+最新已发布版本在 GitHub Release：
+
+```text
+https://github.com/Cmochance/Codex_Account_Switch/releases/latest
+```
+
+推荐普通用户直接下载：
+
+- `codex_switch_<版本>_aarch64.dmg` / `.pkg`：macOS Apple Silicon
+- `codex_switch_<版本>_x64-setup.exe`：Windows NSIS 安装版
+
+macOS Intel 用户由于上游 macos-13 runner 排队严重，请自行 `git clone` 后用 `npm run tauri:build:macos-release` 本地打包；Apple Developer ID notarize 仍是后续工作。
+
+## 基本用法
+
+1. 启动 Codex 账号切换工具，弹出桌面窗口。
+2. 在账号页点击右上角加号，按引导登录或导入一个 Codex 账号。
+3. 重复添加多个账号；点击账号卡片即可切换为当前账号，Codex CLI 将使用对应的 `auth.json`。
+4. 如需「免重启切号」体验，进入运行时页打开 **Gateway**：本机起一个 CLIProxyAPI sidecar，所有 ChatGPT/OAuth 账号挂在同一个本地端点（默认 `http://127.0.0.1:8317/v1`）背后；之后切号不再重启 Codex 进程。
+5. 设置页可调整语言、主题、端口、备份位置等。
 
 ## 开发
 
@@ -121,16 +166,17 @@ dist/
 ## 版本与发布
 
 - 项目版本保存在 `package.json`，并同步到 Tauri 和 Cargo 元数据。
-- GitHub Release 标签使用完整语义版本号，例如 `1.5.3`。
+- GitHub Release 标签使用完整语义版本号，例如 `v1.6.0`。
 - 每个补丁版本单独创建一个 Release 标签。
 - 不要把补丁版本产物上传到旧的两段式标签下，例如不要继续把 `1.5.x` 上传到 `1.5`。
 - macOS 安装包作为 Release 资产发布，不提交到 Git。
+- 默认遵循「先发 draft，确认后再转 Latest」的流程：tag push 触发 `.github/workflows/build.yml` → build matrix → `softprops/action-gh-release` 以 `draft: true` 创建草稿；确认后用 `gh release edit vX.Y.Z --draft=false --latest` 转正。
 
 常用命令：
 
 ```bash
 npm run version:sync
-npm run version:set -- 1.5.4
+npm run version:set -- 1.6.1
 ```
 
 ## macOS 兼容脚本
@@ -162,6 +208,42 @@ source ~/.zshrc
 
 在仓库 Releases 页面下载最新 Windows `.exe`。
 
+## English Quick Start
+
+Codex Account Switch is a local desktop app for managing multiple **OpenAI Codex CLI** accounts on the same machine. It keeps each account's `auth.json` in a local backup directory and exposes a native Tauri UI on macOS and Windows for one-click switching, login refresh, quota queries, and a "no-restart switching" Gateway powered by a local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) sidecar.
+
+Unlike `farion1231/cc-switch` and similar Anthropic / Claude Code-oriented tools, this project focuses on the full Codex CLI account lifecycle (login, refresh, backup, switch, quota) in a single desktop app. With the Gateway enabled, all ChatGPT / OAuth profiles sit behind one local endpoint and switching no longer needs to quit/relaunch the Codex process.
+
+### Project status
+
+- Current version: **v1.6.0** (Gateway-stable line, introducing the CLIProxyAPI sidecar and direct ChatGPT-API quota refresh)
+- Validated profile types: ChatGPT (OAuth), API Key (per-profile `openai_base_url`)
+- Platforms: macOS arm64 and Windows x86_64 are built by the GitHub Actions `release.yml` workflow. macOS x86_64 is no longer shipped per-release because upstream macos-13 runners are heavily backlogged — Intel users should build locally with `npm run tauri:build:macos-release`.
+- Data location: account backups live in `~/.codex/account_backup/`; Gateway state is at `account_backup/gateway/state.json`.
+
+### Getting started
+
+1. Download the latest installer from [GitHub Releases](https://github.com/Cmochance/Codex_Account_Switch/releases/latest), or build locally with `npm run tauri:build:macos-release` / `:windows`.
+2. Launch the app — a native desktop window appears.
+3. On the **Accounts** page, click the top-right `+` and follow the guide to log in or import a Codex account. Repeat for each profile.
+4. Click any account card to switch — Codex CLI will use the corresponding `auth.json`.
+5. For no-restart switching, open the **Runtime** page and toggle **Gateway** on: the app spawns a local CLIProxyAPI sidecar (default `http://127.0.0.1:8317/v1`) and routes all ChatGPT / OAuth profiles through it. Subsequent switches no longer restart Codex.
+
+### What it does
+
+- Manages multiple Codex CLI accounts via per-profile snapshots under `~/.codex/account_backup/`.
+- One-click switch / login refresh / rename / delete / clear / open profile dir / edit base URL on the Accounts page.
+- Gateway mode (CLIProxyAPI sidecar) for "no-restart switching" — Codex stays connected to a stable local endpoint while underlying auth files are swapped.
+- Snapshots and restores the user's original `openai_base_url` so an existing local proxy is never silently overwritten.
+- Best-effort `gateway::refresh_auths_best_effort` after every account mutation keeps the sidecar in sync without manual restart.
+- Light / dark themes, Chinese / English UI, and a local preview mode when Tauri APIs are unavailable.
+
+### Security notes
+
+- Account data is stored only on the local machine. Exported configs / backups may contain API keys or auth material — keep them on trusted devices.
+- The Gateway sidecar binds to `127.0.0.1` only and never hijacks the system proxy.
+- macOS notarization and Windows Authenticode signing are not yet in place; use the published installer SHA hashes (when added) to verify downloads.
+
 ## 故障排查
 
 ### 切号后 VSCode / Codex 扩展无法连接
@@ -176,6 +258,41 @@ source ~/.zshrc
 
 旧版 GUI 强退后可能留下 `~/.codex/account_backup/.switch.lock`。1.6.0 起会自动清理超过 60 秒的陈旧锁；如果你在更早的版本碰到这个错误，手动删除该文件即可。
 
+### Gateway 端口冲突
+
+Gateway 默认在首次启用时复用 `openai_base_url` 中的端口。如果该端口被占用：
+
+```bash
+lsof -i :8317
+```
+
+或在 Windows：
+
+```powershell
+netstat -ano | findstr :8317
+```
+
+发现占用后，关闭占用进程，或在运行时页面修改 Gateway 端口后重启。
+
+### Windows 提示未知发布者
+
+当前 Windows 构建还没有 Authenticode 代码签名证书，所以 Windows 可能提示未知发布者。Release 页面提供安装包，可用文件哈希（如有）校验下载完整性。
+
 ## 账号数据
 
 账号数据只保存在本机。导出的配置或账号备份可能包含 API Key 或认证数据，只应保存在可信设备上。
+
+## 致谢
+
+本项目站在前人的肩膀上：
+
+- **[CC-Switch](https://github.com/farion1231/cc-switch)** 提供了「轻量桌面 + 一键切换 API 提供商」的产品形态启发。
+- **[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)** 提供了 Gateway 模式下的本地多账号统一路由能力 —— 本项目通过 Tauri `externalBin` 把它作为 sidecar 嵌入安装包，是「免重启切号」体验的关键。
+- **[Tauri](https://tauri.app/)** 提供了桌面壳的全部基础设施 —— 单二进制打包、native webview、tray、IPC、单实例插件、自定义 URI scheme。
+- **[OpenAI Codex CLI](https://github.com/openai/codex)** 是本项目服务的目标 CLI 本身；本项目只是它的多账号管理外壳，所有 Codex CLI 行为以官方实现为准。
+
+本项目专注 OpenAI Codex CLI 多账号管理，不是 OpenAI、Anthropic、CC-Switch 或 `farion1231/cc-switch` 的官方项目，也不复用它们的商标、Logo 或发布身份。
+
+## 许可证
+
+MIT License。完整文本见 [LICENSE.txt](LICENSE.txt)。

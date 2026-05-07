@@ -76,13 +76,6 @@ jobs:
             artifacts: |
               dist/*.dmg
               dist/*.pkg
-          - label: macos-x86_64
-            os: macos-13
-            target: x86_64-apple-darwin
-            tauri_script: tauri:build:macos-release
-            artifacts: |
-              dist/*.dmg
-              dist/*.pkg
           - label: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -162,5 +155,4 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/codex-switch-macos-arm64/*
-            artifacts/codex-switch-macos-x86_64/*
             artifacts/codex-switch-windows-x86_64/*
