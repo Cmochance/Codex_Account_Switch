@@ -27,6 +27,7 @@ import {
   openUrl,
   openXiaohongshu,
   openProfileFolder,
+  loginProfile,
   refreshActiveProfileQuotaSilent,
   refreshProfile,
   renameProfile,
@@ -70,6 +71,9 @@ function rerenderDashboard(): void {
     handleSwitchProfile,
     handleRefreshProfile,
     handleBaseUrlProfileClick,
+    (profile) => {
+      void handleLoginProfile(profile);
+    },
   );
   renderCurrentCard(dashboard);
   renderPaging(dashboard.paging);
@@ -278,6 +282,44 @@ function handleRefreshProfile(profile: string): void {
   state.refreshQueue.push(profile);
   rerenderDashboard();
   void drainRefreshQueue();
+}
+
+function loginErrorMessage(profile: string, error: unknown): string {
+  const code = error instanceof Error ? (error as ErrorWithCode).code : undefined;
+  if (code === "LOGIN_BUSY") {
+    return t(state.locale, "loginBusy");
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return t(state.locale, "failedToLoginProfile", { profile });
+}
+
+async function handleLoginProfile(profile: string): Promise<void> {
+  // Login serializes through the same .switch.lock as switch and refresh,
+  // so block the click if any of the three is already in flight on this
+  // card. Other cards' actions are independent.
+  if (
+    state.loading ||
+    state.loginActiveProfile !== null ||
+    isRefreshPending(profile)
+  ) {
+    return;
+  }
+
+  state.loginActiveProfile = profile;
+  rerenderDashboard();
+  showToast(t(state.locale, "loginStarting", { profile }));
+  try {
+    await loginProfile(profile);
+    showToast(t(state.locale, "loggedInProfile", { profile }));
+    await refreshAllData(false);
+  } catch (error) {
+    showToast(loginErrorMessage(profile, error), true);
+  } finally {
+    state.loginActiveProfile = null;
+    rerenderDashboard();
+  }
 }
 
 function handleRenameProfileClick(profile: string): void {

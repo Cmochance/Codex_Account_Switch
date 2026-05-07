@@ -315,6 +315,7 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
       case "open_profile_folder":
       case "open_codex":
       case "login_current_profile":
+      case "login_profile":
       case "refresh_profile":
       case "open_releases":
       case "open_contact":
@@ -367,6 +368,10 @@ export function openCodex(): Promise<ActionResponse> {
 
 export function loginCurrentProfile(): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("login_current_profile");
+}
+
+export function loginProfile(profile: string): Promise<ActionResponse> {
+  return invokeCommand<ActionResponse>("login_profile", { payload: { profile } });
 }
 
 export function refreshProfile(profile: string): Promise<ActionResponse> {
