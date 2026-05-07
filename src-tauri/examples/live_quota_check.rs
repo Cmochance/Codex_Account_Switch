@@ -11,7 +11,6 @@
 // that already appear in the dashboard UI.
 
 use std::env;
-use std::path::PathBuf;
 
 #[cfg(target_os = "macos")]
 use codex_switch_lib::macos::profiles_index;
@@ -19,11 +18,15 @@ use codex_switch_lib::macos::profiles_index;
 use codex_switch_lib::windows::profiles_index;
 
 use codex_switch_lib::shared::chatgpt_api;
+use codex_switch_lib::shared::paths::get_codex_home;
 
 fn main() {
     let target_profile = env::args().nth(1);
-    let home = env::var_os("HOME").expect("HOME not set");
-    let codex_home: PathBuf = PathBuf::from(home).join(".codex");
+    // Use the same resolution the app's runtime uses: honor CODEX_HOME first,
+    // fall back to $HOME/.codex on POSIX or %USERPROFILE%\.codex on Windows.
+    // Bypassing this helper (e.g. reading HOME directly) panics on Windows
+    // shells that don't set HOME and ignores CODEX_HOME overrides.
+    let codex_home = get_codex_home();
 
     println!("== codex_home: {} ==\n", codex_home.display());
 
