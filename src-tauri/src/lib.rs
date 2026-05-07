@@ -1,26 +1,26 @@
 use tauri::Manager;
 
 #[path = "../shared/runtime/cli.rs"]
-mod cli;
+pub mod cli;
 #[path = "../shared/commands/mod.rs"]
-mod commands;
+pub mod commands;
 #[path = "../shared/runtime/errors.rs"]
-mod errors;
+pub mod errors;
 #[cfg(target_os = "macos")]
 #[path = "../mac/runtime/mod.rs"]
-mod macos;
+pub mod macos;
 #[path = "../shared/runtime/models.rs"]
-mod models;
+pub mod models;
 #[path = "../shared/platform/mod.rs"]
-mod platform;
+pub mod platform;
 #[path = "../shared/runtime/mod.rs"]
-mod shared;
+pub mod shared;
 #[cfg(not(target_os = "macos"))]
 #[path = "../win/runtime/windowing.rs"]
-mod windowing;
+pub mod windowing;
 #[cfg(not(target_os = "macos"))]
 #[path = "../win/runtime/mod.rs"]
-mod windows;
+pub mod windows;
 
 pub fn run() {
     tauri::Builder::default()
