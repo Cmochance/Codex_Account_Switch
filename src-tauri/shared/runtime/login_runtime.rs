@@ -79,10 +79,27 @@ fn prepare_login_runtime_home(codex_home: &Path, runtime_home: &Path) -> AppResu
     Ok(())
 }
 
-/// Atomic-ish file copy: stage to a sibling temp file then rename. Used
-/// for the live `~/.codex/auth.json` write so a crashed copy doesn't
-/// leave the live home with a half-written auth file. The backup folder
-/// copy reuses `fs_ops::copy_entry` (whole-tree friendly).
+/// Atomic-ish file replace. Stages to a sibling `.tmp` file and renames
+/// over the destination. Two Windows-specific wrinkles drive the
+/// fallback dance below:
+///
+/// 1. `std::fs::rename` against an existing file fails when the
+///    destination is opened by another process *without*
+///    `FILE_SHARE_DELETE` (typical for AV scanners and any handle Codex
+///    itself holds on `~/.codex/auth.json`). On the active-profile
+///    branch we'd otherwise leave the live auth stale even though the
+///    backup folder already got the fresh copy.
+/// 2. Even when rename fails, a `truncate-then-write` of the destination
+///    succeeds because Windows opens the existing handle with
+///    `FILE_SHARE_READ | FILE_SHARE_WRITE` from another process's point
+///    of view — they can read while we replace contents.
+///
+/// So: try the cheap atomic rename first (POSIX + happy-path Windows);
+/// if it fails, fall back to writing the temp's bytes into the
+/// destination via `std::fs::write` and dropping the temp. The fallback
+/// is functionally atomic for the small auth.json payload — write
+/// happens in a single syscall, readers see either old or new contents
+/// (never a half-written buffer).
 fn atomic_publish_file(src: &Path, dst: &Path) -> AppResult<()> {
     if let Some(parent) = dst.parent() {
         if !parent.as_os_str().is_empty() {
@@ -115,16 +132,34 @@ fn atomic_publish_file(src: &Path, dst: &Path) -> AppResult<()> {
             ),
         )
     })?;
-    std::fs::rename(&temp, dst).map_err(|error| {
+
+    if std::fs::rename(&temp, dst).is_ok() {
+        return Ok(());
+    }
+
+    // Rename failed. Fall back to truncate-then-write of the destination
+    // using the bytes we already staged into `temp`.
+    let buffered = std::fs::read(&temp).map_err(|error| {
         let _ = std::fs::remove_file(&temp);
         AppError::new(
             "LOGIN_AUTH_PERSIST_FAILED",
             format!(
-                "Failed to publish atomic write to {}: {error}",
+                "Failed to read staged auth {} during fallback publish: {error}",
+                temp.display()
+            ),
+        )
+    })?;
+    let result = std::fs::write(dst, &buffered).map_err(|error| {
+        AppError::new(
+            "LOGIN_AUTH_PERSIST_FAILED",
+            format!(
+                "Failed to publish auth.json to {} via fallback truncate-write: {error}",
                 dst.display()
             ),
         )
-    })
+    });
+    let _ = std::fs::remove_file(&temp);
+    result
 }
 
 /// Drive the per-card login workflow. `runtime_home` must be a path the
