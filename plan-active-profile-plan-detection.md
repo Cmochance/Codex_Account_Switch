@@ -50,9 +50,18 @@ PR: _(to be created)_
 
 ## Phase C — UX polish (independent of A/B)
 
-- [ ] **C1.** Plan badge on each card with hover-time freshness tooltip.
-- [ ] **C2.** Replace silent "free → paid" fallback with explicit `unknown_paid`
-      state plus a "re-login to confirm plan" hint.
+- [x] **C1.** Plan badge on each card with hover-time freshness tooltip.
+      `last_plan_check_ms` now flows from `ProfileMetadata` →
+      `ProfileIndexEntry` → `ProfileCard`/`CurrentCard`. Front-end
+      `planFreshnessTitle` renders a localized "Plan tier confirmed N
+      min/h/d ago" tooltip, and `isPlanCheckStale` (>36h) drives a
+      subtle leading dot via the `.plan-check-stale` CSS class.
+- [x] **C2.** Replace silent "free → paid" fallback with explicit
+      `unknown_paid` state. Backend constant renamed to
+      `UNKNOWN_PAID_PLAN_NAME`. Front-end maps the token to a localized
+      "Unknown paid plan" label with a "Re-login to confirm" hint
+      surfaced in the same hover tooltip; the warning hue dot via
+      `.plan-unknown-paid` separates it from a plain stale cache.
 
 PR: _(to be created)_
 

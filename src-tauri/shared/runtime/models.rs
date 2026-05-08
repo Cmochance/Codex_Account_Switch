@@ -73,6 +73,11 @@ pub struct ProfileCard {
     pub subscription_days_left: Option<i64>,
     pub openai_base_url: Option<String>,
     pub quota: QuotaSummary,
+    /// Surfaces plan freshness to the front-end so the dashboard can
+    /// render a hover-time tooltip and a stale indicator without
+    /// re-fetching per-profile metadata. `None` for legacy entries
+    /// that predate the field.
+    pub last_plan_check_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +89,7 @@ pub struct CurrentCard {
     pub plan_name: Option<String>,
     pub subscription_days_left: Option<i64>,
     pub profile_folder_path: String,
+    pub last_plan_check_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

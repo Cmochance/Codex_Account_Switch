@@ -193,7 +193,25 @@ function currentDisplayTitle(entry: Pick<CurrentCard, "folder_name" | "display_t
   return account || folder || "--";
 }
 
+/// Plan tokens from the backend that the front-end translates into
+/// localized labels. Today only `unknown_paid` qualifies — surfaced when
+/// the id_token claims `free` but quota data implies an active paid
+/// window. Mapped to a localized "Unknown paid plan" label so the user
+/// is prompted to re-login instead of seeing a fake tier.
+const SPECIAL_PLAN_TOKENS = new Set(["unknown_paid"]);
+
+/// `last_plan_check_ms` older than this (millis) is treated as stale —
+/// the bulk plan refresh runs at most once per local day, so anything
+/// past that window means the cache hasn't been re-confirmed since the
+/// last day-rollover.
+const PLAN_CHECK_STALE_MS = 36 * 60 * 60 * 1000;
+
 function formatPlanName(planName: string): string {
+  if (SPECIAL_PLAN_TOKENS.has(planName)) {
+    if (planName === "unknown_paid") {
+      return t(state.locale, "planUnknownPaid");
+    }
+  }
   return planName.replace(/\b([a-z])/g, (match) => match.toUpperCase());
 }
 
@@ -221,6 +239,60 @@ export function planLine(planName: string | null, daysLeft: number | null): stri
   }
 
   return t(state.locale, "subscriptionFallback", { days: daysLeft ?? "--" });
+}
+
+/// Build a hover-time tooltip describing when the plan tier was last
+/// confirmed. `unknown_paid` plans get the prompt to re-login appended;
+/// stale plans (>36h since last confirmation) get a hint that the bulk
+/// refresh will retry at the next local-day rollover. Returns an empty
+/// string when there is nothing useful to surface.
+export function planFreshnessTitle(
+  planName: string | null,
+  lastPlanCheckMs: number | null,
+): string {
+  const parts: string[] = [];
+
+  if (lastPlanCheckMs == null) {
+    parts.push(t(state.locale, "planCheckedNever"));
+  } else {
+    const elapsedMs = Math.max(0, Date.now() - lastPlanCheckMs);
+    if (elapsedMs < 60 * 1000) {
+      parts.push(t(state.locale, "planCheckedJustNow"));
+    } else if (elapsedMs < 60 * 60 * 1000) {
+      parts.push(
+        t(state.locale, "planCheckedMinutesAgo", { value: Math.floor(elapsedMs / 60_000) }),
+      );
+    } else if (elapsedMs < 24 * 60 * 60 * 1000) {
+      parts.push(
+        t(state.locale, "planCheckedHoursAgo", { value: Math.floor(elapsedMs / (60 * 60_000)) }),
+      );
+    } else {
+      parts.push(
+        t(state.locale, "planCheckedDaysAgo", {
+          value: Math.floor(elapsedMs / (24 * 60 * 60_000)),
+        }),
+      );
+    }
+    if (elapsedMs >= PLAN_CHECK_STALE_MS) {
+      parts.push(t(state.locale, "planCheckedStaleSuffix").trim());
+    }
+  }
+
+  if (planName === "unknown_paid") {
+    parts.push(t(state.locale, "planUnknownPaidHint"));
+  }
+
+  return parts.join(" ");
+}
+
+/// True when the cached plan check is old enough to render a visual
+/// "stale" indicator (small dot) on the card. Mirrors the threshold
+/// in `planFreshnessTitle` so both signals agree.
+export function isPlanCheckStale(lastPlanCheckMs: number | null): boolean {
+  if (lastPlanCheckMs == null) {
+    return true;
+  }
+  return Date.now() - lastPlanCheckMs >= PLAN_CHECK_STALE_MS;
 }
 
 function buildMetricLineMarkup(
@@ -378,6 +450,20 @@ export function renderCurrentCard(dashboard: DashboardViewModel): void {
   state.currentProfile = current.folder_name;
   elements.currentTitle.textContent = currentDisplayTitle(current);
   elements.currentPlan.textContent = planLine(current.plan_name, current.subscription_days_left);
+  const currentPlanTitle = planFreshnessTitle(current.plan_name, current.last_plan_check_ms);
+  if (currentPlanTitle) {
+    elements.currentPlan.title = currentPlanTitle;
+  } else {
+    elements.currentPlan.removeAttribute("title");
+  }
+  elements.currentPlan.classList.toggle(
+    "plan-check-stale",
+    isPlanCheckStale(current.last_plan_check_ms),
+  );
+  elements.currentPlan.classList.toggle(
+    "plan-unknown-paid",
+    current.plan_name === "unknown_paid",
+  );
   elements.currentLoginButton.disabled = state.loading;
   elements.openCurrentFolderButton.disabled = false;
   elements.currentQuotaPanel.innerHTML = buildCurrentQuotaMarkup(
@@ -431,11 +517,20 @@ export function renderProfiles(
             ? t(state.locale, "profileRefreshDisabled")
             : t(state.locale, "profileRefreshReady");
 
+      const planTooltip = planFreshnessTitle(profile.plan_name, profile.last_plan_check_ms);
+      const planClasses = [
+        "profile-plan",
+        isPlanCheckStale(profile.last_plan_check_ms) ? "plan-check-stale" : null,
+        profile.plan_name === "unknown_paid" ? "plan-unknown-paid" : null,
+      ]
+        .filter((value): value is string => value != null)
+        .join(" ");
+
       return `
         <article class="profile-card status-${profile.status}${unavailable ? " is-unavailable-card" : ""}">
           <div class="profile-title-wrap">
             <p class="profile-title-account">${escapeHtml(profileDisplayTitle(profile))}</p>
-            <p class="profile-plan">${escapeHtml(planLine(profile.plan_name, profile.subscription_days_left))}</p>
+            <p class="${planClasses}"${planTooltip ? ` title="${escapeHtml(planTooltip)}"` : ""}>${escapeHtml(planLine(profile.plan_name, profile.subscription_days_left))}</p>
           </div>
 
           ${buildProfileQuotaMarkup(profile)}

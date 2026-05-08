@@ -9,7 +9,14 @@ use super::paths::{
     get_backup_root, get_codex_home, get_profile_metadata_path, validate_profile_name,
 };
 
-const PAID_PLAN_NAME: &str = "paid";
+/// Plan name written when the id_token says `free` but quota data
+/// implies an active paid window — i.e. the cached id_token is stale
+/// relative to ground truth and we have no authoritative `plan_type`
+/// from the API yet. The front-end maps this token to a localized
+/// "Unknown paid plan" label and prompts the user to re-login. Kept
+/// distinct from a real "paid" tier so the UI can flag the uncertainty
+/// instead of impersonating one of OpenAI's actual plan names.
+pub(super) const UNKNOWN_PAID_PLAN_NAME: &str = "unknown_paid";
 
 #[derive(Deserialize)]
 struct AuthFile {
@@ -168,7 +175,7 @@ fn quota_has_five_hour_window(quota: &QuotaSummary) -> bool {
 
 fn apply_paid_fallback_for_free_plan(metadata: &mut ProfileMetadata) {
     if is_free_plan(metadata.plan_name.as_deref()) && quota_has_five_hour_window(&metadata.quota) {
-        metadata.plan_name = Some(PAID_PLAN_NAME.to_string());
+        metadata.plan_name = Some(UNKNOWN_PAID_PLAN_NAME.to_string());
     }
 }
 
@@ -402,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn free_plan_with_five_hour_quota_displays_paid() {
+    fn free_plan_with_five_hour_quota_displays_unknown_paid() {
         let mut metadata = ProfileMetadata {
             quota: quota_with_five_hour(),
             ..ProfileMetadata::default()
@@ -410,7 +417,10 @@ mod tests {
 
         apply_auth_metadata(&mut metadata, auth_plan("free"), true);
 
-        assert_eq!(metadata.plan_name.as_deref(), Some("paid"));
+        // The id_token says "free" but quota data implies an active
+        // paid window — flag as `unknown_paid` so the UI prompts the
+        // user to re-login instead of inventing a tier name.
+        assert_eq!(metadata.plan_name.as_deref(), Some("unknown_paid"));
     }
 
     #[test]
@@ -440,12 +450,12 @@ mod tests {
     /// `apply_auth_metadata` above, but the API-plan override path
     /// in `sync_profile_metadata_from_auth_and_quota` runs the same
     /// helper after substituting the plan. Verify the helper itself
-    /// still flips a stale "free" claim to "paid" when quota is
+    /// still flips a stale "free" claim to `unknown_paid` when quota is
     /// present, so the API-plan override path inherits that behavior
     /// without needing its own dedicated test infrastructure (which
     /// would require a real on-disk profile.json).
     #[test]
-    fn paid_fallback_flips_stale_free_when_quota_is_present() {
+    fn paid_fallback_flips_stale_free_to_unknown_paid_when_quota_present() {
         let mut metadata = ProfileMetadata {
             plan_name: Some("free".to_string()),
             quota: quota_with_five_hour(),
@@ -456,8 +466,9 @@ mod tests {
 
         assert_eq!(
             metadata.plan_name.as_deref(),
-            Some("paid"),
-            "free plan with active quota window must be lifted to paid"
+            Some("unknown_paid"),
+            "free plan with active quota window must be flagged as \
+             unknown_paid so the UI can prompt re-login"
         );
     }
 

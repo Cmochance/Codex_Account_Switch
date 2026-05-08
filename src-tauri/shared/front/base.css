@@ -1879,6 +1879,38 @@ button.pager-pill:hover:not(:disabled) {
   line-height: 1.25;
 }
 
+/* Plan freshness signals (C1):
+ *  - .plan-check-stale: cached plan tier is older than ~36h, so the
+ *    label may not reflect a recent renewal / tier change. Subtle
+ *    leading dot lets the user spot which cards are due for the next
+ *    bulk refresh without crowding the layout.
+ *  - .plan-unknown-paid: id_token said free but quota implies paid;
+ *    plan tier can't be confirmed without re-login. Same dot, but in
+ *    the warning hue so it stands apart from a plain stale cache.
+ */
+.profile-plan.plan-check-stale::before,
+.current-plan.plan-check-stale::before {
+  content: "● ";
+  color: #b1b4be;
+  margin-right: 0.15em;
+  font-size: 0.7em;
+  vertical-align: 0.18em;
+}
+
+.profile-plan.plan-unknown-paid,
+.current-plan.plan-unknown-paid {
+  color: #b8860b;
+}
+
+.profile-plan.plan-unknown-paid::before,
+.current-plan.plan-unknown-paid::before {
+  content: "● ";
+  color: #d09b1e;
+  margin-right: 0.15em;
+  font-size: 0.7em;
+  vertical-align: 0.18em;
+}
+
 .profile-card.is-unavailable-card .profile-title-account,
 .profile-card.is-unavailable-card .profile-plan {
   color: #727684;
