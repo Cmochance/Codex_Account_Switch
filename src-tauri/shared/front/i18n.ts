@@ -41,6 +41,8 @@ const enMessages = {
   profileDeleteDisabled: "The active profile cannot be deleted or cleared",
   profileDeleteReady: "Delete this card or clear its account",
   profileBaseReady: "Set a custom Base Url for this profile",
+  profileBaseConfigured:
+    "Custom Base Url is set. ChatGPT / OAuth accounts will fail with this redirect — clear the Base Url before switching to one.",
   profileMetadataMissing: "Profile metadata not configured",
   subscriptionDaysLeft: "{plan} • {days} days left",
   noActiveProfile: "No active profile",
@@ -229,6 +231,8 @@ const messages: Record<Locale, Messages> = {
     profileDeleteDisabled: "当前正在使用的账号不可删除或清空",
     profileDeleteReady: "删除该卡片或清空绑定账号",
     profileBaseReady: "设置该账号的 Base Url",
+    profileBaseConfigured:
+      "已设置自定义 Base Url。ChatGPT / OAuth 账号在此 redirect 下会失败，切换到这类账号前请先清除 Base Url。",
     profileMetadataMissing: "未配置账号元数据",
     subscriptionDaysLeft: "{plan} • 剩余 {days} 天",
     noActiveProfile: "暂无当前账号",
