@@ -92,11 +92,13 @@ fn refresh_active_profile_quota_silent_inner() -> Result<CurrentQuotaResponse, C
     if let Ok(snapshot) =
         crate::shared::chatgpt_api::refresh_profile_via_api(&profile_name, &codex_home)
     {
+        let plan_type_from_api = snapshot.plan_type.clone();
         if let Some(quota) = snapshot.quota {
             let _ = crate::shared::metadata::sync_profile_metadata_from_auth_and_quota(
                 &profile_name,
                 quota,
                 Some(now_ms),
+                plan_type_from_api,
                 Some(&codex_home),
             );
             let _ =

@@ -34,6 +34,16 @@ struct IdTokenClaims {
     email: Option<String>,
     #[serde(rename = "https://api.openai.com/auth")]
     auth: Option<ChatGptAuthClaims>,
+    /// Older / variant id_token shapes seen in the wild that carry
+    /// `chatgpt_plan_type` at the JWT payload root instead of inside the
+    /// nested `https://api.openai.com/auth` claim. Mirrored from
+    /// `steipete/CodexBar`'s defensive read so we don't lose the plan
+    /// when OpenAI shifts the field around. Subscription expiry is read
+    /// at the same level for the same reason.
+    #[serde(default)]
+    chatgpt_plan_type: Option<String>,
+    #[serde(default)]
+    chatgpt_subscription_active_until: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -75,11 +85,28 @@ fn load_auth_metadata_from_path(auth_path: &Path) -> Option<AuthDerivedMetadata>
 
     if let Some(claims) = claims {
         metadata.account_label = normalized_value(claims.email);
-        if let Some(auth_claims) = claims.auth {
+        let nested_plan = claims
+            .auth
+            .as_ref()
+            .and_then(|auth| normalized_value(auth.chatgpt_plan_type.clone()));
+        let nested_expiry = claims
+            .auth
+            .as_ref()
+            .and_then(|auth| normalized_value(auth.chatgpt_subscription_active_until.clone()));
+        let top_level_plan = normalized_value(claims.chatgpt_plan_type);
+        let top_level_expiry = normalized_value(claims.chatgpt_subscription_active_until);
+
+        let plan_name = nested_plan.or(top_level_plan);
+        let subscription_expires_at = nested_expiry.or(top_level_expiry);
+
+        // `has_plan_claims` is the signal apply_auth_metadata uses to
+        // decide whether to overwrite stored plan_name. It must remain
+        // true even when only the top-level fallback yielded a value,
+        // so a JWT shape change doesn't silently leave plan stale.
+        if claims.auth.is_some() || plan_name.is_some() || subscription_expires_at.is_some() {
             metadata.has_plan_claims = true;
-            metadata.plan_name = normalized_value(auth_claims.chatgpt_plan_type);
-            metadata.subscription_expires_at =
-                normalized_value(auth_claims.chatgpt_subscription_active_until);
+            metadata.plan_name = plan_name;
+            metadata.subscription_expires_at = subscription_expires_at;
         }
     }
 
@@ -239,20 +266,44 @@ pub fn sync_profile_metadata_from_auth(
     })
 }
 
+/// Sync metadata after a successful ChatGPT-API refresh round-trip.
+///
+/// `plan_type_from_api` is the live `plan_type` from `/wham/usage` —
+/// authoritative because OpenAI returns the user's *current* plan there,
+/// even when the cached id_token claim hasn't rotated yet (id_token only
+/// rotates on access_token refresh, which only fires when the access
+/// token is actually expired). When present and non-empty, it overrides
+/// the id_token-derived `plan_name`. Pass `None` from call sites that
+/// don't go through the API path (e.g. legacy `codex exec` refresh) so
+/// the id_token claim remains authoritative there.
 pub fn sync_profile_metadata_from_auth_and_quota(
     profile_name: &str,
     quota: QuotaSummary,
     quota_updated_at_ms: Option<u64>,
+    plan_type_from_api: Option<String>,
     codex_home: Option<&Path>,
 ) -> Result<ProfileMetadata, crate::errors::AppError> {
     let auth_metadata = validate_profile_name(profile_name)
         .ok()
         .and_then(|profile_name| load_auth_metadata(&profile_name, codex_home));
+    let api_plan_normalized = plan_type_from_api.and_then(|raw| {
+        let trimmed = raw.trim();
+        (!trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("replace-me"))
+            .then(|| trimmed.to_string())
+    });
     update_profile_metadata(profile_name, codex_home, move |metadata| {
         metadata.quota = quota;
         metadata.quota_updated_at_ms = quota_updated_at_ms;
         if let Some(auth_metadata) = auth_metadata {
             apply_auth_metadata(metadata, auth_metadata, true);
+        }
+        if let Some(api_plan) = api_plan_normalized {
+            // API plan_type wins over id_token claim. Re-run the
+            // free→paid heuristic so an id_token that just claimed
+            // "free" can still be lifted in the same pass when API
+            // didn't return a plan but quota indicates a paid window.
+            metadata.plan_name = Some(api_plan);
+            apply_paid_fallback_for_free_plan(metadata);
         }
     })
 }
@@ -357,5 +408,144 @@ mod tests {
 
             assert_eq!(metadata.plan_name.as_deref(), Some(plan_name));
         }
+    }
+
+    /// `apply_paid_fallback_for_free_plan` is exercised through
+    /// `apply_auth_metadata` above, but the API-plan override path
+    /// in `sync_profile_metadata_from_auth_and_quota` runs the same
+    /// helper after substituting the plan. Verify the helper itself
+    /// still flips a stale "free" claim to "paid" when quota is
+    /// present, so the API-plan override path inherits that behavior
+    /// without needing its own dedicated test infrastructure (which
+    /// would require a real on-disk profile.json).
+    #[test]
+    fn paid_fallback_flips_stale_free_when_quota_is_present() {
+        let mut metadata = ProfileMetadata {
+            plan_name: Some("free".to_string()),
+            quota: quota_with_five_hour(),
+            ..ProfileMetadata::default()
+        };
+
+        apply_paid_fallback_for_free_plan(&mut metadata);
+
+        assert_eq!(
+            metadata.plan_name.as_deref(),
+            Some("paid"),
+            "free plan with active quota window must be lifted to paid"
+        );
+    }
+
+    #[test]
+    fn paid_fallback_leaves_explicit_paid_tier_untouched() {
+        let mut metadata = ProfileMetadata {
+            plan_name: Some("pro".to_string()),
+            quota: quota_with_five_hour(),
+            ..ProfileMetadata::default()
+        };
+
+        apply_paid_fallback_for_free_plan(&mut metadata);
+
+        assert_eq!(
+            metadata.plan_name.as_deref(),
+            Some("pro"),
+            "non-free plans must never be rewritten by the fallback"
+        );
+    }
+
+    #[test]
+    fn paid_fallback_leaves_free_plan_alone_without_quota() {
+        let mut metadata = ProfileMetadata {
+            plan_name: Some("free".to_string()),
+            ..ProfileMetadata::default()
+        };
+
+        apply_paid_fallback_for_free_plan(&mut metadata);
+
+        assert_eq!(
+            metadata.plan_name.as_deref(),
+            Some("free"),
+            "free plan without quota signal must stay free"
+        );
+    }
+
+    /// Assemble a JWT-like string from a JSON payload. Header and
+    /// signature are placeholders; only the payload matters for our
+    /// claim decoding. Base64-url-no-pad to match the production
+    /// decoding path.
+    fn synthesize_jwt(payload_json: &str) -> String {
+        let header = general_purpose::URL_SAFE_NO_PAD.encode(b"{}");
+        let payload = general_purpose::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
+        format!("{header}.{payload}.signature")
+    }
+
+    fn write_auth_with_id_token(dir: &Path, id_token: &str) {
+        let auth_json = format!(
+            "{{\"tokens\":{{\"id_token\":{}}}}}",
+            serde_json::Value::String(id_token.to_string())
+        );
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("auth.json"), auth_json).unwrap();
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir()
+            .join(format!("codex-switch-metadata-{name}-{unique}"));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn nested_chatgpt_plan_type_is_preferred_when_present() {
+        let payload = r#"{
+            "email": "user@example.com",
+            "https://api.openai.com/auth": {
+                "chatgpt_plan_type": "pro",
+                "chatgpt_subscription_active_until": "2099-01-01T00:00:00+00:00"
+            },
+            "chatgpt_plan_type": "free",
+            "chatgpt_subscription_active_until": "1999-01-01T00:00:00+00:00"
+        }"#;
+        let dir = temp_dir("nested-wins");
+        write_auth_with_id_token(&dir, &synthesize_jwt(payload));
+
+        let derived = load_auth_metadata_from_path(&dir.join("auth.json"))
+            .expect("auth metadata should parse");
+
+        assert_eq!(derived.plan_name.as_deref(), Some("pro"));
+        assert_eq!(
+            derived.subscription_expires_at.as_deref(),
+            Some("2099-01-01T00:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn top_level_chatgpt_plan_type_is_used_when_nested_missing() {
+        // Mirrors what we observe when OpenAI changes the JWT shape and
+        // drops the nested `https://api.openai.com/auth` claim — without
+        // this fallback the dashboard would silently lose the plan.
+        let payload = r#"{
+            "email": "user@example.com",
+            "chatgpt_plan_type": "plus",
+            "chatgpt_subscription_active_until": "2099-12-31T23:59:59+00:00"
+        }"#;
+        let dir = temp_dir("top-level-fallback");
+        write_auth_with_id_token(&dir, &synthesize_jwt(payload));
+
+        let derived = load_auth_metadata_from_path(&dir.join("auth.json"))
+            .expect("auth metadata should parse");
+
+        assert!(
+            derived.has_plan_claims,
+            "top-level plan presence must still set has_plan_claims"
+        );
+        assert_eq!(derived.plan_name.as_deref(), Some("plus"));
+        assert_eq!(
+            derived.subscription_expires_at.as_deref(),
+            Some("2099-12-31T23:59:59+00:00")
+        );
     }
 }

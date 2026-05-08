@@ -121,6 +121,7 @@ fn try_refresh_via_chatgpt_api(
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
+    let plan_type_from_api = snapshot.plan_type.clone();
     let Some(quota) = snapshot.quota else {
         return Ok(None);
     };
@@ -132,6 +133,7 @@ fn try_refresh_via_chatgpt_api(
         profile_name,
         quota,
         now_ms,
+        plan_type_from_api,
         Some(codex_home),
     )?;
     load_profiles_index(Some(codex_home))?;

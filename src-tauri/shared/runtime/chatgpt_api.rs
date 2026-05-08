@@ -113,16 +113,19 @@ const EXPIRY_SKEW_SECONDS: i64 = 60;
 
 /// Outcome of a single ChatGPT-API refresh round-trip.
 ///
-/// `plan_type` / `subscription_expires_at` are kept for future call sites
-/// (e.g. surfacing plan changes immediately rather than waiting for the
-/// next id_token rotation). Today they're populated but not consumed —
-/// `metadata::sync_profile_metadata_from_auth_and_quota` already re-derives
-/// the same fields from the up-to-date auth.json that the OAuth refresh
-/// path may have just rewritten.
+/// `plan_type` is the live plan from `/wham/usage`'s response —
+/// authoritative because OpenAI returns the user's *current* tier even
+/// when the cached id_token claim hasn't rotated yet. Callers feed it
+/// into `metadata::sync_profile_metadata_from_auth_and_quota` so the
+/// dashboard shows plan changes within a refresh cycle instead of
+/// waiting for an id_token re-issue.
+///
+/// `subscription_expires_at` is still derived from the id_token (the
+/// `/wham/usage` payload doesn't carry an expiry) and only used by
+/// callers that don't have a fresher source.
 #[derive(Debug, Clone, Default)]
 pub struct ChatGptApiSnapshot {
     pub quota: Option<QuotaSummary>,
-    #[allow(dead_code)]
     pub plan_type: Option<String>,
     #[allow(dead_code)]
     pub subscription_expires_at: Option<String>,
