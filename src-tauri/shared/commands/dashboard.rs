@@ -94,10 +94,15 @@ fn refresh_active_profile_quota_silent_inner() -> Result<CurrentQuotaResponse, C
     {
         let plan_type_from_api = snapshot.plan_type.clone();
         if let Some(quota) = snapshot.quota {
-            let _ = crate::shared::metadata::sync_profile_metadata_from_auth_and_quota(
+            // D1 split: independent quota and plan writes.
+            let _ = crate::shared::metadata::sync_profile_quota(
                 &profile_name,
                 quota,
                 Some(now_ms),
+                Some(&codex_home),
+            );
+            let _ = crate::shared::metadata::sync_profile_metadata_from_auth(
+                &profile_name,
                 plan_type_from_api,
                 Some(&codex_home),
             );
@@ -168,10 +173,15 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
             .unwrap_or(0);
         let plan_type_from_api = snapshot.plan_type.clone();
         if let Some(quota) = snapshot.quota {
-            let _ = crate::shared::metadata::sync_profile_metadata_from_auth_and_quota(
+            // D1 split: independent quota and plan writes.
+            let _ = crate::shared::metadata::sync_profile_quota(
                 &entry.folder_name,
                 quota,
                 Some(now_ms),
+                Some(&codex_home),
+            );
+            let _ = crate::shared::metadata::sync_profile_metadata_from_auth(
+                &entry.folder_name,
                 plan_type_from_api,
                 Some(&codex_home),
             );
