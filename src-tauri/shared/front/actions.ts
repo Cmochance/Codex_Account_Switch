@@ -232,6 +232,17 @@ function refreshProfileErrorMessage(error: unknown): string {
 }
 
 async function handleSwitchProfile(profile: string): Promise<void> {
+  // Guard against double-click / racing rerender: the disabled
+  // attribute on the button doesn't take effect until the next
+  // browser paint, so a fast second click can fire before the first
+  // switch's `runBlockingAction` flips `state.loading`. Without this
+  // guard the second IPC hits the backend lock and the user sees the
+  // SWITCH_IN_PROGRESS toast instead of a no-op. The other card
+  // actions (Refresh, Login, Delete) already had this check; Switch
+  // missed it.
+  if (state.loading || state.loginActiveProfile !== null || isRefreshPending(profile)) {
+    return;
+  }
   try {
     await runBlockingAction(async () => {
       await switchProfile(profile);

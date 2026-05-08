@@ -5,6 +5,7 @@ pub mod login_runtime;
 pub mod metadata;
 pub mod paths;
 pub mod profiles;
+pub mod process_lock;
 pub mod profiles_index;
 pub mod quota_routing;
 pub mod runtime_isolation;
