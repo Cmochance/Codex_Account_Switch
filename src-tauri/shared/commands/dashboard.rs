@@ -93,22 +93,23 @@ fn refresh_active_profile_quota_silent_inner() -> Result<CurrentQuotaResponse, C
         crate::shared::chatgpt_api::refresh_profile_via_api(&profile_name, &codex_home)
     {
         let plan_type_from_api = snapshot.plan_type.clone();
-        if let Some(quota) = snapshot.quota {
-            // D1 split: independent quota and plan writes.
-            let _ = crate::shared::metadata::sync_profile_quota(
-                &profile_name,
-                quota,
-                Some(now_ms),
-                Some(&codex_home),
-            );
-            let _ = crate::shared::metadata::sync_profile_metadata_from_auth(
-                &profile_name,
-                plan_type_from_api,
-                Some(&codex_home),
-            );
-            let _ =
-                crate::shared::profiles_index::load_profiles_index(Some(&codex_home));
-        }
+        // The API call succeeded — clear any stale quota even when
+        // `snapshot.quota` is None (downgraded-to-free path) so we
+        // don't render previous-tier numbers next to a freshly
+        // updated plan label. Plan update runs unconditionally so the
+        // dashboard catches downgrades the same way.
+        let _ = crate::shared::metadata::sync_profile_quota(
+            &profile_name,
+            snapshot.quota.unwrap_or_default(),
+            Some(now_ms),
+            Some(&codex_home),
+        );
+        let _ = crate::shared::metadata::sync_profile_metadata_from_auth(
+            &profile_name,
+            plan_type_from_api,
+            Some(&codex_home),
+        );
+        let _ = crate::shared::profiles_index::load_profiles_index(Some(&codex_home));
     }
 
     platform_runtime::profiles_index::load_current_live_quota(None).map_err(Into::into)
@@ -172,21 +173,23 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
             .and_then(|value| u64::try_from(value.as_millis()).ok())
             .unwrap_or(0);
         let plan_type_from_api = snapshot.plan_type.clone();
-        if let Some(quota) = snapshot.quota {
-            // D1 split: independent quota and plan writes.
-            let _ = crate::shared::metadata::sync_profile_quota(
-                &entry.folder_name,
-                quota,
-                Some(now_ms),
-                Some(&codex_home),
-            );
-            let _ = crate::shared::metadata::sync_profile_metadata_from_auth(
-                &entry.folder_name,
-                plan_type_from_api,
-                Some(&codex_home),
-            );
-            refreshed += 1;
-        }
+        // Update both quota and plan unconditionally on a successful
+        // API response. `unwrap_or_default()` clears stale paid-window
+        // data for downgraded-to-free profiles (the API returns no
+        // rate_limit for them); without this clear we'd show old
+        // 5h/weekly numbers next to a freshly-updated Free label.
+        let _ = crate::shared::metadata::sync_profile_quota(
+            &entry.folder_name,
+            snapshot.quota.unwrap_or_default(),
+            Some(now_ms),
+            Some(&codex_home),
+        );
+        let _ = crate::shared::metadata::sync_profile_metadata_from_auth(
+            &entry.folder_name,
+            plan_type_from_api,
+            Some(&codex_home),
+        );
+        refreshed += 1;
     }
 
     if refreshed > 0 {
