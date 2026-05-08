@@ -121,6 +121,7 @@ fn try_refresh_via_chatgpt_api(
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
+    let plan_type_from_api = snapshot.plan_type.clone();
     let Some(quota) = snapshot.quota else {
         return Ok(None);
     };
@@ -128,7 +129,13 @@ fn try_refresh_via_chatgpt_api(
         .duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|value| u64::try_from(value.as_millis()).ok());
-    sync_profile_metadata_from_auth_and_quota(profile_name, quota, now_ms, Some(codex_home))?;
+    sync_profile_metadata_from_auth_and_quota(
+        profile_name,
+        quota,
+        now_ms,
+        plan_type_from_api,
+        Some(codex_home),
+    )?;
     super::profiles_index::load_profiles_index(Some(codex_home))?;
     Ok(Some(profile_dir.to_string_lossy().into_owned()))
 }
@@ -189,10 +196,13 @@ pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
 
     copy_entry(&refreshed_auth_path, &auth_path)?;
     if let Some(snapshot) = refreshed_quota {
+        // Legacy `codex exec` path doesn't fetch a fresh plan_type, so
+        // pass None and let the id_token claim drive plan_name.
         sync_profile_metadata_from_auth_and_quota(
             &profile_name,
             snapshot.quota,
             snapshot.source_mtime_ms,
+            None,
             Some(&codex_home),
         )?;
     } else {

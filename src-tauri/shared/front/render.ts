@@ -204,11 +204,23 @@ export function planLine(planName: string | null, daysLeft: number | null): stri
     return t(state.locale, "profileMetadataMissing");
   }
 
-  if (formattedPlanName && daysLeft != null) {
+  // Hide the days-left suffix when it's <= 0. The cached
+  // `chatgpt_subscription_active_until` claim from the id_token does not
+  // automatically rotate when the subscription renews — it only
+  // refreshes on a full re-login or a successful OAuth refresh that
+  // re-issues claims, neither of which is guaranteed to happen for
+  // weeks on a quiet account. Showing a literal "Plus / 0 days" reads
+  // as "your subscription expired" when the account is in fact active.
+  // Safer to show just the plan name and let the next refresh decide.
+  if (formattedPlanName && daysLeft != null && daysLeft > 0) {
     return t(state.locale, "subscriptionDaysLeft", { plan: formattedPlanName, days: daysLeft });
   }
 
-  return formattedPlanName || t(state.locale, "subscriptionFallback", { days: daysLeft ?? "--" });
+  if (formattedPlanName) {
+    return formattedPlanName;
+  }
+
+  return t(state.locale, "subscriptionFallback", { days: daysLeft ?? "--" });
 }
 
 function buildMetricLineMarkup(
