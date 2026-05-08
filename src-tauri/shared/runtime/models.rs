@@ -24,6 +24,13 @@ pub struct ProfileMetadata {
     pub openai_base_url: Option<String>,
     pub quota: QuotaSummary,
     pub quota_updated_at_ms: Option<u64>,
+    /// Wall-clock millis at the most recent confirmed plan check (any
+    /// path that proved plan info was current: API plan_type override,
+    /// fresh id_token claim, login). Independent of
+    /// `quota_updated_at_ms` because plan changes much less frequently
+    /// than usage and the UI surfaces plan freshness on its own. `None`
+    /// for legacy profile.json that predates the field.
+    pub last_plan_check_ms: Option<u64>,
 }
 
 impl ProfileMetadata {
@@ -91,6 +98,10 @@ pub struct ProfileIndexEntry {
     pub auth_present: bool,
     pub stored_quota: QuotaSummary,
     pub stored_quota_updated_at_ms: Option<u64>,
+    /// Mirrors `ProfileMetadata::last_plan_check_ms` after the index
+    /// rolls up profile.json. Lets the dashboard show plan freshness
+    /// without re-reading per-profile metadata.
+    pub last_plan_check_ms: Option<u64>,
     pub auth_mtime_ms: Option<u64>,
     pub auth_size: Option<u64>,
     pub profile_mtime_ms: Option<u64>,

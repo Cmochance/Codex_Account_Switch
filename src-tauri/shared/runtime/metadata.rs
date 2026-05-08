@@ -259,11 +259,30 @@ pub fn sync_profile_metadata_from_auth(
     let auth_metadata = validate_profile_name(profile_name)
         .ok()
         .and_then(|profile_name| load_auth_metadata(&profile_name, codex_home));
+    let now_ms = current_time_ms();
     update_profile_metadata(profile_name, codex_home, |metadata| {
         if let Some(auth_metadata) = auth_metadata {
+            // `has_plan_claims` here means the id_token actually carried
+            // plan info (nested or top-level), which counts as a
+            // confirmed plan check — distinct from `quota_updated_at_ms`
+            // since plan moves on a different cadence than usage.
+            let plan_confirmed = auth_metadata.has_plan_claims;
             apply_auth_metadata(metadata, auth_metadata, true);
+            if plan_confirmed {
+                metadata.last_plan_check_ms = now_ms;
+            }
         }
     })
+}
+
+/// Wall-clock millis since the Unix epoch, returning `None` only when
+/// the system clock is set before 1970 (effectively impossible on
+/// shipping macOS / Windows hardware).
+fn current_time_ms() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok())
 }
 
 /// Sync metadata after a successful ChatGPT-API refresh round-trip.
@@ -291,10 +310,13 @@ pub fn sync_profile_metadata_from_auth_and_quota(
         (!trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("replace-me"))
             .then(|| trimmed.to_string())
     });
+    let now_ms = current_time_ms();
     update_profile_metadata(profile_name, codex_home, move |metadata| {
         metadata.quota = quota;
         metadata.quota_updated_at_ms = quota_updated_at_ms;
+        let mut plan_confirmed = false;
         if let Some(auth_metadata) = auth_metadata {
+            plan_confirmed |= auth_metadata.has_plan_claims;
             apply_auth_metadata(metadata, auth_metadata, true);
         }
         if let Some(api_plan) = api_plan_normalized {
@@ -304,6 +326,10 @@ pub fn sync_profile_metadata_from_auth_and_quota(
             // didn't return a plan but quota indicates a paid window.
             metadata.plan_name = Some(api_plan);
             apply_paid_fallback_for_free_plan(metadata);
+            plan_confirmed = true;
+        }
+        if plan_confirmed {
+            metadata.last_plan_check_ms = now_ms;
         }
     })
 }

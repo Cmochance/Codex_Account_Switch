@@ -117,7 +117,18 @@ fn try_refresh_via_chatgpt_api(
     codex_home: &Path,
     profile_dir: &Path,
 ) -> AppResult<Option<String>> {
-    let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api(profile_name, codex_home) {
+    // User-initiated card refresh: force OAuth token rotation so
+    // id_token claims (plan tier, subscription expiry) move within a
+    // single click instead of waiting for the access_token to expire.
+    // The 5-min silent dashboard ticker stays on the cheap path; only
+    // the explicit Refresh button takes the heavier hit.
+    let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api_with_options(
+        profile_name,
+        codex_home,
+        crate::shared::chatgpt_api::RefreshOptions {
+            force_token_rotation: true,
+        },
+    ) {
         Ok(value) => value,
         Err(_) => return Ok(None),
     };

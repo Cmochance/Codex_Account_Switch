@@ -187,9 +187,45 @@ pub fn profile_supports_api_refresh(profile_dir: &Path) -> bool {
 /// is malformed, the network call fails, or the refreshed access token
 /// still cannot reach the API. Callers in `refresh_runtime::refresh_profile`
 /// treat any error here as a signal to fall back to the legacy path.
+///
+/// Equivalent to [`refresh_profile_via_api_with_options`] with
+/// `force_token_rotation = false`. Used by the silent dashboard ticker
+/// which prefers the cheap path (skip OAuth refresh when access_token
+/// is still valid).
 pub fn refresh_profile_via_api(
     profile_name: &str,
     codex_home: &Path,
+) -> AppResult<ChatGptApiSnapshot> {
+    refresh_profile_via_api_with_options(
+        profile_name,
+        codex_home,
+        RefreshOptions::default(),
+    )
+}
+
+/// Knobs for `refresh_profile_via_api_with_options`. Today the only knob
+/// is `force_token_rotation`; future fields can land here without
+/// reshaping every call site.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RefreshOptions {
+    /// When `true`, always run the OAuth refresh round-trip before the
+    /// usage call, even if the cached access_token is still valid. This
+    /// is what user-initiated card refreshes want: the id_token claims
+    /// (plan tier, subscription expiry) only rotate as a side-effect of
+    /// the refresh endpoint, so without forcing one a quiet account can
+    /// stay stale for hours.
+    pub force_token_rotation: bool,
+}
+
+/// Like [`refresh_profile_via_api`] but lets the caller force an OAuth
+/// refresh (rotating the id_token claims) regardless of access_token
+/// expiry. User-initiated card refreshes use this so plan / subscription
+/// fields move within a single click instead of waiting for the cached
+/// access_token to actually expire.
+pub fn refresh_profile_via_api_with_options(
+    profile_name: &str,
+    codex_home: &Path,
+    options: RefreshOptions,
 ) -> AppResult<ChatGptApiSnapshot> {
     let profile_dir = get_backup_root(Some(codex_home)).join(profile_name);
     if !profile_dir.is_dir() {
@@ -208,7 +244,8 @@ pub fn refresh_profile_via_api(
     }
 
     let client = build_http_client()?;
-    let usage_payload = fetch_usage_with_retry(&client, &profile_dir, &auth)?;
+    let usage_payload =
+        fetch_usage_with_retry(&client, &profile_dir, &auth, options.force_token_rotation)?;
     let plan_type = usage_payload
         .plan_type
         .clone()
@@ -323,11 +360,16 @@ fn fetch_usage_with_retry(
     client: &Client,
     profile_dir: &Path,
     auth: &ProfileAuthFile,
+    force_token_rotation: bool,
 ) -> AppResult<RateLimitStatusPayload> {
     // 1) Refresh proactively if the JWT is already expired or about to
-    //    expire. Avoids a guaranteed 401 + retry pair.
+    //    expire. Avoids a guaranteed 401 + retry pair. When the caller
+    //    forces rotation, refresh unconditionally — id_token claims
+    //    (plan tier, subscription expiry) only rotate as a side-effect
+    //    of the OAuth refresh endpoint, so user-initiated refreshes
+    //    must take this path even when the access_token is still valid.
     let mut working_auth = auth.clone();
-    if access_token_expired(&working_auth.access_token) {
+    if force_token_rotation || access_token_expired(&working_auth.access_token) {
         working_auth = refresh_oauth_tokens(client, profile_dir, &working_auth)?;
     }
 

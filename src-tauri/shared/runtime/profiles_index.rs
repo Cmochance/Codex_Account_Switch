@@ -60,6 +60,7 @@ fn build_profile_index_entry(profile_name: &str, codex_home: &Path) -> ProfileIn
         auth_present: auth_path.is_file(),
         stored_quota: metadata.quota,
         stored_quota_updated_at_ms: metadata.quota_updated_at_ms,
+        last_plan_check_ms: metadata.last_plan_check_ms,
         auth_mtime_ms,
         auth_size,
         profile_mtime_ms,
