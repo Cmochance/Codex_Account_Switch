@@ -162,6 +162,14 @@ struct RateLimitWindow {
     used_percent: Option<f64>,
     #[serde(default)]
     reset_at: Option<i64>,
+    /// Length in minutes. OpenAI uses this to identify which window
+    /// (5h vs weekly) the entry belongs to. Position in the
+    /// primary/secondary pair is *usually* aligned with the size, but
+    /// real `token_count` events have been observed where a weekly
+    /// window arrived in the primary slot — see `quota_routing` for
+    /// the mapping logic.
+    #[serde(default)]
+    window_minutes: Option<i64>,
 }
 
 /// Cheap predicate the caller can hit before paying for an HTTP round-trip.
@@ -527,30 +535,39 @@ fn persist_refreshed_auth(profile_dir: &Path, auth: &ProfileAuthFile) -> AppResu
 }
 
 fn quota_summary_from_payload(payload: &RateLimitStatusPayload) -> Option<QuotaSummary> {
-    let rate_limit = payload.rate_limit.as_ref()?;
-    let primary = rate_limit
-        .primary_window
-        .as_ref()
-        .map(quota_window_from_rate_limit)
-        .unwrap_or_default();
-    let secondary = rate_limit
-        .secondary_window
-        .as_ref()
-        .map(quota_window_from_rate_limit)
-        .unwrap_or_default();
+    use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
 
-    if primary.remaining_percent.is_none()
-        && primary.refresh_at.is_none()
-        && secondary.remaining_percent.is_none()
-        && secondary.refresh_at.is_none()
-    {
+    let rate_limit = payload.rate_limit.as_ref()?;
+    let mut summary = QuotaSummary::default();
+    let mut any_data = false;
+
+    // Position is just a fallback; `window_minutes` is authoritative.
+    // OpenAI usually puts the 5h window in primary and weekly in
+    // secondary, but `token_count` events have been observed with the
+    // weekly window in the primary slot and secondary null. Routing by
+    // size means a Team plan whose only enforced window is weekly
+    // doesn't get its data labeled as 5h on the dashboard.
+    for (window, fallback) in [
+        (rate_limit.primary_window.as_ref(), QuotaSlot::FiveHour),
+        (rate_limit.secondary_window.as_ref(), QuotaSlot::Weekly),
+    ] {
+        let Some(window) = window else { continue };
+        let mapped = quota_window_from_rate_limit(window);
+        if mapped.remaining_percent.is_none() && mapped.refresh_at.is_none() {
+            continue;
+        }
+        any_data = true;
+        match slot_from_window_minutes(window.window_minutes, fallback) {
+            QuotaSlot::FiveHour => summary.five_hour = mapped,
+            QuotaSlot::Weekly => summary.weekly = mapped,
+        }
+    }
+
+    if !any_data {
         return None;
     }
 
-    Some(QuotaSummary {
-        five_hour: primary,
-        weekly: secondary,
-    })
+    Some(summary)
 }
 
 fn quota_window_from_rate_limit(window: &RateLimitWindow) -> QuotaWindow {
@@ -681,6 +698,66 @@ mod tests {
         }))
         .unwrap();
         assert!(quota_summary_from_payload(&payload).is_none());
+    }
+
+    #[test]
+    fn quota_summary_routes_by_window_minutes_when_weekly_lands_in_primary_slot() {
+        // Real session JSONL audit on the maintainer's machine surfaced
+        // 2 events shaped like this — primary holds the weekly window,
+        // secondary is null. Without `window_minutes`-based routing,
+        // the dashboard would show the weekly remaining percent as if
+        // it were the 5h budget and leave the weekly bar empty.
+        let payload: RateLimitStatusPayload = serde_json::from_value(serde_json::json!({
+            "plan_type": "team",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 12.0,
+                    "reset_at": 1_716_000_000,
+                    "window_minutes": 10080
+                },
+                "secondary_window": null
+            }
+        }))
+        .unwrap();
+
+        let quota = quota_summary_from_payload(&payload).unwrap();
+
+        assert!(
+            quota.five_hour.remaining_percent.is_none()
+                && quota.five_hour.refresh_at.is_none(),
+            "5h slot must stay empty when only the weekly window is present"
+        );
+        // 100 - 12 = 88
+        assert_eq!(quota.weekly.remaining_percent, Some(88));
+        assert!(quota.weekly.refresh_at.is_some());
+    }
+
+    #[test]
+    fn quota_summary_routes_by_window_minutes_when_five_hour_lands_in_secondary_slot() {
+        // Symmetric guard: a 5h window arriving in the secondary slot
+        // (e.g. an upstream that puts the longer/older window first)
+        // should still be routed to `five_hour`, not `weekly`.
+        let payload: RateLimitStatusPayload = serde_json::from_value(serde_json::json!({
+            "plan_type": "plus",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 12.0,
+                    "reset_at": 1_716_000_000,
+                    "window_minutes": 10080
+                },
+                "secondary_window": {
+                    "used_percent": 30.0,
+                    "reset_at": 1_715_000_000,
+                    "window_minutes": 300
+                }
+            }
+        }))
+        .unwrap();
+
+        let quota = quota_summary_from_payload(&payload).unwrap();
+
+        assert_eq!(quota.weekly.remaining_percent, Some(88));
+        assert_eq!(quota.five_hour.remaining_percent, Some(70));
     }
 
     #[test]

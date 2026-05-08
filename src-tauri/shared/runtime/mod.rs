@@ -6,6 +6,7 @@ pub mod metadata;
 pub mod paths;
 pub mod profiles;
 pub mod profiles_index;
+pub mod quota_routing;
 pub mod runtime_isolation;
 pub mod session_files;
 pub mod session_usage;

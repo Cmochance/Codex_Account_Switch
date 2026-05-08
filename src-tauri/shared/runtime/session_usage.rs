@@ -7,10 +7,8 @@ use serde::Deserialize;
 use crate::models::{QuotaSummary, QuotaWindow};
 
 use super::paths::get_codex_home;
+use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
 use super::session_files::{collect_jsonl_files, file_modified_ms};
-
-const FIVE_HOUR_WINDOW_MINUTES: i64 = 300;
-const WEEKLY_WINDOW_MINUTES: i64 = 10_080;
 
 #[derive(Clone, Debug)]
 pub struct LocalQuotaSnapshot {
@@ -79,29 +77,28 @@ fn normalize_quota_window(window: QuotaWindow) -> QuotaWindow {
     }
 }
 
-fn is_free_plan(plan_name: Option<&str>) -> bool {
-    plan_name
-        .map(str::trim)
-        .is_some_and(|value| value.eq_ignore_ascii_case("free"))
-}
-
 pub fn normalize_quota_summary(
     quota: Option<QuotaSummary>,
-    plan_name: Option<&str>,
+    _plan_name: Option<&str>,
     has_account_identity: bool,
 ) -> QuotaSummary {
+    // `_plan_name` used to gate whether the 5h window was zeroed out
+    // for plans labeled "free". Two reasons that gate is gone now:
+    //   1. With `quota_routing` correctly bucketing by `window_minutes`,
+    //      a Team account whose only enforced window is weekly no
+    //      longer leaks into the 5h slot, so there's nothing to zero.
+    //   2. `apply_paid_fallback_for_free_plan` flips a stale "free"
+    //      claim to `unknown_paid` whenever any window has data, so
+    //      the few entries that actually arrive labeled as both
+    //      "free" + non-empty 5h are intentional signals worth
+    //      surfacing rather than silently masking.
     if !has_account_identity {
         return QuotaSummary::default();
     }
 
     let quota = quota.unwrap_or_default();
-
     QuotaSummary {
-        five_hour: if is_free_plan(plan_name) {
-            QuotaWindow::default()
-        } else {
-            normalize_quota_window(quota.five_hour)
-        },
+        five_hour: normalize_quota_window(quota.five_hour),
         weekly: normalize_quota_window(quota.weekly),
     }
 }
@@ -122,20 +119,6 @@ fn quota_window_from_rate_limit(window: Option<SessionRateLimitWindow>) -> Quota
     }
 }
 
-#[derive(Clone, Copy)]
-enum QuotaSlot {
-    FiveHour,
-    Weekly,
-}
-
-fn slot_from_window(window: &SessionRateLimitWindow, fallback: QuotaSlot) -> QuotaSlot {
-    match window.window_minutes {
-        Some(FIVE_HOUR_WINDOW_MINUTES) => QuotaSlot::FiveHour,
-        Some(WEEKLY_WINDOW_MINUTES) => QuotaSlot::Weekly,
-        _ => fallback,
-    }
-}
-
 fn apply_rate_limit_window(
     summary: &mut QuotaSummary,
     window: Option<SessionRateLimitWindow>,
@@ -145,7 +128,7 @@ fn apply_rate_limit_window(
         return;
     };
 
-    let slot = slot_from_window(&window, fallback);
+    let slot = slot_from_window_minutes(window.window_minutes, fallback);
     let quota_window = quota_window_from_rate_limit(Some(window));
 
     match slot {

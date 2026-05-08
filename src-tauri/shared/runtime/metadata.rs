@@ -169,12 +169,21 @@ fn is_free_plan(plan_name: Option<&str>) -> bool {
         .is_some_and(|value| value.eq_ignore_ascii_case("free"))
 }
 
-fn quota_has_five_hour_window(quota: &QuotaSummary) -> bool {
-    quota.five_hour.remaining_percent.is_some() || quota.five_hour.refresh_at.is_some()
+/// True when *either* rate-limit window has data. Both 5h and weekly
+/// signal "this account has a paid quota allotment" — Plus / Pro
+/// surface 5h, Team / Enterprise surface weekly. The previous version
+/// of this helper only checked 5h, which silently mis-classified
+/// weekly-only accounts whose id_token still claimed `free`.
+fn quota_has_paid_window(quota: &QuotaSummary) -> bool {
+    let five_hour_present =
+        quota.five_hour.remaining_percent.is_some() || quota.five_hour.refresh_at.is_some();
+    let weekly_present =
+        quota.weekly.remaining_percent.is_some() || quota.weekly.refresh_at.is_some();
+    five_hour_present || weekly_present
 }
 
 fn apply_paid_fallback_for_free_plan(metadata: &mut ProfileMetadata) {
-    if is_free_plan(metadata.plan_name.as_deref()) && quota_has_five_hour_window(&metadata.quota) {
+    if is_free_plan(metadata.plan_name.as_deref()) && quota_has_paid_window(&metadata.quota) {
         metadata.plan_name = Some(UNKNOWN_PAID_PLAN_NAME.to_string());
     }
 }
@@ -487,6 +496,34 @@ mod tests {
             metadata.plan_name.as_deref(),
             Some("free"),
             "free plan without quota signal must stay free"
+        );
+    }
+
+    #[test]
+    fn paid_fallback_flips_stale_free_when_only_weekly_window_present() {
+        // Team / Enterprise accounts may surface only a weekly window
+        // (no 5h budget enforcement). Before the routing fix, the only
+        // way `apply_paid_fallback_for_free_plan` would trigger was a
+        // 5h signal — so a Team account whose id_token still claimed
+        // `free` could keep showing "Free" with weekly quota visible.
+        let mut metadata = ProfileMetadata {
+            plan_name: Some("free".to_string()),
+            quota: QuotaSummary {
+                five_hour: QuotaWindow::default(),
+                weekly: QuotaWindow {
+                    remaining_percent: Some(82),
+                    refresh_at: Some("2026-05-15 12:00".to_string()),
+                },
+            },
+            ..ProfileMetadata::default()
+        };
+
+        apply_paid_fallback_for_free_plan(&mut metadata);
+
+        assert_eq!(
+            metadata.plan_name.as_deref(),
+            Some("unknown_paid"),
+            "weekly-only quota implies a paid tier just as much as 5h does"
         );
     }
 
