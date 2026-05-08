@@ -12,34 +12,39 @@
 
 ## Phase A — zero-risk fixes (one PR)
 
-- [ ] **A1.** Persist `wham/usage.plan_type` into `ProfileMetadata`
+- [x] **A1.** Persist `wham/usage.plan_type` into `ProfileMetadata`
       Pipe the API-derived plan into `sync_profile_metadata_from_auth_and_quota`,
       preferring it over the id_token claim. Drop the `#[allow(dead_code)]` on
       `ChatGptApiSnapshot.plan_type`. Remove `apply_paid_fallback_for_free_plan`
       once the API path supersedes it.
-- [ ] **A2.** Top-level `chatgpt_plan_type` fallback in id_token decode
+- [x] **A2.** Top-level `chatgpt_plan_type` fallback in id_token decode
       Mirror CodexBar's defensive fallback: if `auth.chatgpt_plan_type` is
       missing in the nested `https://api.openai.com/auth` claim, look at the
       top-level `chatgpt_plan_type`. One-line guard against schema drift.
-- [ ] **A3.** Hide misleading "0 days" plan label
+- [x] **A3.** Hide misleading "0 days" plan label
       `planLine(plan, daysLeft)` should drop the days suffix when the cached
       `subscription_expires_at` is absent or already past. Optionally surface a
       subtle "needs refresh" hint instead.
 
-PR: _(to be created)_
+PR: #19 (merged 2026-05-08)
 
 ## Phase B — proactive freshness (one or two PRs)
 
-- [ ] **B1.** Force OAuth refresh on user-initiated card refresh
-      Add `refresh_oauth_tokens_force` and call it from the user-clicked refresh
-      path so id_token claims rotate even when the access_token still has time
-      left. Silent ticker keeps the cheap path.
-- [ ] **B2.** Day-rollover background pass over all OAuth profiles
-      App startup + once per local-day boundary: serialize through every OAuth
-      profile and refresh plan + quota best-effort. Failures swallowed.
-- [ ] **B3.** Track `last_plan_check_ms` separately from `last_refresh` and
+- [x] **B1.** Force OAuth refresh on user-initiated card refresh
+      `RefreshOptions { force_token_rotation }` plumbed through
+      `refresh_profile_via_api_with_options`. mac/win `try_refresh_via_chatgpt_api`
+      now sets `force_token_rotation: true`. The 5-min silent ticker keeps the
+      cheap path.
+- [x] **B2.** Day-rollover background pass over all OAuth profiles
+      New Tauri command `refresh_all_oauth_profile_plans_silent` walks every
+      OAuth profile, forces a token rotation, and rolls plan + quota into
+      metadata. Frontend kicks it on bootstrap (after first dashboard render)
+      and on every local-day rollover (10-min polling against
+      `Date.toDateString()`).
+- [x] **B3.** Track `last_plan_check_ms` separately from `last_refresh` and
       `quota_updated_at_ms`, so the UI can show plan freshness independently of
-      quota freshness.
+      quota freshness. Stamped by `sync_profile_metadata_from_auth*` whenever a
+      plan is confirmed (id_token claim or API plan_type).
 
 PR: _(to be created)_
 

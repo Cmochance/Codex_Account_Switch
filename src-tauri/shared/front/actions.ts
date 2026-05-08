@@ -29,6 +29,7 @@ import {
   openProfileFolder,
   loginProfile,
   refreshActiveProfileQuotaSilent,
+  refreshAllOauthProfilePlansSilent,
   refreshProfile,
   renameProfile,
   switchProfile,
@@ -721,11 +722,49 @@ export function bootstrap(): void {
     void refreshActiveQuotaSilently();
   }, 5 * 60_000);
 
+  // Bulk plan refresh: forces an OAuth refresh on every OAuth profile so
+  // the cached id_token claims (plan tier, subscription expiry) move
+  // forward even for inactive profiles that the 5-min ticker never
+  // visits. Run once at startup (after the initial dashboard load) and
+  // then once per local-day rollover. Failures inside the backend are
+  // swallowed per-profile, so this never surfaces a toast.
+  scheduleDailyPlanRefresh();
+
   state.loading = true;
   rerenderDashboard();
   void refreshAllData().finally(() => {
     state.loading = false;
     rerenderDashboard();
     void handleCheckUpdate(true);
+    // Kick the bulk plan refresh after the dashboard's first render so
+    // the user sees their cards immediately without waiting on N
+    // serial OAuth refreshes.
+    void refreshAllOauthProfilePlansSilent().catch(() => {
+      // Best-effort; backend already swallows per-profile errors.
+    });
   });
+}
+
+/// Detect local-day rollovers (midnight in the user's timezone) by
+/// comparing the cached date string against `new Date().toDateString()`
+/// every 10 minutes. When the date changes, kick a bulk plan refresh so
+/// the dashboard reflects subscription renewals / plan switches that
+/// happened overnight. The 10-minute polling cadence is short enough
+/// that the user never sees stale data more than ~10 min into a new
+/// day, but long enough that we don't spin the event loop.
+function scheduleDailyPlanRefresh(): void {
+  let lastBulkDateKey = new Date().toDateString();
+  window.setInterval(
+    () => {
+      const today = new Date().toDateString();
+      if (today === lastBulkDateKey) {
+        return;
+      }
+      lastBulkDateKey = today;
+      void refreshAllOauthProfilePlansSilent().catch(() => {
+        // Best-effort; backend already swallows per-profile errors.
+      });
+    },
+    10 * 60_000,
+  );
 }

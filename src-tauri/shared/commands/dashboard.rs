@@ -108,3 +108,79 @@ fn refresh_active_profile_quota_silent_inner() -> Result<CurrentQuotaResponse, C
 
     platform_runtime::profiles_index::load_current_live_quota(None).map_err(Into::into)
 }
+
+/// Daily / startup background pass: serially refresh every OAuth profile
+/// with `force_token_rotation = true` so the cached id_token claims
+/// (plan tier, subscription expiry) move forward even for inactive
+/// profiles that the 5-min ticker never visits. Runs serially to avoid
+/// hammering OpenAI's auth endpoint with N parallel refresh requests.
+///
+/// Failures per-profile are silent — this is best-effort, never blocks
+/// the user, and the dashboard's other refresh paths remain the
+/// authoritative source if any individual refresh fails.
+///
+/// The frontend invokes this twice: once on app startup, then on every
+/// local-day rollover (detected by a setInterval comparing the cached
+/// last-run date with `new Date().toDateString()`).
+#[tauri::command]
+pub async fn refresh_all_oauth_profile_plans_silent() -> Result<u32, CommandError> {
+    tauri::async_runtime::spawn_blocking(refresh_all_oauth_profile_plans_silent_inner)
+        .await
+        .map_err(|error| {
+            CommandError::new(
+                "PLAN_BULK_REFRESH_TASK_FAILED",
+                format!("Bulk plan refresh task failed: {error}"),
+            )
+        })?
+}
+
+fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
+    let codex_home = crate::shared::paths::get_codex_home();
+    let backup_root = crate::shared::paths::get_backup_root(Some(&codex_home));
+    let index = crate::shared::profiles_index::load_profiles_index(Some(&codex_home))
+        .map_err(CommandError::from)?;
+
+    let mut refreshed: u32 = 0;
+    for entry in &index.profiles {
+        let profile_dir = backup_root.join(&entry.folder_name);
+        if !crate::shared::chatgpt_api::profile_supports_api_refresh(&profile_dir) {
+            continue;
+        }
+
+        let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api_with_options(
+            &entry.folder_name,
+            &codex_home,
+            crate::shared::chatgpt_api::RefreshOptions {
+                force_token_rotation: true,
+            },
+        ) {
+            Ok(value) => value,
+            // Best-effort: a single account failing must not abort the
+            // batch (one expired refresh_token shouldn't block the
+            // other four profiles from getting fresh plan info).
+            Err(_) => continue,
+        };
+
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|value| u64::try_from(value.as_millis()).ok())
+            .unwrap_or(0);
+        let plan_type_from_api = snapshot.plan_type.clone();
+        if let Some(quota) = snapshot.quota {
+            let _ = crate::shared::metadata::sync_profile_metadata_from_auth_and_quota(
+                &entry.folder_name,
+                quota,
+                Some(now_ms),
+                plan_type_from_api,
+                Some(&codex_home),
+            );
+            refreshed += 1;
+        }
+    }
+
+    if refreshed > 0 {
+        let _ = crate::shared::profiles_index::load_profiles_index(Some(&codex_home));
+    }
+    Ok(refreshed)
+}

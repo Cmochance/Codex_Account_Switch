@@ -186,6 +186,8 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
           profile: previewCurrentCard.folder_name,
           quota: clone(previewCurrentQuota),
         } as T;
+      case "refresh_all_oauth_profile_plans_silent":
+        return 0 as T;
       case "switch_profile": {
         const profile = (args?.payload as { profile?: string } | undefined)?.profile ?? previewCurrentCard.folder_name;
         const next = previewSnapshot.profiles.find((entry) => entry.folder_name === profile);
@@ -343,6 +345,10 @@ export function getCurrentLiveQuota(): Promise<CurrentQuotaResponse> {
 
 export function refreshActiveProfileQuotaSilent(): Promise<CurrentQuotaResponse> {
   return invokeCommand<CurrentQuotaResponse>("refresh_active_profile_quota_silent");
+}
+
+export function refreshAllOauthProfilePlansSilent(): Promise<number> {
+  return invokeCommand<number>("refresh_all_oauth_profile_plans_silent");
 }
 
 export function switchProfile(profile: string): Promise<SwitchResponse> {
