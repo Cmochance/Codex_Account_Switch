@@ -237,6 +237,7 @@ fn build_profile_card(entry: &ProfileIndexEntry, current_profile: Option<&str>) 
             entry.plan_name.as_deref(),
             entry.has_account_identity,
         ),
+        last_plan_check_ms: entry.last_plan_check_ms,
     }
 }
 
@@ -253,6 +254,7 @@ fn build_current_card(entry: &ProfileIndexEntry, codex_home: &Path) -> CurrentCa
             entry.subscription_expires_at.as_deref(),
         ),
         profile_folder_path: profile_dir.to_string_lossy().into_owned(),
+        last_plan_check_ms: entry.last_plan_check_ms,
     }
 }
 

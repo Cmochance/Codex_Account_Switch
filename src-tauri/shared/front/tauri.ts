@@ -59,6 +59,7 @@ const previewProfiles: ProfileCard[] = [
     subscription_days_left: 18,
     openai_base_url: null,
     quota: quota(84, "3小时后刷新", 61, "2天4小时后刷新"),
+    last_plan_check_ms: Date.now() - 30 * 60 * 1000,
   },
   {
     folder_name: "workspace-beta",
@@ -71,6 +72,7 @@ const previewProfiles: ProfileCard[] = [
     subscription_days_left: 12,
     openai_base_url: null,
     quota: quota(58, "1小时后刷新", 42, "4天6小时后刷新"),
+    last_plan_check_ms: Date.now() - 4 * 60 * 60 * 1000,
   },
   {
     folder_name: "workspace-gamma",
@@ -83,6 +85,7 @@ const previewProfiles: ProfileCard[] = [
     subscription_days_left: null,
     openai_base_url: null,
     quota: quota(null, "6小时后刷新", null, "7天2小时后刷新"),
+    last_plan_check_ms: null,
   },
   {
     folder_name: "workspace-delta",
@@ -95,6 +98,7 @@ const previewProfiles: ProfileCard[] = [
     subscription_days_left: 31,
     openai_base_url: "https://example.com/v1",
     quota: quota(73, "2小时后刷新", 88, "1天9小时后刷新"),
+    last_plan_check_ms: Date.now() - 8 * 24 * 60 * 60 * 1000,
   },
   {
     folder_name: "workspace-epsilon",
@@ -107,6 +111,7 @@ const previewProfiles: ProfileCard[] = [
     subscription_days_left: 18,
     openai_base_url: null,
     quota: quota(84, "3小时后刷新", 61, "2天4小时后刷新"),
+    last_plan_check_ms: Date.now() - 2 * 24 * 60 * 60 * 1000,
   },
   {
     folder_name: "workspace-zeta",
@@ -119,6 +124,7 @@ const previewProfiles: ProfileCard[] = [
     subscription_days_left: 31,
     openai_base_url: "https://example.com/v1",
     quota: quota(73, "2小时后刷新", 88, "1天9小时后刷新"),
+    last_plan_check_ms: null,
   },
 ];
 
@@ -130,6 +136,7 @@ let previewCurrentCard: CurrentCard = {
   plan_name: "Pro plan",
   subscription_days_left: 18,
   profile_folder_path: "/mock/workspace-alpha",
+  last_plan_check_ms: Date.now() - 30 * 60 * 1000,
 };
 
 let previewCurrentQuota: QuotaSummary = quota(84, "3小时后刷新", 61, "2天4小时后刷新");
@@ -200,6 +207,7 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
             plan_name: next.plan_name,
             subscription_days_left: next.subscription_days_left,
             profile_folder_path: `C:/mock/${next.folder_name}`,
+            last_plan_check_ms: next.last_plan_check_ms,
           };
           previewCurrentQuota = clone(next.quota);
           refreshPreviewSnapshot();
@@ -252,6 +260,7 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
             subscription_days_left: 30,
             openai_base_url: payload.openai_base_url ?? null,
             quota: quota(52, "5小时后刷新", 67, "3天后刷新"),
+            last_plan_check_ms: Date.now(),
           });
           refreshPreviewSnapshot();
         }

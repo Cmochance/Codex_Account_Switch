@@ -19,6 +19,7 @@ export interface ProfileCard {
   subscription_days_left: number | null;
   openai_base_url: string | null;
   quota: QuotaSummary;
+  last_plan_check_ms: number | null;
 }
 
 export interface CurrentCard {
@@ -29,6 +30,7 @@ export interface CurrentCard {
   plan_name: string | null;
   subscription_days_left: number | null;
   profile_folder_path: string;
+  last_plan_check_ms: number | null;
 }
 
 export interface PagingInfo {
