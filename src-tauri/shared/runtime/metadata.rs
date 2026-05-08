@@ -217,8 +217,22 @@ fn apply_auth_metadata(
     if has_plan_claims {
         metadata.plan_name = plan_name;
         metadata.subscription_expires_at = subscription_expires_at;
-        apply_paid_fallback_for_free_plan(metadata);
+        // The free→unknown_paid fallback is intentionally NOT applied
+        // here. It used to live at this layer but became wrong once
+        // the API plan_type override path was added — when the API
+        // confirms "free", we must respect that even if cached quota
+        // still shows a paid window left over from before a downgrade.
+        // Callers run the fallback themselves at the end of their sync
+        // flow when (and only when) no API plan_type is available.
     }
+}
+
+/// Apply the free→unknown_paid heuristic to a metadata blob whose
+/// plan_name was derived purely from the id_token (no fresher API
+/// signal available). Idempotent and safe to call on metadata where
+/// plan_name is None or already paid — both no-op.
+fn apply_paid_fallback_when_api_unavailable(metadata: &mut ProfileMetadata) {
+    apply_paid_fallback_for_free_plan(metadata)
 }
 
 fn hydrate_profile_metadata(
@@ -311,13 +325,25 @@ pub fn sync_profile_metadata_from_auth(
             apply_auth_metadata(metadata, auth_metadata, true);
         }
         if let Some(api_plan) = api_plan_normalized {
-            // API plan_type wins over id_token claim. Re-run the
-            // free→paid heuristic so an id_token that just claimed
-            // "free" can still be lifted in the same pass when the API
-            // confirmed a paid tier.
+            // API plan_type is authoritative. The id_token claim can
+            // lag behind real plan changes (downgrades especially: a
+            // user who moved Plus → Free can still see "plus" in
+            // their cached id_token claim until the next OAuth-issuer
+            // re-issue, which may never come during a refresh-token
+            // round-trip). The /wham/usage response always reflects
+            // the current backend state, so when it says "free" we
+            // trust it even if the cached `metadata.quota` still has
+            // a paid window left over from before the downgrade.
             metadata.plan_name = Some(api_plan);
-            apply_paid_fallback_for_free_plan(metadata);
             plan_confirmed = true;
+        } else {
+            // No API plan_type to lean on. Fall back to the heuristic
+            // that flips a stale "free" claim to `unknown_paid` when
+            // the cached quota looks paid. This is the right call only
+            // when we have *no* fresher source — once an API answer is
+            // available it's authoritative regardless of what the cached
+            // quota says.
+            apply_paid_fallback_when_api_unavailable(metadata);
         }
         if plan_confirmed {
             metadata.last_plan_check_ms = now_ms;
@@ -403,13 +429,17 @@ mod tests {
     }
 
     #[test]
-    fn free_plan_with_five_hour_quota_displays_unknown_paid() {
+    fn free_plan_with_five_hour_quota_displays_unknown_paid_when_api_unavailable() {
         let mut metadata = ProfileMetadata {
             quota: quota_with_five_hour(),
             ..ProfileMetadata::default()
         };
 
+        // The shape of the production sync flow when no API plan_type
+        // is available: apply_auth_metadata writes plan_name from the
+        // id_token, then the caller runs the paid-fallback helper.
         apply_auth_metadata(&mut metadata, auth_plan("free"), true);
+        apply_paid_fallback_when_api_unavailable(&mut metadata);
 
         // The id_token says "free" but quota data implies an active
         // paid window — flag as `unknown_paid` so the UI prompts the
@@ -422,8 +452,33 @@ mod tests {
         let mut metadata = ProfileMetadata::default();
 
         apply_auth_metadata(&mut metadata, auth_plan("free"), true);
+        apply_paid_fallback_when_api_unavailable(&mut metadata);
 
         assert_eq!(metadata.plan_name.as_deref(), Some("free"));
+    }
+
+    #[test]
+    fn apply_auth_metadata_does_not_fold_quota_into_plan_anymore() {
+        // Regression: `apply_auth_metadata` used to inline the
+        // paid-fallback heuristic. After the API-authoritative split
+        // it must NOT — otherwise an API answer like "free" coming
+        // through `sync_profile_metadata_from_auth` would be flipped
+        // to `unknown_paid` even when the API explicitly confirmed the
+        // downgrade. Pin that the function leaves quota out of plan.
+        let mut metadata = ProfileMetadata {
+            quota: quota_with_five_hour(),
+            ..ProfileMetadata::default()
+        };
+
+        apply_auth_metadata(&mut metadata, auth_plan("free"), true);
+
+        assert_eq!(
+            metadata.plan_name.as_deref(),
+            Some("free"),
+            "apply_auth_metadata must mirror the id_token claim verbatim — \
+             the paid fallback is the caller's job once it knows whether \
+             an API plan_type is available"
+        );
     }
 
     #[test]

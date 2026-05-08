@@ -134,18 +134,21 @@ fn try_refresh_via_chatgpt_api(
         Err(_) => return Ok(None),
     };
     let plan_type_from_api = snapshot.plan_type.clone();
-    let Some(quota) = snapshot.quota else {
-        return Ok(None);
-    };
     let now_ms = std::time::SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|value| u64::try_from(value.as_millis()).ok());
-    // D1 split: quota and plan are now updated independently. Order is
-    // irrelevant (disjoint fields), but the plan write must include the
-    // API plan_type override so the live tier wins over the cached
-    // id_token claim.
-    sync_profile_quota(profile_name, quota, now_ms, Some(codex_home))?;
+    // The API call succeeded — even if it returned no rate_limit data
+    // (typical for downgraded-to-free accounts whose previous Plus /
+    // Pro window cached on disk). Always clear stale quota in that
+    // case so the dashboard doesn't show old paid-window numbers
+    // alongside the now-correct Free plan label.
+    sync_profile_quota(
+        profile_name,
+        snapshot.quota.unwrap_or_default(),
+        now_ms,
+        Some(codex_home),
+    )?;
     sync_profile_metadata_from_auth(profile_name, plan_type_from_api, Some(codex_home))?;
     super::profiles_index::load_profiles_index(Some(codex_home))?;
     Ok(Some(profile_dir.to_string_lossy().into_owned()))
