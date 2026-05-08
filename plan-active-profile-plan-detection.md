@@ -65,11 +65,21 @@ PR: _(to be created)_
 
 PR: _(to be created)_
 
-## Phase D — architecture (parked)
+## Phase D — architecture
 
-- [ ] **D1.** Decouple plan-update path from quota-update path.
-- [ ] **D2.** Investigate `/accounts/check/v4-2023-04-27` as a more
-      authoritative plan/subscription endpoint than `/wham/usage`.
+- [x] **D1.** Decouple plan-update path from quota-update path.
+      `sync_profile_metadata_from_auth_and_quota` removed. `sync_profile_quota`
+      and `sync_profile_metadata_from_auth(profile, api_plan_override, home)`
+      are now the only two entry points. Callers that previously bundled
+      both arguments now make two writes; the operations touch disjoint
+      `ProfileMetadata` fields so order is irrelevant. Disk cost is one
+      extra ~1KB write per refresh, which is invisible in practice.
+- [~] **D2.** ~~Investigate `/accounts/check/v4-2023-04-27` as a more
+      authoritative plan/subscription endpoint than `/wham/usage`.~~
+      **Dropped.** The path's hard-coded `2023-04-27` date suffix telegraphs
+      that it's a versioned snapshot endpoint OpenAI may rotate / retire
+      without notice; reverse-engineering it carries ongoing maintenance
+      risk that A1's `/wham/usage.plan_type` already neutralizes.
 
 ## Audit findings (context)
 

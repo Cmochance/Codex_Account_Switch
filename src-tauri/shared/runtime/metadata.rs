@@ -259,25 +259,59 @@ pub fn load_profile_metadata(profile_name: &str, codex_home: Option<&Path>) -> P
     hydrate_profile_metadata(metadata, &profile_name, codex_home)
 }
 
+/// Re-derive the auth-backed slice of `ProfileMetadata` (account label,
+/// plan tier, subscription expiry) from disk and persist it.
+///
+/// `api_plan_type_override`, when present and non-empty, replaces the
+/// id_token-derived `plan_name`. Callers that just refreshed the
+/// ChatGPT-API `wham/usage` payload pass `Some(plan_type)` so the
+/// authoritative live tier wins over a possibly-stale id_token claim;
+/// the legacy `codex exec` path and the post-login flow pass `None`
+/// because they have no fresher source.
+///
+/// This is the plan-side half of the D1 split — the quota half is
+/// `sync_profile_quota`. The two operations used to live in a single
+/// `sync_profile_metadata_from_auth_and_quota` helper, but plan info
+/// and quota usage move on entirely different cadences (plan: weeks
+/// between renewals; quota: minutes within a 5-hour window) and the
+/// callers that needed both could just chain the two writes. Splitting
+/// keeps each function's contract small and keeps API plan overrides
+/// from being shoehorned alongside unrelated quota arguments.
 pub fn sync_profile_metadata_from_auth(
     profile_name: &str,
+    api_plan_type_override: Option<String>,
     codex_home: Option<&Path>,
 ) -> Result<ProfileMetadata, crate::errors::AppError> {
     let auth_metadata = validate_profile_name(profile_name)
         .ok()
         .and_then(|profile_name| load_auth_metadata(&profile_name, codex_home));
+    let api_plan_normalized = api_plan_type_override.and_then(|raw| {
+        let trimmed = raw.trim();
+        (!trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("replace-me"))
+            .then(|| trimmed.to_string())
+    });
     let now_ms = current_time_ms();
-    update_profile_metadata(profile_name, codex_home, |metadata| {
+    update_profile_metadata(profile_name, codex_home, move |metadata| {
+        let mut plan_confirmed = false;
         if let Some(auth_metadata) = auth_metadata {
             // `has_plan_claims` here means the id_token actually carried
             // plan info (nested or top-level), which counts as a
             // confirmed plan check — distinct from `quota_updated_at_ms`
             // since plan moves on a different cadence than usage.
-            let plan_confirmed = auth_metadata.has_plan_claims;
+            plan_confirmed |= auth_metadata.has_plan_claims;
             apply_auth_metadata(metadata, auth_metadata, true);
-            if plan_confirmed {
-                metadata.last_plan_check_ms = now_ms;
-            }
+        }
+        if let Some(api_plan) = api_plan_normalized {
+            // API plan_type wins over id_token claim. Re-run the
+            // free→paid heuristic so an id_token that just claimed
+            // "free" can still be lifted in the same pass when the API
+            // confirmed a paid tier.
+            metadata.plan_name = Some(api_plan);
+            apply_paid_fallback_for_free_plan(metadata);
+            plan_confirmed = true;
+        }
+        if plan_confirmed {
+            metadata.last_plan_check_ms = now_ms;
         }
     })
 }
@@ -290,55 +324,6 @@ fn current_time_ms() -> Option<u64> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|value| u64::try_from(value.as_millis()).ok())
-}
-
-/// Sync metadata after a successful ChatGPT-API refresh round-trip.
-///
-/// `plan_type_from_api` is the live `plan_type` from `/wham/usage` —
-/// authoritative because OpenAI returns the user's *current* plan there,
-/// even when the cached id_token claim hasn't rotated yet (id_token only
-/// rotates on access_token refresh, which only fires when the access
-/// token is actually expired). When present and non-empty, it overrides
-/// the id_token-derived `plan_name`. Pass `None` from call sites that
-/// don't go through the API path (e.g. legacy `codex exec` refresh) so
-/// the id_token claim remains authoritative there.
-pub fn sync_profile_metadata_from_auth_and_quota(
-    profile_name: &str,
-    quota: QuotaSummary,
-    quota_updated_at_ms: Option<u64>,
-    plan_type_from_api: Option<String>,
-    codex_home: Option<&Path>,
-) -> Result<ProfileMetadata, crate::errors::AppError> {
-    let auth_metadata = validate_profile_name(profile_name)
-        .ok()
-        .and_then(|profile_name| load_auth_metadata(&profile_name, codex_home));
-    let api_plan_normalized = plan_type_from_api.and_then(|raw| {
-        let trimmed = raw.trim();
-        (!trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("replace-me"))
-            .then(|| trimmed.to_string())
-    });
-    let now_ms = current_time_ms();
-    update_profile_metadata(profile_name, codex_home, move |metadata| {
-        metadata.quota = quota;
-        metadata.quota_updated_at_ms = quota_updated_at_ms;
-        let mut plan_confirmed = false;
-        if let Some(auth_metadata) = auth_metadata {
-            plan_confirmed |= auth_metadata.has_plan_claims;
-            apply_auth_metadata(metadata, auth_metadata, true);
-        }
-        if let Some(api_plan) = api_plan_normalized {
-            // API plan_type wins over id_token claim. Re-run the
-            // free→paid heuristic so an id_token that just claimed
-            // "free" can still be lifted in the same pass when API
-            // didn't return a plan but quota indicates a paid window.
-            metadata.plan_name = Some(api_plan);
-            apply_paid_fallback_for_free_plan(metadata);
-            plan_confirmed = true;
-        }
-        if plan_confirmed {
-            metadata.last_plan_check_ms = now_ms;
-        }
-    })
 }
 
 pub fn sync_profile_quota(

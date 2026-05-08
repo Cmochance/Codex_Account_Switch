@@ -109,7 +109,8 @@ fn prepare_refresh_runtime_home(codex_home: &Path, profile_dir: &Path) -> AppRes
 ///   * `Ok(Some(path))` — quota was refreshed via HTTP and persisted.
 ///   * `Ok(None)` — HTTP path was not applicable or returned an empty
 ///     payload; caller should fall back to the legacy `codex exec` path.
-///   * `Err(_)` — only propagated if `sync_profile_metadata_from_auth_and_quota`
+///   * `Err(_)` — only propagated if `sync_profile_quota` or
+///     `sync_profile_metadata_from_auth`
 ///     fails after a successful HTTP fetch (the metadata write itself is
 ///     considered authoritative).
 fn try_refresh_via_chatgpt_api(
@@ -140,10 +141,13 @@ fn try_refresh_via_chatgpt_api(
         .duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|value| u64::try_from(value.as_millis()).ok());
-    crate::shared::metadata::sync_profile_metadata_from_auth_and_quota(
+    // D1 split: quota and plan are now updated independently. Order is
+    // irrelevant (disjoint fields), but the plan write must include the
+    // API plan_type override so the live tier wins over the cached
+    // id_token claim.
+    sync_profile_quota(profile_name, quota, now_ms, Some(codex_home))?;
+    crate::shared::metadata::sync_profile_metadata_from_auth(
         profile_name,
-        quota,
-        now_ms,
         plan_type_from_api,
         Some(codex_home),
     )?;
@@ -204,7 +208,9 @@ pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
     }
 
     copy_entry(&refreshed_auth_path, &auth_path)?;
-    sync_profile_metadata_from_auth(&profile_name, Some(&codex_home))?;
+    // Legacy `codex exec` refresh has no API plan_type to feed in; the
+    // id_token claim that codex just rotated is the only fresh signal.
+    sync_profile_metadata_from_auth(&profile_name, None, Some(&codex_home))?;
     if let Some(snapshot) = refreshed_quota {
         sync_profile_quota(
             &profile_name,

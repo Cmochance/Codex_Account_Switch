@@ -79,7 +79,7 @@ pub fn login_current_profile() -> AppResult<String> {
     }
 
     backup_root_state_to_profile(&current_profile, &codex_home, &backup_root)?;
-    sync_profile_metadata_from_auth(&current_profile, Some(&codex_home))?;
+    sync_profile_metadata_from_auth(&current_profile, None, Some(&codex_home))?;
     load_profiles_index(Some(&codex_home))?;
 
     Ok(profile_dir.to_string_lossy().into_owned())

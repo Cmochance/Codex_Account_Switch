@@ -236,7 +236,10 @@ pub fn login_profile_with_home<H: PlatformHooks + ?Sized>(
         atomic_publish_file(&runtime_auth, &live_auth)?;
     }
 
-    sync_profile_metadata_from_auth(&profile_name, Some(&codex_home))?;
+    // Login flow has no fresher plan signal than the new id_token codex
+    // just wrote, so let `sync_profile_metadata_from_auth` re-derive
+    // plan / label from disk. No API override needed.
+    sync_profile_metadata_from_auth(&profile_name, None, Some(&codex_home))?;
     load_profiles_index(Some(&codex_home))?;
 
     // Best-effort: keep the runtime dir around so the next login on this

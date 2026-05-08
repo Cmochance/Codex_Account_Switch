@@ -6,7 +6,7 @@ use crate::errors::{AppError, AppResult};
 use crate::platform;
 
 use super::fs_ops::{copy_entry, remove_path};
-use super::metadata::{sync_profile_metadata_from_auth, sync_profile_metadata_from_auth_and_quota};
+use super::metadata::{sync_profile_metadata_from_auth, sync_profile_quota};
 use super::paths::{
     get_backup_root, get_codex_home, get_refresh_runtime_dir, validate_profile_name,
 };
@@ -109,7 +109,8 @@ fn prepare_refresh_runtime_home(codex_home: &Path, profile_dir: &Path) -> AppRes
 ///   * `Ok(Some(path))` — quota was refreshed via HTTP and persisted.
 ///   * `Ok(None)` — HTTP path was not applicable or returned an empty
 ///     payload; caller should fall back to the legacy `codex exec` path.
-///   * `Err(_)` — only propagated if `sync_profile_metadata_from_auth_and_quota`
+///   * `Err(_)` — only propagated if `sync_profile_quota` or
+///     `sync_profile_metadata_from_auth`
 ///     fails after a successful HTTP fetch (the metadata write itself is
 ///     considered authoritative).
 fn try_refresh_via_chatgpt_api(
@@ -140,13 +141,12 @@ fn try_refresh_via_chatgpt_api(
         .duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|value| u64::try_from(value.as_millis()).ok());
-    sync_profile_metadata_from_auth_and_quota(
-        profile_name,
-        quota,
-        now_ms,
-        plan_type_from_api,
-        Some(codex_home),
-    )?;
+    // D1 split: quota and plan are now updated independently. Order is
+    // irrelevant (disjoint fields), but the plan write must include the
+    // API plan_type override so the live tier wins over the cached
+    // id_token claim.
+    sync_profile_quota(profile_name, quota, now_ms, Some(codex_home))?;
+    sync_profile_metadata_from_auth(profile_name, plan_type_from_api, Some(codex_home))?;
     super::profiles_index::load_profiles_index(Some(codex_home))?;
     Ok(Some(profile_dir.to_string_lossy().into_owned()))
 }
@@ -206,18 +206,21 @@ pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
     }
 
     copy_entry(&refreshed_auth_path, &auth_path)?;
+    // Legacy `codex exec` path: no fresher plan signal than the id_token
+    // codex just rotated. Quota update is independent — the D1 split
+    // means we issue two writes here on the with-snapshot branch, one
+    // for quota and one for the auth-derived plan slice. The cost is
+    // ~1KB of disk per refresh, the gain is that the plan path no
+    // longer has to thread quota arguments through call sites that
+    // don't care about quota.
+    sync_profile_metadata_from_auth(&profile_name, None, Some(&codex_home))?;
     if let Some(snapshot) = refreshed_quota {
-        // Legacy `codex exec` path doesn't fetch a fresh plan_type, so
-        // pass None and let the id_token claim drive plan_name.
-        sync_profile_metadata_from_auth_and_quota(
+        sync_profile_quota(
             &profile_name,
             snapshot.quota,
             snapshot.source_mtime_ms,
-            None,
             Some(&codex_home),
         )?;
-    } else {
-        sync_profile_metadata_from_auth(&profile_name, Some(&codex_home))?;
     }
     super::profiles_index::load_profiles_index(Some(&codex_home))?;
 
