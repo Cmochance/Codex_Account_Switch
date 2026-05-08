@@ -1,4 +1,3 @@
-use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
 use crate::errors::{AppError, AppResult};
@@ -8,46 +7,17 @@ use crate::platform::hooks::PlatformHooks;
 use super::fs_ops::{
     autosave_auth, backup_root_state_to_profile, overlay_directory_contents, set_active_marker,
 };
-use super::paths::{get_backup_root, get_codex_home, get_switch_lock_path, validate_profile_name};
+use super::paths::{get_backup_root, get_codex_home, validate_profile_name};
+use super::process_lock::{acquire_process_lock, ProcessLockGuard};
 use super::profiles::resolve_current_profile;
 use super::profiles_index::load_profiles_index;
 
-struct SwitchGuard {
-    lock_path: PathBuf,
-}
-
-impl Drop for SwitchGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.lock_path);
-    }
-}
-
-fn acquire_switch_lock(codex_home: Option<&Path>) -> AppResult<SwitchGuard> {
-    let lock_path = get_switch_lock_path(codex_home);
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            AppError::new(
-                "FS_CREATE_FAILED",
-                format!(
-                    "Failed to create lock directory {}: {error}",
-                    parent.display()
-                ),
-            )
-        })?;
-    }
-
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock_path)
-        .map_err(|_| {
-            AppError::new(
-                "SWITCH_IN_PROGRESS",
-                "A profile switch is already in progress.",
-            )
-        })?;
-
-    Ok(SwitchGuard { lock_path })
+fn acquire_switch_lock(codex_home: Option<&Path>) -> AppResult<ProcessLockGuard> {
+    acquire_process_lock(
+        codex_home,
+        "SWITCH_IN_PROGRESS",
+        "A profile switch is already in progress.",
+    )
 }
 
 pub fn switch_profile_with_home<H: PlatformHooks + ?Sized>(

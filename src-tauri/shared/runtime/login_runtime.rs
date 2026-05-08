@@ -16,13 +16,14 @@
 //! hook that simulates the OAuth handshake by writing an arbitrary
 //! `auth.json` into the sandboxed CODEX_HOME.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::errors::{AppError, AppResult};
 use crate::platform::hooks::PlatformHooks;
 
 use super::metadata::sync_profile_metadata_from_auth;
-use super::paths::{get_backup_root, get_codex_home, get_switch_lock_path, validate_profile_name};
+use super::paths::{get_backup_root, get_codex_home, validate_profile_name};
+use super::process_lock::{acquire_process_lock, ProcessLockGuard};
 use super::profiles::resolve_current_profile;
 use super::profiles_index::load_profiles_index;
 use super::runtime_isolation::{
@@ -30,44 +31,12 @@ use super::runtime_isolation::{
     RUNTIME_AUTH_FILENAME,
 };
 
-/// File-based mutex to serialize login / switch on the same backup root.
-/// Reuses the existing `.switch.lock` because login + switch both mutate
-/// `auth.json`s and must not interleave. Errors translate to `LOGIN_BUSY`
-/// from the login entry point so the UI can show a distinct message.
-struct LoginGuard {
-    lock_path: PathBuf,
-}
-
-impl Drop for LoginGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.lock_path);
-    }
-}
-
-fn acquire_login_lock(codex_home: &Path) -> AppResult<LoginGuard> {
-    let lock_path = get_switch_lock_path(Some(codex_home));
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            AppError::new(
-                "FS_CREATE_FAILED",
-                format!(
-                    "Failed to create lock directory {}: {error}",
-                    parent.display()
-                ),
-            )
-        })?;
-    }
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock_path)
-        .map_err(|_| {
-            AppError::new(
-                "LOGIN_BUSY",
-                "A profile login or switch is already in progress.",
-            )
-        })?;
-    Ok(LoginGuard { lock_path })
+fn acquire_login_lock(codex_home: &Path) -> AppResult<ProcessLockGuard> {
+    acquire_process_lock(
+        Some(codex_home),
+        "LOGIN_BUSY",
+        "A profile login or switch is already in progress.",
+    )
 }
 
 /// Build the sandboxed CODEX_HOME for codex login. Idempotent; safe to
@@ -419,8 +388,8 @@ mod tests {
     #[test]
     fn login_profile_rejects_concurrent_attempts_via_switch_lock() {
         let (codex_home, _profile_dir, runtime_home) = setup("concurrent");
-        // Pre-acquire the switch lock to simulate an in-flight switch.
-        let lock_path = get_switch_lock_path(Some(&codex_home));
+        // Pre-acquire the shared lock to simulate an in-flight switch.
+        let lock_path = super::super::paths::get_switch_lock_path(Some(&codex_home));
         std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
         let _staged = std::fs::OpenOptions::new()
             .write(true)
