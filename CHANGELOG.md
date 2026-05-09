@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.7 - 2026-05-10
+
+- **Critical** — fixed a latent hang in `codex login` cancellation. The previous PID-based cancel had a microsecond race window where a recycled PID could be SIGTERM'd between `wait_with_output` returning and the slot being cleared (worse on Windows where `taskkill /F /T` would nuke an unrelated process tree). The slot now holds the actual `Child` handle, and cancel calls `Child::kill()` directly. Both cancel and natural-exit paths funnel through a `drop_killed_child` helper that does `kill()` + `wait()` so we don't leak zombies on Unix.
+- **Critical** — fixed a latent buffer-fill hang in the login poll loop. With piped stdout/stderr, a verbose `codex login` could fill its 64 KB pipe buffer and block on write, leaving our `try_wait` loop seeing `Running` forever. Stdio is now drained concurrently in dedicated threads. Regression tests cover 256 KiB through both stdout and stderr.
+- Painted the per-card **Base** button red whenever a custom Base Url is set on that profile. Reuses the existing danger styling so the warning is consistent with the Delete button. Tooltip explains that ChatGPT / OAuth accounts will fail with a redirect and points to the workaround.
+- Refactored `InstallState` + `RealCodexPathSource` + the four codex-CLI Tauri command wrappers into a shared module backed by a `CodexPathResolver` trait, removing the byte-identical mac/Windows duplication. No behavior change.
+- a11y: login button now sets an explicit `aria-label` reflecting its dual role ("Log into <profile>" idle vs. "Cancel login for <profile>" while in flight), so screen readers that ignore `title` still announce the cancel semantics consistently.
+- Bounded the macOS `suggested_codex_cli_paths` PATH walk by a 500 ms soft deadline. Fixed locations (Codex.app, Homebrew, npm-global, etc) are checked first; the remaining PATH walk bails after the deadline so the Codex CLI path dialog opens promptly even when PATH includes slow NFS / SMB drives.
+
 ## 1.5.6 - 2026-05-09
 
 - Fixed the mojibake login toast on Windows: the previous `cmd /C codex login` fallback printed cmd.exe's GBK "command not found" message, which `String::from_utf8_lossy` mangled into U+FFFD replacement characters. `run_codex_login` now resolves the real codex path up-front and surfaces a typed `REAL_CODEX_NOT_FOUND` error; the front-end auto-opens a "Codex CLI path" dialog on this error.
