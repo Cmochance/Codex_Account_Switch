@@ -838,6 +838,7 @@ mod tests {
         let install_state = InstallState {
             real_codex_path: Some(npm_dir.join("codex").to_string_lossy().into_owned()),
             path_added_by_installer: false,
+            user_codex_path: None,
         };
         fs::write(
             runtime_dir.join("install_state.json"),
@@ -875,6 +876,7 @@ mod tests {
         let install_state = InstallState {
             real_codex_path: Some(alias_dir.join("codex.exe").to_string_lossy().into_owned()),
             path_added_by_installer: false,
+            user_codex_path: None,
         };
         fs::write(
             runtime_dir.join("install_state.json"),
