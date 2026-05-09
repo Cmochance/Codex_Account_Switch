@@ -15,12 +15,18 @@ pub use crate::shared::{
 
 pub mod actions {
     pub use super::profile_actions::{
-        add_profile, clear_codex_cli_path, clear_profile_account, delete_profile,
-        get_codex_cli_status, login_current_profile, login_profile, open_codex_app, open_contact,
-        open_profile_folder, open_releases, open_url, open_xiaohongshu, rename_profile,
-        set_codex_cli_path, update_profile_base_url,
+        add_profile, clear_profile_account, delete_profile, login_current_profile, login_profile,
+        open_codex_app, open_contact, open_profile_folder, open_releases, open_url,
+        open_xiaohongshu, rename_profile, update_profile_base_url,
     };
     pub use super::refresh_runtime::refresh_profile;
+}
+
+/// Exposed so the shared `codex_cli_path` Tauri command site can grab
+/// the Windows resolver without depending on the platform module
+/// directly.
+pub fn codex_cli_resolver() -> &'static dyn crate::shared::codex_cli_path::CodexPathResolver {
+    &process::WINDOWS_CODEX_PATH_RESOLVER
 }
 
 #[cfg(test)]

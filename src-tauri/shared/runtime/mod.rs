@@ -1,4 +1,5 @@
 pub mod chatgpt_api;
+pub mod codex_cli_path;
 pub mod config;
 pub mod fs_ops;
 pub mod login_cancel;

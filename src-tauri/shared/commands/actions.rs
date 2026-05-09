@@ -194,19 +194,32 @@ pub async fn check_update(
 
 #[tauri::command]
 pub fn get_codex_cli_status() -> Result<CodexCliStatus, CommandError> {
-    Ok(platform_runtime::actions::get_codex_cli_status())
+    let codex_home = platform_runtime::paths::get_codex_home();
+    Ok(crate::shared::codex_cli_path::get_codex_cli_status(
+        platform_runtime::codex_cli_resolver(),
+        &codex_home,
+    ))
 }
 
 #[tauri::command]
 pub fn set_codex_cli_path(
     payload: SetCodexCliPathPayload,
 ) -> Result<CodexCliStatus, CommandError> {
-    Ok(platform_runtime::actions::set_codex_cli_path(&payload.path)?)
+    let codex_home = platform_runtime::paths::get_codex_home();
+    Ok(crate::shared::codex_cli_path::set_codex_cli_path(
+        platform_runtime::codex_cli_resolver(),
+        &codex_home,
+        &payload.path,
+    )?)
 }
 
 #[tauri::command]
 pub fn clear_codex_cli_path() -> Result<CodexCliStatus, CommandError> {
-    Ok(platform_runtime::actions::clear_codex_cli_path())
+    let codex_home = platform_runtime::paths::get_codex_home();
+    Ok(crate::shared::codex_cli_path::clear_codex_cli_path(
+        platform_runtime::codex_cli_resolver(),
+        &codex_home,
+    ))
 }
 
 #[tauri::command]
