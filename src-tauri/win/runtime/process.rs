@@ -8,10 +8,10 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-
 use crate::errors::{AppError, AppResult};
 use crate::platform::hooks::PlatformHooks;
+use crate::shared::codex_cli_path::CodexPathResolver;
+pub use crate::shared::codex_cli_path::{InstallState, RealCodexPathSource};
 use crate::shared::login_cancel::wait_for_login_or_cancel;
 
 use super::paths::{get_codex_home, get_install_state_file};
@@ -30,19 +30,6 @@ static WINDOWS_PLATFORM_HOOKS: WindowsPlatformHooks = WindowsPlatformHooks;
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AppLaunchTarget {
     WindowsStore(String),
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct InstallState {
-    pub real_codex_path: Option<String>,
-    #[serde(default)]
-    pub path_added_by_installer: bool,
-    /// User-provided override for the real codex CLI path. Takes priority
-    /// over auto-discovery and install_state caching when valid. Set via
-    /// the "Codex 路径" dialog when auto-discovery fails or points at a
-    /// stale binary.
-    #[serde(default)]
-    pub user_codex_path: Option<String>,
 }
 
 pub struct WindowsPlatformHooks;
@@ -271,23 +258,6 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
             })?;
 
             Ok(shell_target)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RealCodexPathSource {
-    UserOverride,
-    InstallState,
-    Discovery,
-}
-
-impl RealCodexPathSource {
-    pub(super) fn as_label(self) -> &'static str {
-        match self {
-            Self::UserOverride => "user_override",
-            Self::InstallState => "install_state",
-            Self::Discovery => "discovery",
         }
     }
 }
@@ -567,6 +537,34 @@ pub fn clear_user_codex_cli_path(codex_home: Option<&Path>) {
     if state.user_codex_path.is_some() {
         state.user_codex_path = None;
         save_install_state(codex_home, &state);
+    }
+}
+
+/// Resolver impl that delegates to the per-platform helpers above. The
+/// shared `codex_cli_path` module talks to this via the trait so the
+/// Tauri command bridge stays OS-agnostic.
+pub struct WindowsCodexPathResolver;
+
+pub static WINDOWS_CODEX_PATH_RESOLVER: WindowsCodexPathResolver = WindowsCodexPathResolver;
+
+impl CodexPathResolver for WindowsCodexPathResolver {
+    fn resolve_with_source(
+        &self,
+        codex_home: &Path,
+    ) -> Option<(PathBuf, RealCodexPathSource)> {
+        resolve_real_codex_cli_with_source(Some(codex_home))
+    }
+
+    fn set_user_path(&self, codex_home: &Path, raw_input: &str) -> AppResult<PathBuf> {
+        set_user_codex_cli_path(Some(codex_home), raw_input)
+    }
+
+    fn clear_user_path(&self, codex_home: &Path) {
+        clear_user_codex_cli_path(Some(codex_home));
+    }
+
+    fn suggested_paths(&self, codex_home: &Path) -> Vec<PathBuf> {
+        suggested_codex_cli_paths(Some(codex_home))
     }
 }
 
