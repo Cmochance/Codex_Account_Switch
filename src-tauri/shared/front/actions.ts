@@ -315,6 +315,9 @@ function loginErrorMessage(profile: string, error: unknown): string {
   if (code === "REAL_CODEX_NOT_FOUND") {
     return t(state.locale, "codexCliNotFoundToast");
   }
+  if (code === "LOGIN_CANCELLED") {
+    return t(state.locale, "loginCancelled");
+  }
   if (error instanceof Error && error.message) {
     return error.message;
   }
@@ -351,11 +354,12 @@ async function handleLoginProfile(profile: string): Promise<void> {
     showToast(t(state.locale, "loggedInProfile", { profile }));
     await refreshAllData(false);
   } catch (error) {
-    if (cancelledLoginProfile === profile) {
+    const code = loginErrorCode(error);
+    if (cancelledLoginProfile === profile || code === "LOGIN_CANCELLED") {
       showToast(t(state.locale, "loginCancelled"));
     } else {
       showToast(loginErrorMessage(profile, error), true);
-      if (loginErrorCode(error) === "REAL_CODEX_NOT_FOUND") {
+      if (code === "REAL_CODEX_NOT_FOUND") {
         void openCodexCliDialog(() => handleLoginProfile(profile));
       }
     }

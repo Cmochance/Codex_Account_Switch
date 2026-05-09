@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 use crate::platform::hooks::PlatformHooks;
+use crate::shared::login_cancel::wait_for_login_or_cancel;
 
 use super::paths::{get_codex_home, get_install_state_file};
 
@@ -491,15 +492,7 @@ pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppR
                 format!("Failed to start `codex login`: {error}"),
             )
         })?;
-    crate::shared::login_cancel::register_login_pid(child.id());
-    let wait_result = child.wait_with_output();
-    crate::shared::login_cancel::clear_login_pid();
-    let output = wait_result.map_err(|error| {
-        AppError::new(
-            "LOGIN_COMMAND_FAILED",
-            format!("`codex login` could not be reaped: {error}"),
-        )
-    })?;
+    let output = wait_for_login_or_cancel(child)?;
 
     if output.status.success() {
         return Ok(());
