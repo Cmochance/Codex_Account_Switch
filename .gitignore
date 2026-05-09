@@ -23,4 +23,5 @@ local_doc/
 agent/
 codex_history/
 .codex/
+.claude/
 docs/
