@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.5.6 - 2026-05-09
+
+- Fixed the mojibake login toast on Windows: the previous `cmd /C codex login` fallback printed cmd.exe's GBK "command not found" message, which `String::from_utf8_lossy` mangled into U+FFFD replacement characters. `run_codex_login` now resolves the real codex path up-front and surfaces a typed `REAL_CODEX_NOT_FOUND` error; the front-end auto-opens a "Codex CLI path" dialog on this error.
+- Added a manual override for the codex CLI path. The dialog lists common install locations (click to autofill), accepts a free-form path, and persists it as `user_codex_path` in `install_state.json` with priority over auto-discovery. If the override file disappears later, the resolver silently falls back to auto-discovery so users are never permanently wedged.
+- Added a Settings → "Codex CLI path" row that always shows the resolved path plus its source label (manual override / cached / auto-discovered) and a Change button. The dialog is now reachable proactively, not only after a failure.
+- Made the login button double as a cancel button while a login is in flight. Clicking the spinning button (now labelled "Cancel" in red) sends SIGTERM (Unix) / `taskkill /F /T` (Windows) to the codex login process, so closing the OAuth tab no longer leaves the app spinning forever.
+- Fixed plan detection on downgrade so the cached quota is cleared when the API returns no quota, instead of showing stale numbers next to the new plan.
+
+## 1.5.5 - 2026-05-08
+
+- Added a plan-freshness tooltip on each profile card ("Plan tier confirmed N min ago"); cards stale by more than a local day are marked and trigger a bulk refresh at the next day rollover.
+- Added an `unknown_paid` plan state so unrecognised paid tiers surface an explicit hint instead of a blank.
+- Plan rotation is now driven by daily bulk refresh + force-rotation hooks, so accounts that aren't actively used still keep an up-to-date plan and `last_plan_check_ms`.
+- Plan name now prefers the API `plan_type` field with a JWT fallback; stale "0 days" displays are dropped when the plan tier changes.
+- Fixed the "switch already in progress" toast that occasionally got stuck after a switch (stale `.switch.lock` cleanup + double-click guard).
+- Fixed the 5h / weekly quota windows occasionally cross-routing — windows are now selected by `window_minutes`, not slot position.
+- Internal: split the plan-sync and quota-sync code paths (D1) and dropped the deprecated D2 endpoint plan.
+
+## 1.5.4 - 2026-05-07
+
+- Added per-card login: a profile can now be logged in directly from its card, without first switching to it. The login runs against a sandboxed `CODEX_HOME` and atomically copies the resulting `auth.json` into the target profile folder.
+- Cherry-picked the direct ChatGPT-API quota refresh path from 1.6.x onto the 1.5 line so quota stays current without depending on a periodic codex CLI run.
+- Fixed real-codex resolution to anchor on the live `~/.codex` instead of the sandboxed `CODEX_HOME`, so the managed-shim filter and install-state cache work correctly.
+
 ## 1.5.3 - 2026-04-27
 
 - Added real update checks against the configured GitHub latest-release JSON endpoint.
