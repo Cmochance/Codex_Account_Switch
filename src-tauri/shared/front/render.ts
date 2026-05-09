@@ -604,6 +604,11 @@ export function renderProfiles(
                     ? t(state.locale, "profileLoginDisabled")
                     : t(state.locale, "profileLoginReady")
               }"
+              aria-label="${
+                loginRunning
+                  ? t(state.locale, "profileLoginCancelAria", { profile: profile.folder_name })
+                  : t(state.locale, "profileLoginReadyAria", { profile: profile.folder_name })
+              }"
               data-login-profile="${profile.folder_name}"
               ${loginDisabled ? "disabled" : ""}
             >
