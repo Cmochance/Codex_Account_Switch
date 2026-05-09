@@ -431,6 +431,7 @@ pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) 
         ));
     };
     let source_label = match real_codex_source {
+        RealCodexPathSource::UserOverride => "user override",
         RealCodexPathSource::InstallState => "install_state.json",
         RealCodexPathSource::Discovery => "CLI discovery",
     };
