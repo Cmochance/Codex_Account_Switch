@@ -614,9 +614,17 @@ export function renderProfiles(
               }
             </button>
             <button
-              class="profile-action-button"
+              class="${
+                profile.openai_base_url
+                  ? "profile-action-button profile-action-button-danger"
+                  : "profile-action-button"
+              }"
               type="button"
-              title="${t(state.locale, "profileBaseReady")}"
+              title="${
+                profile.openai_base_url
+                  ? t(state.locale, "profileBaseConfigured")
+                  : t(state.locale, "profileBaseReady")
+              }"
               data-base-url-profile="${profile.folder_name}"
               ${baseDisabled ? "disabled" : ""}
             >
