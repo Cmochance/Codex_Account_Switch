@@ -254,6 +254,15 @@ impl CodexPathResolver for MacosCodexPathResolver {
     }
 }
 
+/// Soft cap on how long the PATH walk can spend stat'ing entries
+/// before we bail and return what we have. Each `is_file` probe blocks
+/// the Tauri command thread; an NFS / SMB entry on PATH can stall for
+/// seconds. Fixed locations (Codex.app bundle, Homebrew, /usr/local,
+/// npm-global / bun / volta) are checked first because they're
+/// guaranteed-fast local stats — by the time we hit the bounded PATH
+/// walk we've usually already collected the realistic candidates.
+const PATH_PROBE_DEADLINE: Duration = Duration::from_millis(500);
+
 pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
     let mut suggestions: Vec<PathBuf> = Vec::new();
     let managed_shim = codex_home.map(managed_shim_path);
@@ -280,7 +289,11 @@ pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
     }
 
     if let Some(path) = env::var_os("PATH") {
+        let deadline = std::time::Instant::now() + PATH_PROBE_DEADLINE;
         for entry in env::split_paths(&path) {
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
             push(entry.join("codex"));
         }
     }
