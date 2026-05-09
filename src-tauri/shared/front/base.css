@@ -2229,6 +2229,12 @@ button.pager-pill:disabled {
   animation: button-spin 0.7s linear infinite;
 }
 
+.button-cancel-label {
+  margin-left: 6px;
+  color: #a04949;
+  font-weight: 600;
+}
+
 @keyframes button-spin {
   to {
     transform: rotate(360deg);
@@ -2338,6 +2344,79 @@ button.pager-pill:disabled {
   flex: 1 1 0;
   padding-inline: 10px;
   white-space: nowrap;
+}
+
+.codex-cli-current {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin-top: 10px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--text-body);
+}
+
+.codex-cli-current strong {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.codex-cli-current-value {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  word-break: break-all;
+  color: var(--text-strong);
+}
+
+.codex-cli-current-source {
+  color: var(--text-body);
+  font-size: 0.82rem;
+}
+
+.codex-cli-suggestions-heading {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.codex-cli-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(252, 250, 246, 0.6);
+}
+
+.codex-cli-suggestion {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.84rem;
+  text-align: left;
+  color: var(--text-strong);
+  word-break: break-all;
+  cursor: pointer;
+}
+
+.codex-cli-suggestion:hover {
+  border-color: var(--border);
+  background: rgba(239, 234, 227, 0.6);
+}
+
+.codex-cli-suggestions-empty {
+  padding: 8px 12px;
+  font-size: 0.86rem;
+  color: var(--text-body);
 }
 
 .primary-button {

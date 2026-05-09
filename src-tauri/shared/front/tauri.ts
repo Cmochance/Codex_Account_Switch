@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   ActionResponse,
+  CodexCliStatus,
   CommandError,
   CurrentCard,
   CurrentQuotaResponse,
@@ -323,6 +324,16 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
         }) as Promise<T>;
       case "open_url":
         return mockAction("Opened URL in preview mode", "preview:url") as Promise<T>;
+      case "get_codex_cli_status":
+      case "set_codex_cli_path":
+      case "clear_codex_cli_path":
+        return Promise.resolve({
+          resolved_path: "/preview/codex",
+          source: command === "set_codex_cli_path" ? "user_override" : "discovery",
+          suggested_paths: ["/preview/codex", "/preview/usr/local/bin/codex"],
+        }) as Promise<T>;
+      case "cancel_codex_login":
+        return Promise.resolve(true) as Promise<T>;
       case "open_profile_folder":
       case "open_codex":
       case "login_current_profile":
@@ -435,4 +446,22 @@ export function checkUpdate(updateUrl: string): Promise<UpdateCheckResponse> {
 
 export function openXiaohongshu(): Promise<ActionResponse> {
   return invokeCommand<ActionResponse>("open_xiaohongshu");
+}
+
+export function getCodexCliStatus(): Promise<CodexCliStatus> {
+  return invokeCommand<CodexCliStatus>("get_codex_cli_status");
+}
+
+export function setCodexCliPath(path: string): Promise<CodexCliStatus> {
+  return invokeCommand<CodexCliStatus>("set_codex_cli_path", {
+    payload: { path },
+  });
+}
+
+export function clearCodexCliPath(): Promise<CodexCliStatus> {
+  return invokeCommand<CodexCliStatus>("clear_codex_cli_path");
+}
+
+export function cancelCodexLogin(): Promise<boolean> {
+  return invokeCommand<boolean>("cancel_codex_login");
 }

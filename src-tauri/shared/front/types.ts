@@ -89,4 +89,12 @@ export interface CommandError {
   message?: string;
 }
 
+export type CodexCliSource = "user_override" | "install_state" | "discovery" | "none";
+
+export interface CodexCliStatus {
+  resolved_path: string | null;
+  source: CodexCliSource;
+  suggested_paths: string[];
+}
+
 export type ShellRoute = "dashboard" | "profiles" | "runtime" | "settings" | "guide";

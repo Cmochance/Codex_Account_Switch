@@ -196,3 +196,24 @@ pub struct ActionResponse {
     pub message: String,
     pub path: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexCliStatus {
+    /// Currently resolved real-codex path, or None when nothing was
+    /// found. Front-end uses this to decide whether the "已定位"
+    /// indicator shows up and what to prefill the input with.
+    pub resolved_path: Option<String>,
+    /// `"user_override" | "install_state" | "discovery" | "none"`
+    /// — frontend i18n maps this to a label so the user can tell
+    /// whether they're looking at their manual override or the
+    /// auto-discovered path.
+    pub source: String,
+    /// Common platform-specific install locations that exist on disk
+    /// right now. Frontend renders these as click-to-fill chips.
+    pub suggested_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetCodexCliPathPayload {
+    pub path: String,
+}

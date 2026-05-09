@@ -23,6 +23,11 @@ pub struct InstallState {
     pub real_codex_path: Option<String>,
     #[serde(default)]
     pub path_added_by_installer: bool,
+    /// User-provided override for the real codex CLI path. Takes priority
+    /// over auto-discovery when valid. Set via the "Codex 路径" dialog
+    /// when auto-discovery fails or points at a stale binary.
+    #[serde(default)]
+    pub user_codex_path: Option<String>,
 }
 
 pub struct MacosPlatformHooks;
@@ -135,17 +140,49 @@ pub(super) fn discover_real_codex_cli_path(managed_shim_path: Option<&Path>) -> 
     candidates.into_iter().next()
 }
 
-fn resolve_real_codex_cli(codex_home: Option<&Path>) -> Option<PathBuf> {
-    let managed_shim_path = codex_home.map(managed_shim_path);
-    let mut state = load_install_state(codex_home);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RealCodexPathSource {
+    UserOverride,
+    InstallState,
+    Discovery,
+}
 
+impl RealCodexPathSource {
+    pub(super) fn as_label(self) -> &'static str {
+        match self {
+            Self::UserOverride => "user_override",
+            Self::InstallState => "install_state",
+            Self::Discovery => "discovery",
+        }
+    }
+}
+
+fn is_acceptable_real_codex_path(path: &Path, managed_shim_path: Option<&Path>) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    !managed_shim_path.is_some_and(|managed| managed == path)
+}
+
+pub(super) fn resolve_real_codex_cli_with_source(
+    codex_home: Option<&Path>,
+) -> Option<(PathBuf, RealCodexPathSource)> {
+    let managed_shim_path = codex_home.map(managed_shim_path);
+    let state = load_install_state(codex_home);
+
+    // User override wins. Falls through silently if the file disappeared
+    // so the user isn't permanently wedged on a stale path; the override
+    // stays persisted for when the file reappears.
+    if let Some(raw_user_path) = state.user_codex_path.as_ref().map(PathBuf::from) {
+        if is_acceptable_real_codex_path(&raw_user_path, managed_shim_path.as_deref()) {
+            return Some((raw_user_path, RealCodexPathSource::UserOverride));
+        }
+    }
+
+    let mut state = state;
     if let Some(raw_path) = state.real_codex_path.as_ref().map(PathBuf::from) {
-        if raw_path.is_file()
-            && managed_shim_path
-                .as_deref()
-                .is_none_or(|managed_path| managed_path != raw_path.as_path())
-        {
-            return Some(raw_path);
+        if is_acceptable_real_codex_path(&raw_path, managed_shim_path.as_deref()) {
+            return Some((raw_path, RealCodexPathSource::InstallState));
         }
     }
 
@@ -157,7 +194,98 @@ fn resolve_real_codex_cli(codex_home: Option<&Path>) -> Option<PathBuf> {
             save_install_state(codex_home, &state);
         }
     }
-    discovered_path
+    discovered_path.map(|path| (path, RealCodexPathSource::Discovery))
+}
+
+fn resolve_real_codex_cli(codex_home: Option<&Path>) -> Option<PathBuf> {
+    resolve_real_codex_cli_with_source(codex_home).map(|(path, _)| path)
+}
+
+pub(super) fn validate_user_codex_cli_path(
+    codex_home: Option<&Path>,
+    raw_input: &str,
+) -> AppResult<PathBuf> {
+    let trimmed = raw_input.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::new(
+            "CODEX_CLI_PATH_EMPTY",
+            "Please provide the full path to the codex CLI binary.",
+        ));
+    }
+    let candidate = PathBuf::from(trimmed);
+    if !candidate.is_file() {
+        return Err(AppError::new(
+            "CODEX_CLI_PATH_INVALID",
+            format!("No file found at {}.", candidate.display()),
+        ));
+    }
+    let managed_shim = codex_home.map(managed_shim_path);
+    if managed_shim
+        .as_deref()
+        .is_some_and(|managed| managed == candidate.as_path())
+    {
+        return Err(AppError::new(
+            "CODEX_CLI_PATH_REJECTED",
+            "That path is the codex_switch managed shim; pick the real codex CLI binary instead.",
+        ));
+    }
+    Ok(candidate)
+}
+
+pub fn set_user_codex_cli_path(
+    codex_home: Option<&Path>,
+    raw_input: &str,
+) -> AppResult<PathBuf> {
+    let resolved = validate_user_codex_cli_path(codex_home, raw_input)?;
+    let mut state = load_install_state(codex_home);
+    let next = Some(resolved.to_string_lossy().into_owned());
+    if state.user_codex_path != next {
+        state.user_codex_path = next;
+        save_install_state(codex_home, &state);
+    }
+    Ok(resolved)
+}
+
+pub fn clear_user_codex_cli_path(codex_home: Option<&Path>) {
+    let mut state = load_install_state(codex_home);
+    if state.user_codex_path.is_some() {
+        state.user_codex_path = None;
+        save_install_state(codex_home, &state);
+    }
+}
+
+pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
+    let mut suggestions: Vec<PathBuf> = Vec::new();
+    let managed_shim = codex_home.map(managed_shim_path);
+    let mut push = |path: PathBuf| {
+        if is_acceptable_real_codex_path(&path, managed_shim.as_deref())
+            && !suggestions.iter().any(|existing| existing == &path)
+        {
+            suggestions.push(path);
+        }
+    };
+
+    for app_path in codex_app_candidates() {
+        push(codex_cli_from_app_bundle(&app_path));
+    }
+    push(PathBuf::from("/opt/homebrew/bin/codex"));
+    push(PathBuf::from("/usr/local/bin/codex"));
+    push(PathBuf::from("/usr/bin/codex"));
+    if let Some(home) = env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        push(home.join(".local/bin/codex"));
+        push(home.join(".npm-global/bin/codex"));
+        push(home.join(".bun/bin/codex"));
+        push(home.join(".volta/bin/codex"));
+    }
+
+    if let Some(path) = env::var_os("PATH") {
+        for entry in env::split_paths(&path) {
+            push(entry.join("codex"));
+        }
+    }
+
+    suggestions
 }
 
 fn codex_app_candidates() -> Vec<PathBuf> {
@@ -266,23 +394,17 @@ fn build_auth_refresh_command(real_codex_path: &Path, runtime_codex_home: &Path)
     command
 }
 
-/// Build the `codex login` command. Resolution of the real codex
-/// binary is anchored on `cli_codex_home` (the live `~/.codex`) so the
-/// managed-shim filter works correctly even when `runtime_codex_home`
-/// is a sandboxed sibling that doesn't have its own install state.
-/// `runtime_codex_home` is what the spawned process sees as
-/// `CODEX_HOME` and is where it will write `auth.json`.
-fn build_login_command(cli_codex_home: &Path, runtime_codex_home: &Path) -> Command {
-    let mut command = if let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) {
-        let mut command = Command::new(real_codex_path);
-        command.arg("login");
-        command
-    } else {
-        let mut command = Command::new("codex");
-        command.arg("login");
-        command
-    };
-
+/// Build the `codex login` command using a resolved real-codex path.
+/// Anchoring on `cli_codex_home` (the live `~/.codex`) for resolution
+/// keeps the managed-shim filter correct even when `runtime_codex_home`
+/// is a sandboxed sibling. Callers must resolve the path beforehand and
+/// surface `REAL_CODEX_NOT_FOUND` to the user instead of falling back to
+/// a bare `Command::new("codex")` — that fallback turned a missing-CLI
+/// install into an opaque "No such file or directory" instead of an
+/// actionable hint.
+fn build_login_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Command {
+    let mut command = Command::new(real_codex_path);
+    command.arg("login");
     command.current_dir(runtime_codex_home);
     command.env("CODEX_HOME", runtime_codex_home);
     command
@@ -346,12 +468,28 @@ pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) 
 }
 
 pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
-    let output = build_login_command(cli_codex_home, runtime_codex_home)
-        .output()
+    let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) else {
+        return Err(AppError::new(
+            "REAL_CODEX_NOT_FOUND",
+            "Real Codex CLI path not found. Set the codex CLI location in the dashboard before logging in.",
+        ));
+    };
+
+    let child = build_login_command(&real_codex_path, runtime_codex_home)
+        .spawn()
         .map_err(|error| {
+            AppError::new(
+                "LOGIN_COMMAND_FAILED",
+                format!("Failed to start `codex login`: {error}"),
+            )
+        })?;
+    crate::shared::login_cancel::register_login_pid(child.id());
+    let wait_result = child.wait_with_output();
+    crate::shared::login_cancel::clear_login_pid();
+    let output = wait_result.map_err(|error| {
         AppError::new(
             "LOGIN_COMMAND_FAILED",
-            format!("Failed to start `codex login`: {error}"),
+            format!("`codex login` could not be reaped: {error}"),
         )
     })?;
 
@@ -460,7 +598,9 @@ impl PlatformHooks for MacosPlatformHooks {
 mod tests {
     use super::{
         build_auth_refresh_command, codex_app_candidates, codex_cli_from_app_bundle,
-        discover_real_codex_cli_path, AUTH_REFRESH_PROMPT,
+        discover_real_codex_cli_path, resolve_real_codex_cli_with_source,
+        set_user_codex_cli_path, validate_user_codex_cli_path, RealCodexPathSource,
+        AUTH_REFRESH_PROMPT,
     };
     use crate::macos::cli_shim::real_codex_resolver_path;
     use std::fs;
@@ -625,5 +765,68 @@ mod tests {
             key == "CODEX_HOME"
                 && value.as_deref() == Some(runtime_codex_home.to_string_lossy().as_ref())
         }));
+    }
+
+    #[test]
+    fn user_override_takes_priority_over_discovery_and_install_state() {
+        let codex_home = temp_codex_home("user-override-priority");
+        let managed_bin = codex_home.join("bin");
+        let install_dir = codex_home.join("install");
+        let user_dir = codex_home.join("user");
+        fs::create_dir_all(&managed_bin).unwrap();
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&user_dir).unwrap();
+        fs::write(managed_bin.join("codex"), "#!/bin/sh\n").unwrap();
+        let install_path = install_dir.join("codex");
+        let user_path = user_dir.join("codex");
+        fs::write(&install_path, "#!/bin/sh\n").unwrap();
+        fs::write(&user_path, "#!/bin/sh\n").unwrap();
+
+        // Seed the install_state cache with `install_path` so without the
+        // user override that path would win.
+        let mut state = super::load_install_state(Some(&codex_home));
+        state.real_codex_path = Some(install_path.to_string_lossy().into_owned());
+        super::save_install_state(Some(&codex_home), &state);
+
+        // No override yet → install_state wins.
+        let (resolved, source) = resolve_real_codex_cli_with_source(Some(&codex_home)).unwrap();
+        assert_eq!(resolved, install_path);
+        assert_eq!(source, RealCodexPathSource::InstallState);
+
+        // After setting the override → user path wins.
+        set_user_codex_cli_path(Some(&codex_home), user_path.to_string_lossy().as_ref()).unwrap();
+        let (resolved, source) = resolve_real_codex_cli_with_source(Some(&codex_home)).unwrap();
+        assert_eq!(resolved, user_path);
+        assert_eq!(source, RealCodexPathSource::UserOverride);
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn validate_user_codex_cli_path_rejects_empty_missing_and_managed_shim() {
+        let codex_home = temp_codex_home("validate-user-path");
+        let managed_bin = codex_home.join("bin");
+        fs::create_dir_all(&managed_bin).unwrap();
+        let managed_shim = managed_bin.join("codex");
+        fs::write(&managed_shim, "#!/bin/sh\n").unwrap();
+
+        let empty = validate_user_codex_cli_path(Some(&codex_home), "  ").unwrap_err();
+        assert_eq!(empty.error_code, "CODEX_CLI_PATH_EMPTY");
+
+        let missing = validate_user_codex_cli_path(
+            Some(&codex_home),
+            codex_home.join("nope/codex").to_string_lossy().as_ref(),
+        )
+        .unwrap_err();
+        assert_eq!(missing.error_code, "CODEX_CLI_PATH_INVALID");
+
+        let shim = validate_user_codex_cli_path(
+            Some(&codex_home),
+            managed_shim.to_string_lossy().as_ref(),
+        )
+        .unwrap_err();
+        assert_eq!(shim.error_code, "CODEX_CLI_PATH_REJECTED");
+
+        let _ = fs::remove_dir_all(&codex_home);
     }
 }

@@ -15,9 +15,12 @@ import {
 } from "@front-shared/dashboard-view-model";
 import {
   addProfile,
+  cancelCodexLogin,
   checkUpdate,
+  clearCodexCliPath,
   clearProfileAccount,
   deleteProfile,
+  getCodexCliStatus,
   getCurrentLiveQuota,
   getProfilesSnapshot,
   loginCurrentProfile,
@@ -32,9 +35,11 @@ import {
   refreshAllOauthProfilePlansSilent,
   refreshProfile,
   renameProfile,
+  setCodexCliPath,
   switchProfile,
   updateProfileBaseUrl,
 } from "@front-shared/tauri";
+import type { CodexCliStatus } from "@front-shared/types";
 import {
   applyLocale,
   elements,
@@ -85,6 +90,8 @@ let renameSourceProfile: string | null = null;
 let baseUrlSourceProfile: string | null = null;
 let pendingUpdateReleaseUrl: string | null = null;
 let deleteSourceProfile: string | null = null;
+let pendingLoginRetry: (() => Promise<void>) | null = null;
+let cancelledLoginProfile: string | null = null;
 
 function isRefreshPending(profile: string): boolean {
   return state.refreshActiveProfile === profile || state.refreshQueue.includes(profile);
@@ -296,10 +303,17 @@ function handleRefreshProfile(profile: string): void {
   void drainRefreshQueue();
 }
 
+function loginErrorCode(error: unknown): string | undefined {
+  return error instanceof Error ? (error as ErrorWithCode).code : undefined;
+}
+
 function loginErrorMessage(profile: string, error: unknown): string {
-  const code = error instanceof Error ? (error as ErrorWithCode).code : undefined;
+  const code = loginErrorCode(error);
   if (code === "LOGIN_BUSY") {
     return t(state.locale, "loginBusy");
+  }
+  if (code === "REAL_CODEX_NOT_FOUND") {
+    return t(state.locale, "codexCliNotFoundToast");
   }
   if (error instanceof Error && error.message) {
     return error.message;
@@ -308,6 +322,15 @@ function loginErrorMessage(profile: string, error: unknown): string {
 }
 
 async function handleLoginProfile(profile: string): Promise<void> {
+  // Reuse this entry point as the "cancel" channel: when the same profile
+  // already owns the in-flight login, the click means "kill the codex
+  // process I just spawned" rather than "start another login". Any other
+  // profile holding the lock falls through to the early-return.
+  if (state.loginActiveProfile === profile) {
+    void handleCancelLogin(profile);
+    return;
+  }
+
   // Login serializes through the same .switch.lock as switch and refresh,
   // so block the click if any of the three is already in flight on this
   // card. Other cards' actions are independent.
@@ -320,6 +343,7 @@ async function handleLoginProfile(profile: string): Promise<void> {
   }
 
   state.loginActiveProfile = profile;
+  cancelledLoginProfile = null;
   rerenderDashboard();
   showToast(t(state.locale, "loginStarting", { profile }));
   try {
@@ -327,10 +351,31 @@ async function handleLoginProfile(profile: string): Promise<void> {
     showToast(t(state.locale, "loggedInProfile", { profile }));
     await refreshAllData(false);
   } catch (error) {
-    showToast(loginErrorMessage(profile, error), true);
+    if (cancelledLoginProfile === profile) {
+      showToast(t(state.locale, "loginCancelled"));
+    } else {
+      showToast(loginErrorMessage(profile, error), true);
+      if (loginErrorCode(error) === "REAL_CODEX_NOT_FOUND") {
+        void openCodexCliDialog(() => handleLoginProfile(profile));
+      }
+    }
   } finally {
     state.loginActiveProfile = null;
+    cancelledLoginProfile = null;
     rerenderDashboard();
+  }
+}
+
+async function handleCancelLogin(profile: string): Promise<void> {
+  cancelledLoginProfile = profile;
+  try {
+    await cancelCodexLogin();
+  } catch (error) {
+    cancelledLoginProfile = null;
+    showToast(
+      error instanceof Error ? error.message : t(state.locale, "loginCancelFailed"),
+      true,
+    );
   }
 }
 
@@ -402,6 +447,11 @@ async function handleLoginCurrentProfile(): Promise<void> {
       await refreshAllData();
     });
   } catch (error) {
+    if (loginErrorCode(error) === "REAL_CODEX_NOT_FOUND") {
+      showToast(t(state.locale, "codexCliNotFoundToast"), true);
+      void openCodexCliDialog(() => handleLoginCurrentProfile());
+      return;
+    }
     showToast(error instanceof Error ? error.message : t(state.locale, "failedToLogin"), true);
   }
 }
@@ -591,6 +641,170 @@ async function handleSubmitBaseUrl(event: SubmitEvent): Promise<void> {
   }
 }
 
+function applyCodexCliSettingsDisplay(status: CodexCliStatus): void {
+  const path = status.resolved_path?.trim();
+  if (path) {
+    elements.settingsCodexCliValue.textContent = `${path} (${codexCliSourceLabel(status.source)})`;
+  } else {
+    elements.settingsCodexCliValue.textContent = t(state.locale, "settingsCodexCliEmpty");
+  }
+}
+
+async function refreshCodexCliSettingsDisplay(): Promise<void> {
+  try {
+    const status = await getCodexCliStatus();
+    applyCodexCliSettingsDisplay(status);
+  } catch {
+    // Best-effort: leave the previous label up. The dialog itself
+    // surfaces the actual error when the user opens it.
+  }
+}
+
+function codexCliSourceLabel(source: CodexCliStatus["source"]): string {
+  switch (source) {
+    case "user_override":
+      return t(state.locale, "codexCliSourceUserOverride");
+    case "install_state":
+      return t(state.locale, "codexCliSourceInstallState");
+    case "discovery":
+      return t(state.locale, "codexCliSourceDiscovery");
+    default:
+      return t(state.locale, "codexCliSourceNone");
+  }
+}
+
+function renderCodexCliStatus(status: CodexCliStatus): void {
+  if (status.resolved_path) {
+    elements.codexCliCurrentValue.textContent = status.resolved_path;
+    elements.codexCliCurrentSource.textContent = ` (${codexCliSourceLabel(status.source)})`;
+    elements.codexCliCurrentSource.hidden = false;
+    elements.clearCodexCliButton.hidden = status.source !== "user_override";
+  } else {
+    elements.codexCliCurrentValue.textContent = t(state.locale, "codexCliCurrentNone");
+    elements.codexCliCurrentSource.textContent = "";
+    elements.codexCliCurrentSource.hidden = true;
+    elements.clearCodexCliButton.hidden = true;
+  }
+
+  elements.codexCliSuggestions.replaceChildren();
+  if (status.suggested_paths.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "codex-cli-suggestions-empty";
+    empty.textContent = t(state.locale, "codexCliSuggestionsEmpty");
+    elements.codexCliSuggestions.append(empty);
+    return;
+  }
+
+  for (const path of status.suggested_paths) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "codex-cli-suggestion";
+    button.textContent = path;
+    button.addEventListener("click", () => {
+      elements.codexCliInput.value = path;
+      elements.codexCliInput.focus();
+      elements.codexCliInput.select();
+      clearDialogError(elements.codexCliDialogError);
+    });
+    elements.codexCliSuggestions.append(button);
+  }
+}
+
+async function openCodexCliDialog(onSavedRetry?: () => Promise<void>): Promise<void> {
+  pendingLoginRetry = onSavedRetry ?? null;
+  clearDialogError(elements.codexCliDialogError);
+  elements.codexCliInput.value = "";
+
+  let status: CodexCliStatus = {
+    resolved_path: null,
+    source: "none",
+    suggested_paths: [],
+  };
+  try {
+    status = await getCodexCliStatus();
+  } catch (error) {
+    showDialogError(
+      elements.codexCliDialogError,
+      error instanceof Error ? error.message : t(state.locale, "codexCliPathSaveFailed"),
+    );
+  }
+
+  if (status.resolved_path) {
+    elements.codexCliInput.value = status.resolved_path;
+  }
+  elements.submitCodexCliButton.textContent = onSavedRetry
+    ? t(state.locale, "codexCliRetryLogin")
+    : t(state.locale, "save");
+
+  renderCodexCliStatus(status);
+  elements.codexCliDialog.showModal();
+  elements.codexCliInput.focus();
+  elements.codexCliInput.select();
+}
+
+function closeCodexCliDialog(): void {
+  pendingLoginRetry = null;
+  elements.codexCliDialog.close();
+}
+
+function codexCliErrorMessage(error: unknown): string {
+  const code = error instanceof Error ? (error as ErrorWithCode).code : undefined;
+  switch (code) {
+    case "CODEX_CLI_PATH_EMPTY":
+      return t(state.locale, "codexCliPathEmpty");
+    case "CODEX_CLI_PATH_INVALID":
+      return t(state.locale, "codexCliPathInvalid");
+    case "CODEX_CLI_PATH_REJECTED":
+      return t(state.locale, "codexCliPathRejected");
+    default:
+      return error instanceof Error
+        ? error.message
+        : t(state.locale, "codexCliPathSaveFailed");
+  }
+}
+
+async function handleSubmitCodexCliPath(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  clearDialogError(elements.codexCliDialogError);
+
+  const rawInput = elements.codexCliInput.value;
+  if (!rawInput.trim()) {
+    showDialogError(elements.codexCliDialogError, t(state.locale, "codexCliPathEmpty"));
+    return;
+  }
+
+  let status: CodexCliStatus;
+  try {
+    status = await setCodexCliPath(rawInput);
+  } catch (error) {
+    showDialogError(elements.codexCliDialogError, codexCliErrorMessage(error));
+    return;
+  }
+
+  const retry = pendingLoginRetry;
+  closeCodexCliDialog();
+  showToast(t(state.locale, "codexCliPathSaved"));
+  renderCodexCliStatus(status);
+  applyCodexCliSettingsDisplay(status);
+
+  if (retry) {
+    await retry();
+  }
+}
+
+async function handleClearCodexCliPath(): Promise<void> {
+  clearDialogError(elements.codexCliDialogError);
+  try {
+    const status = await clearCodexCliPath();
+    renderCodexCliStatus(status);
+    applyCodexCliSettingsDisplay(status);
+    elements.codexCliInput.value = status.resolved_path ?? "";
+    showToast(t(state.locale, "codexCliPathCleared"));
+  } catch (error) {
+    showDialogError(elements.codexCliDialogError, codexCliErrorMessage(error));
+  }
+}
+
 async function handleDeleteProfileAction(action: "delete" | "clear"): Promise<void> {
   const sourceProfile = deleteSourceProfile;
   const errorElement = elements.deleteProfileDialogError;
@@ -705,6 +919,18 @@ export function bootstrap(): void {
   elements.baseUrlForm.addEventListener("submit", (event) => {
     void handleSubmitBaseUrl(event as SubmitEvent);
   });
+  elements.cancelCodexCliButton.addEventListener("click", () => {
+    closeCodexCliDialog();
+  });
+  elements.clearCodexCliButton.addEventListener("click", () => {
+    void handleClearCodexCliPath();
+  });
+  elements.codexCliForm.addEventListener("submit", (event) => {
+    void handleSubmitCodexCliPath(event as SubmitEvent);
+  });
+  elements.settingsCodexCliButton.addEventListener("click", () => {
+    void openCodexCliDialog();
+  });
   elements.localeEnButton.addEventListener("click", () => {
     setLocale("en");
   });
@@ -740,6 +966,8 @@ export function bootstrap(): void {
   // then once per local-day rollover. Failures inside the backend are
   // swallowed per-profile, so this never surfaces a toast.
   scheduleDailyPlanRefresh();
+
+  void refreshCodexCliSettingsDisplay();
 
   state.loading = true;
   rerenderDashboard();

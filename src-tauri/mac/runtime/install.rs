@@ -219,6 +219,7 @@ pub fn refresh_install_state(codex_home: &Path) -> AppResult<()> {
     let state = InstallState {
         real_codex_path,
         path_added_by_installer: previous_state.path_added_by_installer,
+        user_codex_path: previous_state.user_codex_path,
     };
     save_install_state(Some(codex_home), &state);
     Ok(())
@@ -267,9 +268,11 @@ pub fn install_from(
     copy_runtime_cli(source_cli_path, &runtime_cli_path)?;
     write_codex_shim(&codex_home)?;
 
+    let previous_state = load_install_state(Some(&codex_home));
     let state = InstallState {
         real_codex_path: Some(real_codex_path.to_string_lossy().into_owned()),
         path_added_by_installer: false,
+        user_codex_path: previous_state.user_codex_path,
     };
     save_install_state(Some(&codex_home), &state);
 

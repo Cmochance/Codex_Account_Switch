@@ -215,6 +215,15 @@
               <input id="settings-update-url-input" class="settings-input" type="url" value="https://api.github.com/repos/Cmochance/Codex_Account_Switch/releases/latest" />
             </label>
             <div class="settings-row settings-row--stacked">
+              <strong id="settings-codex-cli-label">Codex CLI path</strong>
+              <div class="settings-row-content">
+                <p id="settings-codex-cli-value" class="settings-value">--</p>
+                <div class="settings-action-row">
+                  <button id="settings-codex-cli-button" class="settings-action-button" type="button">Change</button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-row settings-row--stacked">
               <strong data-i18n-key="settingsConfigBackup">Configuration backup</strong>
               <div class="settings-row-content">
                 <div class="settings-action-row">
@@ -383,6 +392,43 @@
         <div class="dialog-actions">
           <button id="cancel-base-url-button" class="ghost-button" type="button">Cancel</button>
           <button id="submit-base-url-button" class="primary-button" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="codex-cli-dialog" class="dialog">
+      <form id="codex-cli-form" class="dialog-form" method="dialog">
+        <div class="dialog-copy">
+          <h3 id="codex-cli-dialog-title">Codex CLI path</h3>
+          <p id="codex-cli-dialog-copy">Codex Switch couldn't find the codex CLI on this machine, or the cached path is wrong. Pick the real codex binary so login can spawn it directly.</p>
+          <p class="codex-cli-current">
+            <strong id="codex-cli-current-label">Current path</strong>
+            <span id="codex-cli-current-value" class="codex-cli-current-value">--</span>
+            <span id="codex-cli-current-source" class="codex-cli-current-source" hidden></span>
+          </p>
+        </div>
+
+        <label class="field">
+          <span id="codex-cli-input-label">codex executable path</span>
+          <input
+            id="codex-cli-input"
+            name="codex_cli_path"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="C:\Users\You\AppData\Local\Programs\codex\codex.cmd"
+          />
+        </label>
+
+        <p id="codex-cli-suggestions-heading" class="codex-cli-suggestions-heading">Common locations</p>
+        <div id="codex-cli-suggestions" class="codex-cli-suggestions"></div>
+
+        <p id="codex-cli-dialog-error" class="dialog-error" hidden></p>
+
+        <div class="dialog-actions">
+          <button id="cancel-codex-cli-button" class="ghost-button" type="button">Cancel</button>
+          <button id="clear-codex-cli-button" class="ghost-button" type="button" hidden>Clear override</button>
+          <button id="submit-codex-cli-button" class="primary-button" type="submit">Save</button>
         </div>
       </form>
     </dialog>

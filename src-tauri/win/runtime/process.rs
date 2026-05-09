@@ -36,6 +36,12 @@ pub struct InstallState {
     pub real_codex_path: Option<String>,
     #[serde(default)]
     pub path_added_by_installer: bool,
+    /// User-provided override for the real codex CLI path. Takes priority
+    /// over auto-discovery and install_state caching when valid. Set via
+    /// the "Codex 路径" dialog when auto-discovery fails or points at a
+    /// stale binary.
+    #[serde(default)]
+    pub user_codex_path: Option<String>,
 }
 
 pub struct WindowsPlatformHooks;
@@ -269,9 +275,20 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RealCodexPathSource {
+pub(super) enum RealCodexPathSource {
+    UserOverride,
     InstallState,
     Discovery,
+}
+
+impl RealCodexPathSource {
+    pub(super) fn as_label(self) -> &'static str {
+        match self {
+            Self::UserOverride => "user_override",
+            Self::InstallState => "install_state",
+            Self::Discovery => "discovery",
+        }
+    }
 }
 
 fn persist_real_codex_path(
@@ -286,12 +303,26 @@ fn persist_real_codex_path(
     }
 }
 
-fn resolve_real_codex_cli_with_source(
+pub(super) fn resolve_real_codex_cli_with_source(
     codex_home: Option<&Path>,
 ) -> Option<(PathBuf, RealCodexPathSource)> {
     let managed_shim_path = managed_codex_shim_path(codex_home);
-    let mut state = load_install_state(codex_home);
+    let state = load_install_state(codex_home);
 
+    // User override wins. If it doesn't pass validation any more (file
+    // moved, AV pruned the .cmd, etc.) we silently fall through to the
+    // normal discovery chain so the user isn't permanently stuck — the
+    // override stays persisted so a stable retry will pick it up if the
+    // file reappears.
+    if let Some(raw_user_path) = state.user_codex_path.as_ref().map(PathBuf::from) {
+        if let Some(resolved_path) = resolve_windows_invokable_path(&raw_user_path)
+            .filter(|path| is_acceptable_real_codex_cli_path(path, Some(&managed_shim_path)))
+        {
+            return Some((resolved_path, RealCodexPathSource::UserOverride));
+        }
+    }
+
+    let mut state = state;
     if let Some(raw_path) = state.real_codex_path.as_ref().map(PathBuf::from) {
         if let Some(resolved_path) = resolve_windows_invokable_path(&raw_path)
             .filter(|path| is_acceptable_real_codex_cli_path(path, Some(&managed_shim_path)))
@@ -351,27 +382,20 @@ fn build_auth_refresh_command(real_codex_path: &Path, runtime_codex_home: &Path)
     command
 }
 
-/// Build the `codex login` command. Resolution of the real codex
-/// binary is anchored on `cli_codex_home` (the live `~/.codex`) so the
-/// managed-shim filter works correctly even when `runtime_codex_home`
-/// is a sandboxed sibling that doesn't have its own install state.
-/// `runtime_codex_home` is what the spawned process sees as
-/// `CODEX_HOME` and is where it will write `auth.json`.
-fn build_login_command(cli_codex_home: &Path, runtime_codex_home: &Path) -> Command {
-    let mut command = if let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) {
-        let mut command = Command::new(real_codex_path);
-        command.arg("login");
-        command
-    } else if cfg!(target_os = "windows") {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "codex", "login"]);
-        command
-    } else {
-        let mut command = Command::new("codex");
-        command.arg("login");
-        command
-    };
-
+/// Build the `codex login` command using a resolved real-codex path.
+/// Anchoring on `cli_codex_home` (the live `~/.codex`) for resolution
+/// keeps the managed-shim filter correct even when `runtime_codex_home`
+/// is a sandboxed sibling. `runtime_codex_home` is what the spawned
+/// process sees as `CODEX_HOME` and is where it will write `auth.json`.
+///
+/// Callers must resolve the path beforehand and surface
+/// `REAL_CODEX_NOT_FOUND` to the user instead of falling back to
+/// `cmd /C codex login` — that fallback only ever produced a Chinese
+/// "command not found" message in the OEM codepage that
+/// `from_utf8_lossy` then mangled into mojibake.
+fn build_login_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Command {
+    let mut command = Command::new(real_codex_path);
+    command.arg("login");
     hide_console_window(&mut command);
     command.current_dir(runtime_codex_home);
     command.env("CODEX_HOME", runtime_codex_home);
@@ -446,12 +470,28 @@ pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) 
 }
 
 pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
-    let output = build_login_command(cli_codex_home, runtime_codex_home)
-        .output()
+    let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) else {
+        return Err(AppError::new(
+            "REAL_CODEX_NOT_FOUND",
+            "Real Codex CLI path not found. Set the codex CLI location in the dashboard before logging in.",
+        ));
+    };
+
+    let child = build_login_command(&real_codex_path, runtime_codex_home)
+        .spawn()
         .map_err(|error| {
+            AppError::new(
+                "LOGIN_COMMAND_FAILED",
+                format!("Failed to start `codex login`: {error}"),
+            )
+        })?;
+    crate::shared::login_cancel::register_login_pid(child.id());
+    let wait_result = child.wait_with_output();
+    crate::shared::login_cancel::clear_login_pid();
+    let output = wait_result.map_err(|error| {
         AppError::new(
             "LOGIN_COMMAND_FAILED",
-            format!("Failed to start `codex login`: {error}"),
+            format!("`codex login` could not be reaped: {error}"),
         )
     })?;
 
@@ -470,6 +510,121 @@ pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppR
     };
 
     Err(AppError::new("LOGIN_FAILED", message))
+}
+
+/// Validate a user-provided codex CLI path. Resolves Windows extensions
+/// (`.cmd` / `.exe` / etc.) so a user can paste either `C:\...\codex` or
+/// `C:\...\codex.cmd`. Rejects the managed shim because pointing the
+/// override at our own shim creates an infinite indirection.
+pub(super) fn validate_user_codex_cli_path(
+    codex_home: Option<&Path>,
+    raw_input: &str,
+) -> AppResult<PathBuf> {
+    let trimmed = raw_input.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::new(
+            "CODEX_CLI_PATH_EMPTY",
+            "Please provide the full path to the codex CLI binary.",
+        ));
+    }
+    let candidate = PathBuf::from(trimmed);
+    let resolved = resolve_windows_invokable_path(&candidate).ok_or_else(|| {
+        AppError::new(
+            "CODEX_CLI_PATH_INVALID",
+            format!("No invokable file found at {}.", candidate.display()),
+        )
+    })?;
+
+    let managed_shim_path = managed_codex_shim_path(codex_home);
+    if !is_acceptable_real_codex_cli_path(&resolved, Some(&managed_shim_path)) {
+        return Err(AppError::new(
+            "CODEX_CLI_PATH_REJECTED",
+            "That path is the codex_switch managed shim or a Windows Apps alias; pick the real codex CLI binary instead.",
+        ));
+    }
+
+    Ok(resolved)
+}
+
+/// Persist a user override for the real codex CLI path. Returns the
+/// canonicalized path that was saved.
+pub fn set_user_codex_cli_path(
+    codex_home: Option<&Path>,
+    raw_input: &str,
+) -> AppResult<PathBuf> {
+    let resolved = validate_user_codex_cli_path(codex_home, raw_input)?;
+    let mut state = load_install_state(codex_home);
+    let next = Some(resolved.to_string_lossy().into_owned());
+    if state.user_codex_path != next {
+        state.user_codex_path = next;
+        save_install_state(codex_home, &state);
+    }
+    Ok(resolved)
+}
+
+/// Clear the user override and let auto-discovery take over again.
+pub fn clear_user_codex_cli_path(codex_home: Option<&Path>) {
+    let mut state = load_install_state(codex_home);
+    if state.user_codex_path.is_some() {
+        state.user_codex_path = None;
+        save_install_state(codex_home, &state);
+    }
+}
+
+/// Return common codex CLI install locations on Windows that actually
+/// exist on disk right now. Used to seed clickable hints in the
+/// "Codex 路径" dialog so users don't have to hunt manually.
+pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
+    let mut suggestions: Vec<PathBuf> = Vec::new();
+    let managed_shim = managed_codex_shim_path(codex_home);
+    let mut push = |path: PathBuf| {
+        if let Some(resolved) = resolve_windows_invokable_path(&path) {
+            if is_acceptable_real_codex_cli_path(&resolved, Some(&managed_shim))
+                && !suggestions.iter().any(|existing| existing == &resolved)
+            {
+                suggestions.push(resolved);
+            }
+        }
+    };
+
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        let base = PathBuf::from(local_app_data);
+        push(base.join("Programs").join("codex").join("codex.exe"));
+        push(base.join("Programs").join("codex").join("codex.cmd"));
+        push(base.join("Programs").join("codex").join("bin").join("codex.cmd"));
+    }
+    if let Some(app_data) = env::var_os("APPDATA") {
+        let npm_base = PathBuf::from(app_data).join("npm");
+        push(npm_base.join("codex.cmd"));
+        push(npm_base.join("codex"));
+    }
+    if let Some(program_files) = env::var_os("ProgramFiles") {
+        let base = PathBuf::from(program_files).join("codex");
+        push(base.join("codex.exe"));
+        push(base.join("codex.cmd"));
+        push(base.join("bin").join("codex.cmd"));
+    }
+    if let Some(program_files_x86) = env::var_os("ProgramFiles(x86)") {
+        let base = PathBuf::from(program_files_x86).join("codex");
+        push(base.join("codex.exe"));
+        push(base.join("codex.cmd"));
+    }
+
+    let mut where_command = Command::new("where");
+    where_command.arg("codex");
+    if let Ok(output) = hide_console_window(&mut where_command).output() {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                push(PathBuf::from(line));
+            }
+        }
+    }
+
+    suggestions
 }
 
 pub fn quit_codex_app_if_running() -> AppResult<bool> {
