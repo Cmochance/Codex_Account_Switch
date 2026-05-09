@@ -1,7 +1,8 @@
 use crate::errors::CommandError;
 use crate::models::{
-    ActionResponse, AddProfilePayload, OpenUrlPayload, ProfilePayload, RenameProfilePayload,
-    UpdateCheckPayload, UpdateCheckResponse, UpdateProfileBaseUrlPayload,
+    ActionResponse, AddProfilePayload, CodexCliStatus, OpenUrlPayload, ProfilePayload,
+    RenameProfilePayload, SetCodexCliPathPayload, UpdateCheckPayload, UpdateCheckResponse,
+    UpdateProfileBaseUrlPayload,
 };
 
 #[cfg(target_os = "macos")]
@@ -189,6 +190,28 @@ pub async fn check_update(
             )
         })?
         .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_codex_cli_status() -> Result<CodexCliStatus, CommandError> {
+    Ok(platform_runtime::actions::get_codex_cli_status())
+}
+
+#[tauri::command]
+pub fn set_codex_cli_path(
+    payload: SetCodexCliPathPayload,
+) -> Result<CodexCliStatus, CommandError> {
+    Ok(platform_runtime::actions::set_codex_cli_path(&payload.path)?)
+}
+
+#[tauri::command]
+pub fn clear_codex_cli_path() -> Result<CodexCliStatus, CommandError> {
+    Ok(platform_runtime::actions::clear_codex_cli_path())
+}
+
+#[tauri::command]
+pub fn cancel_codex_login() -> Result<bool, CommandError> {
+    Ok(crate::shared::login_cancel::cancel_login_in_progress())
 }
 
 #[tauri::command]

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::errors::{AppError, AppResult};
-use crate::models::ProfileMetadata;
+use crate::models::{CodexCliStatus, ProfileMetadata};
 use crate::platform;
 use crate::shared::config::sync_root_openai_base_url_from_profile_metadata;
 use crate::shared::fs_ops::{backup_root_state_to_profile, remove_path};
@@ -350,6 +350,43 @@ pub fn open_xiaohongshu(app: &tauri::AppHandle) -> AppResult<String> {
         })?;
 
     Ok(XIAOHONGSHU_URL.to_string())
+}
+
+fn build_codex_cli_status(codex_home: &Path) -> CodexCliStatus {
+    let (resolved_path, source) =
+        match super::process::resolve_real_codex_cli_with_source(Some(codex_home)) {
+            Some((path, source)) => (
+                Some(path.to_string_lossy().into_owned()),
+                source.as_label().to_string(),
+            ),
+            None => (None, "none".to_string()),
+        };
+    let suggested_paths = super::process::suggested_codex_cli_paths(Some(codex_home))
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    CodexCliStatus {
+        resolved_path,
+        source,
+        suggested_paths,
+    }
+}
+
+pub fn get_codex_cli_status() -> CodexCliStatus {
+    let codex_home = get_codex_home();
+    build_codex_cli_status(&codex_home)
+}
+
+pub fn set_codex_cli_path(raw_input: &str) -> AppResult<CodexCliStatus> {
+    let codex_home = get_codex_home();
+    super::process::set_user_codex_cli_path(Some(&codex_home), raw_input)?;
+    Ok(build_codex_cli_status(&codex_home))
+}
+
+pub fn clear_codex_cli_path() -> CodexCliStatus {
+    let codex_home = get_codex_home();
+    super::process::clear_user_codex_cli_path(Some(&codex_home));
+    build_codex_cli_status(&codex_home)
 }
 
 #[cfg(test)]

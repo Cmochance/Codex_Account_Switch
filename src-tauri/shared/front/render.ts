@@ -112,6 +112,24 @@ export const elements = {
   baseUrlDialogError: requiredElement<HTMLParagraphElement>("base-url-dialog-error"),
   cancelBaseUrlButton: requiredElement<HTMLButtonElement>("cancel-base-url-button"),
   submitBaseUrlButton: requiredElement<HTMLButtonElement>("submit-base-url-button"),
+  settingsCodexCliLabel: requiredElement<HTMLElement>("settings-codex-cli-label"),
+  settingsCodexCliValue: requiredElement<HTMLParagraphElement>("settings-codex-cli-value"),
+  settingsCodexCliButton: requiredElement<HTMLButtonElement>("settings-codex-cli-button"),
+  codexCliDialog: requiredElement<HTMLDialogElement>("codex-cli-dialog"),
+  codexCliForm: requiredElement<HTMLFormElement>("codex-cli-form"),
+  codexCliDialogTitle: requiredElement<HTMLHeadingElement>("codex-cli-dialog-title"),
+  codexCliDialogCopy: requiredElement<HTMLParagraphElement>("codex-cli-dialog-copy"),
+  codexCliCurrentLabel: requiredElement<HTMLSpanElement>("codex-cli-current-label"),
+  codexCliCurrentValue: requiredElement<HTMLSpanElement>("codex-cli-current-value"),
+  codexCliCurrentSource: requiredElement<HTMLSpanElement>("codex-cli-current-source"),
+  codexCliInputLabel: requiredElement<HTMLSpanElement>("codex-cli-input-label"),
+  codexCliInput: requiredElement<HTMLInputElement>("codex-cli-input"),
+  codexCliSuggestionsHeading: requiredElement<HTMLParagraphElement>("codex-cli-suggestions-heading"),
+  codexCliSuggestions: requiredElement<HTMLDivElement>("codex-cli-suggestions"),
+  codexCliDialogError: requiredElement<HTMLParagraphElement>("codex-cli-dialog-error"),
+  cancelCodexCliButton: requiredElement<HTMLButtonElement>("cancel-codex-cli-button"),
+  clearCodexCliButton: requiredElement<HTMLButtonElement>("clear-codex-cli-button"),
+  submitCodexCliButton: requiredElement<HTMLButtonElement>("submit-codex-cli-button"),
   toast: requiredElement<HTMLDivElement>("toast"),
   routeTabs: Array.from(document.querySelectorAll<HTMLElement>("[data-route-tab]")),
   pages: Array.from(document.querySelectorAll<HTMLElement>("[data-page]")),
@@ -507,7 +525,12 @@ export function renderProfiles(
       const baseDisabled = state.loading || cardBusy;
       const switchDisabled =
         !profile.auth_present || state.loading || cardBusy || loginPending || profile.status === "current";
-      const loginDisabled = state.loading || cardBusy || loginPending;
+      // The login button stays clickable while *this* card's login is in
+      // flight so the user can cancel the codex login process when they
+      // close the OAuth tab without finishing. It's still disabled when
+      // some other card holds the global login lock.
+      const loginDisabled =
+        state.loading || refreshPending || (loginPending && !loginRunning);
       const unavailable = isProfileUnavailable(profile);
       const refreshTitle = refreshRunning
         ? t(state.locale, "profileRefreshRunning")
@@ -576,7 +599,7 @@ export function renderProfiles(
               type="button"
               title="${
                 loginRunning
-                  ? t(state.locale, "profileLoginRunning")
+                  ? t(state.locale, "profileLoginCancelHint")
                   : loginDisabled
                     ? t(state.locale, "profileLoginDisabled")
                     : t(state.locale, "profileLoginReady")
@@ -586,7 +609,7 @@ export function renderProfiles(
             >
               ${
                 loginRunning
-                  ? '<span class="button-spinner" aria-hidden="true"></span>'
+                  ? `<span class="button-spinner" aria-hidden="true"></span><span class="button-cancel-label">${t(state.locale, "cancel")}</span>`
                   : t(state.locale, "loginButton")
               }
             </button>
@@ -696,4 +719,15 @@ export function applyLocale(): void {
   elements.submitRenameProfileButton.textContent = t(state.locale, "rename");
   elements.cancelBaseUrlButton.textContent = t(state.locale, "cancel");
   elements.submitBaseUrlButton.textContent = t(state.locale, "save");
+  elements.codexCliDialogTitle.textContent = t(state.locale, "codexCliDialogTitle");
+  elements.codexCliDialogCopy.textContent = t(state.locale, "codexCliDialogCopy");
+  elements.codexCliCurrentLabel.textContent = t(state.locale, "codexCliCurrentLabel");
+  elements.codexCliInputLabel.textContent = t(state.locale, "codexCliInputLabel");
+  elements.codexCliInput.placeholder = t(state.locale, "codexCliInputPlaceholder");
+  elements.codexCliSuggestionsHeading.textContent = t(state.locale, "codexCliSuggestionsHeading");
+  elements.cancelCodexCliButton.textContent = t(state.locale, "cancel");
+  elements.clearCodexCliButton.textContent = t(state.locale, "codexCliClearOverride");
+  elements.submitCodexCliButton.textContent = t(state.locale, "save");
+  elements.settingsCodexCliLabel.textContent = t(state.locale, "settingsCodexCli");
+  elements.settingsCodexCliButton.textContent = t(state.locale, "settingsCodexCliChange");
 }

@@ -56,6 +56,10 @@ pub fn run() {
             commands::actions::open_url,
             commands::actions::check_update,
             commands::actions::open_xiaohongshu,
+            commands::actions::get_codex_cli_status,
+            commands::actions::set_codex_cli_path,
+            commands::actions::clear_codex_cli_path,
+            commands::actions::cancel_codex_login,
             commands::switch::switch_profile,
         ])
         .run(tauri::generate_context!())
