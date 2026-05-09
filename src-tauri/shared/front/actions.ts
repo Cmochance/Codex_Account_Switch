@@ -367,9 +367,17 @@ async function handleLoginProfile(profile: string): Promise<void> {
 }
 
 async function handleCancelLogin(profile: string): Promise<void> {
+  // Set the flag eagerly so the in-flight loginProfile rejection — which
+  // can settle on the same task tick — sees it and shows "已取消登录"
+  // instead of LOGIN_FAILED. If the backend reports nothing was actually
+  // cancelled (login already completed/failed), we roll the flag back so
+  // the real toast still surfaces.
   cancelledLoginProfile = profile;
   try {
-    await cancelCodexLogin();
+    const cancelled = await cancelCodexLogin();
+    if (!cancelled) {
+      cancelledLoginProfile = null;
+    }
   } catch (error) {
     cancelledLoginProfile = null;
     showToast(

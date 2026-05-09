@@ -3,7 +3,7 @@ use std::fs;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
@@ -477,7 +477,12 @@ pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppR
         ));
     };
 
+    // Pipe stdio so wait_with_output() captures stderr/stdout the same
+    // way the previous `.output()` call did — we surface those bytes in
+    // the LOGIN_FAILED toast when codex login itself errors out.
     let child = build_login_command(&real_codex_path, runtime_codex_home)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| {
             AppError::new(

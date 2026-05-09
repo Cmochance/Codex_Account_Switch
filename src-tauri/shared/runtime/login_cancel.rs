@@ -13,6 +13,18 @@
 //! Platform-specific cancellation goes through `kill` (Unix) or
 //! `taskkill` (Windows) rather than a `Child` handle so the spawning
 //! site can keep using `wait_with_output()` (which consumes the child).
+//!
+//! ## Known limitation: PID reuse window
+//!
+//! The slot is cleared *after* `wait_with_output()` returns. Between
+//! "codex login exited" and "clear_login_pid()", the OS could in
+//! principle recycle the PID and assign it to an unrelated process. A
+//! cancel click in that microsecond window would target the new PID
+//! holder. The window is small enough that we accept it for v1.5.6;
+//! the right long-term fix is to keep the `Child` handle in the slot
+//! and call `Child::kill()` instead, but that requires reworking the
+//! spawn site to drive the wait via a poll loop rather than the
+//! consuming `wait_with_output()`.
 
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
