@@ -87,7 +87,21 @@ pub(crate) fn drop_killed_child(mut child: Child) {
 /// but if a previous login somehow leaked its child (e.g. via the
 /// `try_wait` Err path inside `peek_login_status`), reap it before
 /// overwriting so we don't leave a zombie behind.
+///
+/// **Caller invariant**: stdout/stderr handles must already be `take()`
+/// off the child. `wait_for_login_or_cancel` does this so its drainer
+/// threads own the pipes; if a future caller forgets, the
+/// overwrite-kill path here can't release the prev drainer's pipe FDs
+/// (the prev drainer still owns them) — but the prev child's process
+/// gets killed, the OS closes the write end, the drainer EOFs and
+/// exits. The debug_assert guards against that subtle invariant
+/// silently breaking.
 pub fn register_login_child(child: Child) {
+    debug_assert!(
+        child.stdout.is_none() && child.stderr.is_none(),
+        "register_login_child requires stdio to be taken first; \
+         see wait_for_login_or_cancel"
+    );
     if let Some(prev) = lock().replace(child) {
         drop_killed_child(prev);
     }
@@ -210,16 +224,32 @@ fn spawn_pipe_drainer<P: Read + Send + 'static>(
 ) -> std::thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || {
         let mut buf = Vec::new();
-        // Best-effort: an I/O error here just leaves whatever was
-        // already read. The caller never returns partial stdio to the
-        // user as success — this only feeds the LOGIN_FAILED toast on
-        // non-zero exit.
+        // Best-effort: an I/O error mid-read (broken pipe, EINTR storm,
+        // OS-level pipe error) just leaves whatever was already read in
+        // `buf`. We accept partial stdio rather than escalate to
+        // LOGIN_COMMAND_FAILED because:
+        //   1) On a successful login (status.success() == true) the
+        //      bytes are purely informational — auth.json is already
+        //      written by the codex login process before stdio closes.
+        //   2) On a failed login, partial bytes are still better than
+        //      no diagnostic message; the toast surfaces what we got.
+        // This trade-off would be worth revisiting if the project ever
+        // gains a structured logger so we could at least emit a
+        // breadcrumb for the rare Err path.
         let _ = pipe.read_to_end(&mut buf);
         buf
     })
 }
 
 fn join_drainer(handle: std::thread::JoinHandle<Vec<u8>>) -> Vec<u8> {
+    // A panicked drainer collapses to empty bytes. Realistic causes are
+    // allocator failure (OOM) on the read buffer or a future regression
+    // that introduces an unwrap inside the closure — both rare and both
+    // distinct from "child exited cleanly with empty output". Same
+    // trade-off applies as the read_to_end Err path: we don't have a
+    // structured logger to surface the panic, so we lose visibility
+    // into it. If this ever fires in the wild, the symptom is "login
+    // succeeded but toast has no detail" — annoying, not corrupting.
     handle.join().unwrap_or_default()
 }
 
@@ -440,6 +470,39 @@ mod tests {
             output.stdout.len(),
             target_bytes,
             "drainer should have collected the full {target_bytes}-byte payload"
+        );
+        assert!(lock().is_none());
+    }
+
+    #[test]
+    fn wait_for_login_or_cancel_captures_stderr_on_nonzero_exit() {
+        // Counterpart to the stdout-overflow regression test: exercise
+        // the stderr drainer in isolation, with a non-zero exit code,
+        // because production feeds `output.stderr` (not stdout) into
+        // the LOGIN_FAILED toast when codex login itself errors out.
+        // 256 KiB is well past any pipe buffer the kernels we ship to
+        // can hold without explicit fcntl resizing.
+        let _guard = test_lock().lock().unwrap_or_else(|p| p.into_inner());
+        drain_slot();
+
+        let target_bytes: usize = 256 * 1024;
+        let child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                &format!("/usr/bin/yes | /usr/bin/head -c {target_bytes} 1>&2; exit 1"),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn shell");
+
+        let output = wait_for_login_or_cancel(child).expect("ok");
+        assert!(!output.status.success());
+        assert_eq!(output.stdout.len(), 0);
+        assert_eq!(
+            output.stderr.len(),
+            target_bytes,
+            "stderr drainer should have collected the full {target_bytes}-byte payload"
         );
         assert!(lock().is_none());
     }
