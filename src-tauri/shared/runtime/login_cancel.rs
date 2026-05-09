@@ -37,6 +37,7 @@
 //! atomically `take()` the same `Mutex<Option<Child>>`, only one path
 //! ever owns the child at a time — there's no PID-reuse window left.
 
+use std::io::Read;
 use std::process::{Child, Output};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
@@ -125,25 +126,57 @@ pub fn peek_login_status() -> std::io::Result<LoginPeek> {
 
 /// Drive a freshly spawned codex login child to completion, surfacing
 /// cancellation as `LOGIN_CANCELLED`. The caller passes a `Child` whose
-/// stdio is already piped (we rely on `wait_with_output` to drain it).
+/// stdout/stderr are already piped — we take ownership of those pipe
+/// handles and **drain them concurrently** in dedicated threads, so the
+/// child can never block on a write to a full pipe buffer (typically
+/// 64 KB). Without that drain, a verbose `codex login` would fill its
+/// stderr pipe, block on write, and our `try_wait` poll loop would see
+/// `Running` forever — login appears stuck. (P1 caught by the
+/// chatgpt-codex-connector review on PR #29.)
 ///
 /// Both platform `run_codex_login` implementations call this; keeping
 /// the orchestration here means there's exactly one place that knows
 /// the contract between "spawn site holds the child" and "cancel takes
 /// the child" — they both go through `peek_login_status` and the slot.
-pub fn wait_for_login_or_cancel(child: Child) -> AppResult<Output> {
+pub fn wait_for_login_or_cancel(mut child: Child) -> AppResult<Output> {
+    // Take the stdio handles before parking the Child in the slot. The
+    // drainer threads own them for the duration of the process; when
+    // the child dies (naturally or via cancel kill) the OS closes the
+    // pipes, the drainers see EOF, and they hand back their accumulated
+    // bytes via thread::join.
+    let stdout_drainer = child.stdout.take().map(spawn_pipe_drainer);
+    let stderr_drainer = child.stderr.take().map(spawn_pipe_drainer);
+
     register_login_child(child);
+
     loop {
         match peek_login_status() {
-            Ok(LoginPeek::Exited(child)) => {
-                return child.wait_with_output().map_err(|error| {
+            Ok(LoginPeek::Exited(mut child)) => {
+                // try_wait already cached the status; wait() returns it
+                // without re-reaping. Match `wait_with_output`'s
+                // contract by calling wait() before joining drainers.
+                let status = child.wait().map_err(|error| {
                     AppError::new(
                         "LOGIN_COMMAND_FAILED",
-                        format!("`codex login` could not be reaped: {error}"),
+                        format!("`codex login` reap failed: {error}"),
                     )
+                })?;
+                let stdout = stdout_drainer
+                    .map(join_drainer)
+                    .unwrap_or_default();
+                let stderr = stderr_drainer
+                    .map(join_drainer)
+                    .unwrap_or_default();
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
                 });
             }
             Ok(LoginPeek::Cancelled) => {
+                // Drainer threads will see EOF when the killed child's
+                // pipes close and exit on their own — we don't need
+                // their accumulated output for the cancelled path.
                 return Err(AppError::new(
                     "LOGIN_CANCELLED",
                     "Login was cancelled before the OAuth flow finished.",
@@ -170,6 +203,24 @@ pub fn wait_for_login_or_cancel(child: Child) -> AppResult<Output> {
             }
         }
     }
+}
+
+fn spawn_pipe_drainer<P: Read + Send + 'static>(
+    mut pipe: P,
+) -> std::thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut buf = Vec::new();
+        // Best-effort: an I/O error here just leaves whatever was
+        // already read. The caller never returns partial stdio to the
+        // user as success — this only feeds the LOGIN_FAILED toast on
+        // non-zero exit.
+        let _ = pipe.read_to_end(&mut buf);
+        buf
+    })
+}
+
+fn join_drainer(handle: std::thread::JoinHandle<Vec<u8>>) -> Vec<u8> {
+    handle.join().unwrap_or_default()
 }
 
 /// Send a kill signal to the in-flight codex login child, if any, and
@@ -354,6 +405,43 @@ mod tests {
 
         // Drain the fresh one too so the test doesn't leak.
         drain_slot();
+    }
+
+    #[test]
+    fn wait_for_login_or_cancel_drains_oversized_pipe_output() {
+        // Regression for the codex-codex-connector P1 on PR #29: if
+        // try_wait polls a piped child without draining stdio, a
+        // verbose codex login can fill its 64 KB pipe buffer and block
+        // on write forever. Push 256 KiB through stdout and confirm
+        // wait_for_login_or_cancel still returns Ok with the full
+        // payload.
+        let _guard = test_lock().lock().unwrap_or_else(|p| p.into_inner());
+        drain_slot();
+
+        // Absolute paths sidestep PATH manipulation that other parallel
+        // tests (e.g. `macos::process` discovery tests) do via
+        // `std::env::set_var("PATH", ...)`. Without this, the shell
+        // would fail to find yes/head and exit non-zero in parallel
+        // runs even though the same test passes single-threaded.
+        let target_bytes: usize = 256 * 1024;
+        let child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                &format!("/usr/bin/yes | /usr/bin/head -c {target_bytes}"),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn shell");
+
+        let output = wait_for_login_or_cancel(child).expect("ok");
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout.len(),
+            target_bytes,
+            "drainer should have collected the full {target_bytes}-byte payload"
+        );
+        assert!(lock().is_none());
     }
 
     #[test]
