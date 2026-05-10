@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.9 - 2026-05-10
 
 - Bulk plan refresh (run on app launch + each local-day rollover) now skips any profile whose `last_plan_check_ms` was confirmed within the last 6 hours. On a workspace with several OAuth accounts the previous launch trickled cards updating one-by-one for 10–25 s of background work; with the gate, repeat launches inside the same working day cost zero round-trips.
 - Per-card Refresh button stops forcing an OAuth token rotation on every click. Rotation now only fires when the cached `last_plan_check_ms` is older than 6 hours (or absent); within that window the click reuses the cached `id_token` claims and only refreshes the access_token if it's actually about to expire. Saves the OAuth POST round-trip (~0.5–2 s on a slow network) on a repeat-click without losing the "user-initiated → fresh plan info" guarantee — once a day per profile the heavier path still runs.
