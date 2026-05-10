@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::errors::AppResult;
+use crate::shared::codex_app_server::AppServerSnapshot;
 
 pub trait PlatformHooks: Send + Sync {
     fn open_or_activate_codex_app(&self, codex_home: Option<&Path>) -> AppResult<String>;
@@ -21,11 +22,19 @@ pub trait PlatformHooks: Send + Sync {
         cli_codex_home: &Path,
         runtime_codex_home: &Path,
     ) -> AppResult<()>;
-    fn run_codex_auth_refresh(
+    /// Drive `codex app-server` to fetch the live account plan + rate
+    /// limits without paying for an LLM round-trip. Replaces the
+    /// historical `codex exec "Reply with the single word OK."` hack
+    /// that would burn user quota for ~30–90 s on every refresh
+    /// fallback. Implementations resolve the real codex binary via
+    /// `cli_codex_home` and point the spawned child at
+    /// `runtime_codex_home` as its `CODEX_HOME` (sandboxed sibling),
+    /// matching the existing login/refresh isolation model.
+    fn fetch_account_via_app_server(
         &self,
         cli_codex_home: &Path,
         runtime_codex_home: &Path,
-    ) -> AppResult<()>;
+    ) -> AppResult<AppServerSnapshot>;
     fn sync_root_openai_base_url_for_profile(
         &self,
         profile_name: &str,

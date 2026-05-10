@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::errors::{AppError, AppResult};
+use crate::models::QuotaSummary;
 use crate::platform;
 
 use super::fs_ops::{copy_entry, remove_path};
@@ -14,37 +15,9 @@ use super::runtime_isolation::{
     prune_runtime_extra_features, seed_runtime_shared_assets, RUNTIME_AUTH_FILENAME,
     RUNTIME_PROFILE_METADATA_FILENAME,
 };
-use super::session_files::{collect_jsonl_files, file_modified_ms};
-use super::session_usage::load_latest_local_quota_snapshot_since;
 
 const REFRESH_RUNTIME_PROFILE_FILES: [&str; 2] =
     [RUNTIME_AUTH_FILENAME, RUNTIME_PROFILE_METADATA_FILENAME];
-
-fn generated_refresh_session_files(
-    runtime_home: &Path,
-    min_source_mtime_ms: Option<u64>,
-) -> Vec<PathBuf> {
-    let sessions_root = runtime_home.join("sessions");
-    if !sessions_root.is_dir() {
-        return Vec::new();
-    }
-
-    let mut files = Vec::new();
-    collect_jsonl_files(&sessions_root, &mut files);
-    files
-        .into_iter()
-        .filter(|path| {
-            !min_source_mtime_ms
-                .is_some_and(|min_mtime| file_modified_ms(path).unwrap_or(0) < min_mtime)
-        })
-        .collect()
-}
-
-fn cleanup_generated_refresh_sessions(session_files: &[PathBuf]) {
-    for path in session_files {
-        let _ = remove_path(path);
-    }
-}
 
 fn ensure_refreshable_auth(auth_path: &Path) -> AppResult<()> {
     let raw = fs::read_to_string(auth_path).map_err(|error| {
@@ -176,10 +149,9 @@ pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
     ensure_refreshable_auth(&auth_path)?;
 
     // Fast path for ChatGPT/OAuth profiles: read live quota from the same
-    // private backend endpoint the Codex CLI uses, instead of running a
-    // real `codex exec` round-trip just to provoke a session file write.
-    // Falls through to the legacy path on any failure so existing behavior
-    // is preserved as a safety net.
+    // private backend endpoint the Codex CLI uses, instead of paying for
+    // an LLM round-trip. Falls through to the app-server RPC path on any
+    // failure so existing behavior is preserved.
     if crate::shared::chatgpt_api::profile_supports_api_refresh(&profile_dir) {
         if let Some(profile_path) =
             try_refresh_via_chatgpt_api(&profile_name, &codex_home, &profile_dir)?
@@ -188,54 +160,51 @@ pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
         }
     }
 
-    let runtime_codex_home = prepare_refresh_runtime_home(&codex_home, &profile_dir)?;
-    let refresh_started_at_ms = std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|value| u64::try_from(value.as_millis()).ok());
-    platform::run_codex_auth_refresh(&codex_home, &runtime_codex_home)?;
-    let generated_session_files =
-        generated_refresh_session_files(&runtime_codex_home, refresh_started_at_ms);
-    let refreshed_quota =
-        load_latest_local_quota_snapshot_since(Some(&runtime_codex_home), refresh_started_at_ms);
-    cleanup_generated_refresh_sessions(&generated_session_files);
+    refresh_via_app_server(&profile_name, &codex_home, &profile_dir, &auth_path)
+}
+
+/// Fallback path when the direct ChatGPT HTTP call failed. Uses
+/// `codex app-server`'s JSON-RPC interface to fetch the same data
+/// (account plan + rate limits) without spawning a real LLM session.
+/// Replaces the historical `codex exec "Reply with the single word OK."`
+/// hack which burned ~30–90 s and real user quota on every fallback.
+fn refresh_via_app_server(
+    profile_name: &str,
+    codex_home: &Path,
+    profile_dir: &Path,
+    auth_path: &Path,
+) -> AppResult<String> {
+    let runtime_codex_home = prepare_refresh_runtime_home(codex_home, profile_dir)?;
+    let snapshot = platform::fetch_account_via_app_server(codex_home, &runtime_codex_home)?;
 
     let refreshed_auth_path = runtime_codex_home.join("auth.json");
     if !refreshed_auth_path.is_file() {
         return Err(AppError::new(
             "AUTH_REFRESH_MISSING",
-            "Codex refresh completed but no auth.json was found in the refresh runtime home.",
+            "codex app-server completed but no auth.json was found in the refresh runtime home.",
         ));
     }
+    copy_entry(&refreshed_auth_path, auth_path)?;
 
-    copy_entry(&refreshed_auth_path, &auth_path)?;
-    // Legacy `codex exec` path: no fresher plan signal than the id_token
-    // codex just rotated. Quota update is independent — the D1 split
-    // means we issue two writes here on the with-snapshot branch, one
-    // for quota and one for the auth-derived plan slice. The cost is
-    // ~1KB of disk per refresh, the gain is that the plan path no
-    // longer has to thread quota arguments through call sites that
-    // don't care about quota.
-    sync_profile_metadata_from_auth(&profile_name, None, Some(&codex_home))?;
-    if let Some(snapshot) = refreshed_quota {
-        sync_profile_quota(
-            &profile_name,
-            snapshot.quota,
-            snapshot.source_mtime_ms,
-            Some(&codex_home),
-        )?;
-    }
-    super::profiles_index::load_profiles_index(Some(&codex_home))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok());
+    sync_profile_quota(
+        profile_name,
+        snapshot.quota.unwrap_or_else(QuotaSummary::default),
+        now_ms,
+        Some(codex_home),
+    )?;
+    sync_profile_metadata_from_auth(profile_name, snapshot.plan_type, Some(codex_home))?;
+    super::profiles_index::load_profiles_index(Some(codex_home))?;
 
     Ok(profile_dir.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        cleanup_generated_refresh_sessions, generated_refresh_session_files,
-        prepare_refresh_runtime_home,
-    };
+    use super::prepare_refresh_runtime_home;
     use crate::windows::paths::get_refresh_runtime_dir;
     use std::fs;
     use std::path::PathBuf;
@@ -322,36 +291,4 @@ mod tests {
         let _ = fs::remove_dir_all(&codex_home);
     }
 
-    #[test]
-    fn cleanup_generated_refresh_sessions_only_removes_new_sessions() {
-        let codex_home = temp_codex_home("cleanup-refresh-sessions");
-        let runtime_home = get_refresh_runtime_dir(Some(&codex_home));
-        let sessions_dir = runtime_home
-            .join("sessions")
-            .join("2026")
-            .join("04")
-            .join("08");
-        fs::create_dir_all(&sessions_dir).unwrap();
-
-        let old_session = sessions_dir.join("rollout-old.jsonl");
-        let new_session = sessions_dir.join("rollout-new.jsonl");
-        fs::write(&old_session, "{\"type\":\"event_msg\"}\n").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        let threshold = fs::metadata(&old_session)
-            .unwrap()
-            .modified()
-            .unwrap()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
-            + 1;
-        fs::write(&new_session, "{\"type\":\"event_msg\"}\n").unwrap();
-
-        let generated = generated_refresh_session_files(&runtime_home, Some(threshold));
-        cleanup_generated_refresh_sessions(&generated);
-
-        assert!(old_session.is_file());
-        assert!(!new_session.exists());
-        let _ = fs::remove_dir_all(&codex_home);
-    }
 }
