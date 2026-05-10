@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Settings → Version row is now driven by `package.json` at build time (Vite-injected `__CODEX_APP_VERSION__`) instead of a hardcoded literal. The previous 1.5.0 string had drifted across many releases. A new `npm run version:check` script (also wired into the Linux CI job) refuses any future commit that puts a `\d+\.\d+\.\d+` literal back into the front-end HTML.
+- 15-second dashboard quota ticker and every `refreshAllData` after a switch / login / refresh now short-circuit through a persistent JSONL parse cache at `<runtime_dir>/quota_cache.json`. On an idle dashboard with a multi-GB session corpus this drops the per-tick cost from "0.5–5 s of blocking I/O" to "~10 ms of stat calls": the cache reuses the previous winning snapshot whenever the lex-largest jsonl's `(mtime, size)` signature is unchanged. Slow-path scans also skip parsing files that haven't moved (including files previously confirmed as having no `token_count` event), so cold-cache rebuilds stay fast on big corpora. Cache is bounded at 64 entries with oldest-first pruning.
+- Reorganised the Usage Guide page: the static three-card timeline is now an auto-fitting grid that scales to any step count, plus dedicated "Tips & warnings" callouts (info / warn / success accent stripes) and a collapsible "FAQ" section using native `<details>`. Step / tip / FAQ slots ship with TODO placeholder text in both English and Chinese — content fill-in is intentionally separate from this scaffolding PR.
+
 ## 1.5.8 - 2026-05-10
 
 - Refresh fallback no longer burns user quota or runs an LLM round-trip. The legacy `codex exec "Reply with the single word OK."` path took 30–90 s and consumed real ChatGPT quota whenever the direct HTTP refresh failed (slow network, transient 401, GFW). It is now replaced by `codex app-server`'s JSON-RPC `account/read` + `account/rateLimits/read`, which return the same plan + rate-limit data in well under a second without touching the model. Requires `codex` ≥ 0.130.0 on this fallback path; older CLIs surface `APP_SERVER_METHOD_UNSUPPORTED` so the user can upgrade.
