@@ -140,17 +140,43 @@ pub async fn refresh_all_oauth_profile_plans_silent() -> Result<u32, CommandErro
         })?
 }
 
+/// Bulk-refresh skips any profile whose `last_plan_check_ms` is
+/// younger than this. Sized to be longer than the dashboard's 5-min
+/// silent ticker (so the active profile keeps moving on the cheap
+/// path) but short enough that a paid-tier change on a parked
+/// profile surfaces by the next day rollover.
+const BULK_REFRESH_STALE_THRESHOLD_MS: u64 = 6 * 60 * 60 * 1000;
+
 fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
     let codex_home = crate::shared::paths::get_codex_home();
     let backup_root = crate::shared::paths::get_backup_root(Some(&codex_home));
     let index = crate::shared::profiles_index::load_profiles_index(Some(&codex_home))
         .map_err(CommandError::from)?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok())
+        .unwrap_or(0);
 
     let mut refreshed: u32 = 0;
     for entry in &index.profiles {
         let profile_dir = backup_root.join(&entry.folder_name);
         if !crate::shared::chatgpt_api::profile_supports_api_refresh(&profile_dir) {
             continue;
+        }
+
+        // Skip profiles whose plan info was confirmed within the
+        // last 6 hours. Without this gate, every app launch and
+        // every day rollover paid for N × (OAuth POST + usage GET)
+        // back-to-back regardless of whether anything could have
+        // changed; on a 5-account workspace that's 10–25 s of
+        // background work the user could see "trickling" into the
+        // cards. With it, repeat launches within a working day are
+        // free.
+        if let Some(last_check) = entry.last_plan_check_ms {
+            if now_ms.saturating_sub(last_check) < BULK_REFRESH_STALE_THRESHOLD_MS {
+                continue;
+            }
         }
 
         let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api_with_options(
@@ -167,11 +193,6 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
             Err(_) => continue,
         };
 
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .and_then(|value| u64::try_from(value.as_millis()).ok())
-            .unwrap_or(0);
         let plan_type_from_api = snapshot.plan_type.clone();
         // Update both quota and plan unconditionally on a successful
         // API response. `unwrap_or_default()` clears stale paid-window
