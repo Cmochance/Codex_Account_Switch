@@ -6,7 +6,9 @@ use crate::errors::{AppError, AppResult};
 use crate::models::QuotaSummary;
 use crate::platform;
 use crate::shared::fs_ops::{copy_entry, remove_path};
-use crate::shared::metadata::{sync_profile_metadata_from_auth, sync_profile_quota};
+use crate::shared::metadata::{
+    load_profile_metadata, sync_profile_metadata_from_auth, sync_profile_quota,
+};
 use crate::shared::paths::{get_backup_root, get_codex_home, validate_profile_name};
 use crate::shared::profiles_index::load_profiles_index;
 use crate::shared::runtime_isolation::{
@@ -18,6 +20,32 @@ use super::cli_shim::get_refresh_runtime_dir;
 
 const REFRESH_RUNTIME_PROFILE_FILES: [&str; 2] =
     [RUNTIME_AUTH_FILENAME, RUNTIME_PROFILE_METADATA_FILENAME];
+
+/// How old the cached `last_plan_check_ms` can get before a manual
+/// Refresh click escalates to a full OAuth token rotation. Below this
+/// threshold the click reuses the cached `id_token` claims and only
+/// rotates the access_token if it's actually about to expire — which
+/// keeps repeated clicks within a session cheap (saves the OAuth POST
+/// round-trip, ~0.5–2 s on a slow network). Above the threshold the
+/// click forces the rotation so subscription/plan changes that happened
+/// overnight (or from another machine) propagate within one click.
+const STALE_PLAN_THRESHOLD_MS: u64 = 6 * 60 * 60 * 1000;
+
+fn should_force_oauth_rotation(profile_name: &str, codex_home: &Path) -> bool {
+    let metadata = load_profile_metadata(profile_name, Some(codex_home));
+    let Some(last_check) = metadata.last_plan_check_ms else {
+        return true;
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok());
+    match now_ms {
+        Some(now) => now.saturating_sub(last_check) >= STALE_PLAN_THRESHOLD_MS,
+        // Clock unreadable: be conservative and rotate.
+        None => true,
+    }
+}
 
 fn ensure_refreshable_auth(auth_path: &Path) -> AppResult<()> {
     let raw = fs::read_to_string(auth_path).map_err(|error| {
@@ -91,16 +119,21 @@ fn try_refresh_via_chatgpt_api(
     codex_home: &Path,
     profile_dir: &Path,
 ) -> AppResult<Option<String>> {
-    // User-initiated card refresh: force OAuth token rotation so
-    // id_token claims (plan tier, subscription expiry) move within a
-    // single click instead of waiting for the access_token to expire.
-    // The 5-min silent dashboard ticker stays on the cheap path; only
-    // the explicit Refresh button takes the heavier hit.
+    // Force OAuth token rotation only when the cached plan info has
+    // gone stale (older than `STALE_PLAN_THRESHOLD_MS`). For the
+    // common case of clicking Refresh repeatedly within a session,
+    // skip the OAuth POST entirely and let the inner expiry check
+    // (`access_token_expired` in `chatgpt_api`) drive rotation only
+    // when actually needed. Rotating only the access_token saves
+    // 0.5–2 s per click on a slow network without losing the
+    // "user-initiated → fresh plan info" guarantee that motivated
+    // forcing rotation in the first place.
+    let force_rotation = should_force_oauth_rotation(profile_name, codex_home);
     let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api_with_options(
         profile_name,
         codex_home,
         crate::shared::chatgpt_api::RefreshOptions {
-            force_token_rotation: true,
+            force_token_rotation: force_rotation,
         },
     ) {
         Ok(value) => value,

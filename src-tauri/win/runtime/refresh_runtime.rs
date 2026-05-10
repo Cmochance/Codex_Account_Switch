@@ -7,7 +7,9 @@ use crate::models::QuotaSummary;
 use crate::platform;
 
 use super::fs_ops::{copy_entry, remove_path};
-use super::metadata::{sync_profile_metadata_from_auth, sync_profile_quota};
+use super::metadata::{
+    load_profile_metadata, sync_profile_metadata_from_auth, sync_profile_quota,
+};
 use super::paths::{
     get_backup_root, get_codex_home, get_refresh_runtime_dir, validate_profile_name,
 };
@@ -18,6 +20,27 @@ use super::runtime_isolation::{
 
 const REFRESH_RUNTIME_PROFILE_FILES: [&str; 2] =
     [RUNTIME_AUTH_FILENAME, RUNTIME_PROFILE_METADATA_FILENAME];
+
+/// See mac/runtime/refresh_runtime.rs for the rationale; mirrored here
+/// because the two refresh-runtime modules are still separate per-OS
+/// and share no helpers (D1 in the open follow-up list will collapse
+/// them into `shared/runtime`).
+const STALE_PLAN_THRESHOLD_MS: u64 = 6 * 60 * 60 * 1000;
+
+fn should_force_oauth_rotation(profile_name: &str, codex_home: &Path) -> bool {
+    let metadata = load_profile_metadata(profile_name, Some(codex_home));
+    let Some(last_check) = metadata.last_plan_check_ms else {
+        return true;
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok());
+    match now_ms {
+        Some(now) => now.saturating_sub(last_check) >= STALE_PLAN_THRESHOLD_MS,
+        None => true,
+    }
+}
 
 fn ensure_refreshable_auth(auth_path: &Path) -> AppResult<()> {
     let raw = fs::read_to_string(auth_path).map_err(|error| {
@@ -91,16 +114,16 @@ fn try_refresh_via_chatgpt_api(
     codex_home: &Path,
     profile_dir: &Path,
 ) -> AppResult<Option<String>> {
-    // User-initiated card refresh: force OAuth token rotation so
-    // id_token claims (plan tier, subscription expiry) move within a
-    // single click instead of waiting for the access_token to expire.
-    // The 5-min silent dashboard ticker stays on the cheap path; only
-    // the explicit Refresh button takes the heavier hit.
+    // Force OAuth token rotation only when the cached plan info has
+    // gone stale (older than `STALE_PLAN_THRESHOLD_MS`). See
+    // `mac/runtime/refresh_runtime.rs` for the same logic — this
+    // module mirrors it pending the planned mac/win merge.
+    let force_rotation = should_force_oauth_rotation(profile_name, codex_home);
     let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api_with_options(
         profile_name,
         codex_home,
         crate::shared::chatgpt_api::RefreshOptions {
-            force_token_rotation: true,
+            force_token_rotation: force_rotation,
         },
     ) {
         Ok(value) => value,
