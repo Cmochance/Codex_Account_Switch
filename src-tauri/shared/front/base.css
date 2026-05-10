@@ -1541,6 +1541,110 @@ html[data-theme] .toast.is-error {
   gap: 14px;
 }
 
+/* `timeline--flex` is the variant the guide page uses now that the
+ * step list isn't fixed at three: it auto-fits as many cards as fit
+ * per row at >= 280 px, so 4–8 step counts wrap cleanly without
+ * touching the dashboard's tighter 3-column timeline. */
+.timeline--flex {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.guide-section-heading {
+  margin-top: 28px;
+  margin-bottom: 14px;
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.guide-callouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.guide-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-elevated);
+}
+
+.guide-callout strong {
+  color: var(--text-strong);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.guide-callout p {
+  color: var(--text-body);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* Lightweight accent stripe per callout kind. We keep the
+ * background neutral so the page doesn't get loud — color lives
+ * only on the left edge. */
+.guide-callout--info {
+  border-left: 3px solid var(--accent-info, #4f8cff);
+}
+
+.guide-callout--warn {
+  border-left: 3px solid var(--accent-warn, #f0a020);
+}
+
+.guide-callout--success {
+  border-left: 3px solid var(--accent-success, #2eb872);
+}
+
+.guide-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guide-faq details {
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  background: var(--surface-elevated);
+  padding: 12px 16px;
+}
+
+.guide-faq summary {
+  cursor: pointer;
+  color: var(--text-strong);
+  font-weight: 600;
+  list-style: none;
+  font-size: 0.95rem;
+}
+
+.guide-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.guide-faq summary::after {
+  content: "+";
+  float: right;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.guide-faq details[open] summary::after {
+  content: "−";
+}
+
+.guide-faq details > p {
+  margin-top: 10px;
+  color: var(--text-body);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
 .timeline-card {
   display: flex;
   gap: 16px;

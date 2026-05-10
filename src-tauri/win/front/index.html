@@ -237,7 +237,7 @@
             </div>
             <div class="settings-row">
               <strong data-i18n-key="settingsVersion">Version</strong>
-              <span class="settings-value settings-value--strong">1.5.0</span>
+              <span id="settings-version-value" class="settings-value settings-value--strong">—</span>
             </div>
             <div class="settings-row">
               <strong data-i18n-key="settingsLicense">License</strong>
@@ -269,7 +269,8 @@
             </div>
           </div>
 
-          <div class="timeline">
+          <h3 class="guide-section-heading" data-i18n-key="guideSectionStepsHeading">Workflow</h3>
+          <div class="timeline timeline--flex">
             <article class="timeline-card">
               <span>1</span>
               <div>
@@ -291,6 +292,63 @@
                 <p data-i18n-key="guideStepSwitchText">Use the profile cards to switch while preserving the previous account backup.</p>
               </div>
             </article>
+            <article class="timeline-card">
+              <span>4</span>
+              <div>
+                <h3 data-i18n-key="guideStepRefreshTitle">Refresh quota</h3>
+                <p data-i18n-key="guideStepRefreshText">TODO: explain when to use the per-card Refresh button and what it costs.</p>
+              </div>
+            </article>
+            <article class="timeline-card">
+              <span>5</span>
+              <div>
+                <h3 data-i18n-key="guideStepBaseUrlTitle">Set a custom Base URL (optional)</h3>
+                <p data-i18n-key="guideStepBaseUrlText">TODO: explain when a custom Base URL is needed and the warning indicator.</p>
+              </div>
+            </article>
+            <article class="timeline-card">
+              <span>6</span>
+              <div>
+                <h3 data-i18n-key="guideStepBackupTitle">Where backups live</h3>
+                <p data-i18n-key="guideStepBackupText">TODO: explain the account_backup folder layout and the Open folder button.</p>
+              </div>
+            </article>
+          </div>
+
+          <h3 class="guide-section-heading" data-i18n-key="guideSectionTipsHeading">Tips &amp; warnings</h3>
+          <div class="guide-callouts">
+            <aside class="guide-callout guide-callout--info">
+              <strong data-i18n-key="guideTipFreshTitle">TODO: Quota freshness tip headline</strong>
+              <p data-i18n-key="guideTipFreshText">TODO: explain the auto-refresh cadence (15s ticker, 5min silent ticker, daily plan refresh).</p>
+            </aside>
+            <aside class="guide-callout guide-callout--warn">
+              <strong data-i18n-key="guideTipBaseUrlTitle">TODO: Base URL warning headline</strong>
+              <p data-i18n-key="guideTipBaseUrlText">TODO: explain why a custom Base URL on a ChatGPT/OAuth account breaks login.</p>
+            </aside>
+            <aside class="guide-callout guide-callout--success">
+              <strong data-i18n-key="guideTipMultiAccountTitle">TODO: Multi-account headline</strong>
+              <p data-i18n-key="guideTipMultiAccountText">TODO: explain that switching never deletes the previous account state.</p>
+            </aside>
+          </div>
+
+          <h3 class="guide-section-heading" data-i18n-key="guideSectionFaqHeading">FAQ</h3>
+          <div class="guide-faq">
+            <details>
+              <summary data-i18n-key="guideFaqResetQ">TODO: FAQ — quota reset timing?</summary>
+              <p data-i18n-key="guideFaqResetA">TODO: answer.</p>
+            </details>
+            <details>
+              <summary data-i18n-key="guideFaqLoginQ">TODO: FAQ — login fails / Codex CLI not found?</summary>
+              <p data-i18n-key="guideFaqLoginA">TODO: answer (point at Settings → Codex CLI path).</p>
+            </details>
+            <details>
+              <summary data-i18n-key="guideFaqSwitchQ">TODO: FAQ — switch keeps spinning / locked?</summary>
+              <p data-i18n-key="guideFaqSwitchA">TODO: answer (mention .switch.lock auto-cleanup).</p>
+            </details>
+            <details>
+              <summary data-i18n-key="guideFaqDataQ">TODO: FAQ — where is data stored / how to back up?</summary>
+              <p data-i18n-key="guideFaqDataA">TODO: answer (~/.codex/account_backup, optionally export).</p>
+            </details>
           </div>
 
           <button class="primary-button guide-start" type="button" data-add-profile data-i18n-key="guideStart">Start with a profile</button>

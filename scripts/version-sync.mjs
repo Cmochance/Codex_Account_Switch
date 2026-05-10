@@ -10,6 +10,22 @@ const cargoTomlPath = resolve(repoRoot, 'src-tauri', 'Cargo.toml')
 const defaultVersionLogPath = resolve(repoRoot, 'src-tauri', 'target', 'release', 'version.md')
 const tauriVersionSource = '../package.json'
 
+/// Front-end HTML files where the Settings → Version element lives.
+/// Each file must contain a `<span id="settings-version-value">…</span>`
+/// whose text content is empty / a placeholder dash. Anything that
+/// looks like a semver literal inside that span is a regression — the
+/// row is supposed to be painted at runtime from the Vite-injected
+/// `__CODEX_APP_VERSION__`. Restricting the scan to that one element
+/// avoids false positives on unrelated version-shaped strings (release
+/// links, file paths, dates) that may appear elsewhere in the markup.
+const versionHardcodeForbiddenPaths = [
+  'src-tauri/mac/front/index.html',
+  'src-tauri/win/front/index.html',
+]
+const settingsVersionElementPattern =
+  /<span\b[^>]*\bid\s*=\s*"settings-version-value"[^>]*>([^<]*)<\/span>/i
+const versionHardcodePattern = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/
+
 const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
 const readJson = (filePath) => JSON.parse(readFileSync(filePath, 'utf8'))
@@ -155,13 +171,61 @@ const syncPackageLockVersion = (version) => {
   }
 }
 
+const checkHardcodedVersions = () => {
+  const findings = []
+  for (const relPath of versionHardcodeForbiddenPaths) {
+    const absPath = resolve(repoRoot, relPath)
+    if (!existsSync(absPath)) {
+      // Treat a missing path as a configuration drift — silently
+      // skipping it would let someone delete or rename the HTML file
+      // and lose the safety net unnoticed.
+      findings.push({ path: relPath, reason: 'file not found' })
+      continue
+    }
+    const contents = readFileSync(absPath, 'utf8')
+    const elementMatch = contents.match(settingsVersionElementPattern)
+    if (!elementMatch) {
+      findings.push({
+        path: relPath,
+        reason: 'missing <span id="settings-version-value"> element',
+      })
+      continue
+    }
+    const inner = elementMatch[1].trim()
+    if (versionHardcodePattern.test(inner)) {
+      findings.push({ path: relPath, reason: `inner text "${inner}" looks like a version literal` })
+    }
+  }
+  if (findings.length === 0) {
+    return
+  }
+  const detail = findings
+    .map((entry) => `  ${entry.path}: ${entry.reason}`)
+    .join('\n')
+  throw new Error(
+    `Settings → Version row drift detected.\n` +
+      `Each listed HTML file must contain <span id="settings-version-value"> whose inner text is a placeholder, not a version literal — the row is painted at runtime from the Vite-injected \`__CODEX_APP_VERSION__\`.\n` +
+      `Offending files:\n${detail}`,
+  )
+}
+
 const args = process.argv.slice(2)
+const checkMode = args[0] === '--check'
 const setMode = args[0] === '--set'
 const setFromVersionLogMode = args[0] === '--set-from-version-log'
 const requestedVersion = setMode ? args[1] : null
 const requestedVersionLogPath = setFromVersionLogMode
   ? resolve(repoRoot, args[1] ?? defaultVersionLogPath)
   : null
+
+if (checkMode) {
+  // Read-only mode used by CI / pre-commit hooks. Skips the writes
+  // below and only validates that no hardcoded version literal has
+  // crept back into the front-end HTML.
+  checkHardcodedVersions()
+  console.log('Version drift check passed.')
+  process.exit(0)
+}
 
 if (setMode && setFromVersionLogMode) {
   throw new Error('Choose either --set or --set-from-version-log.')
@@ -212,5 +276,10 @@ const nextCargoToml = syncCargoVersion(cargoToml, version)
 if (nextCargoToml !== cargoToml) {
   writeFileSync(cargoTomlPath, nextCargoToml)
 }
+
+// Belt-and-braces: every sync run also enforces "no hardcoded version
+// in front-end HTML" so a stale literal can't silently rot through
+// release after release the way `1.5.0` did.
+checkHardcodedVersions()
 
 console.log(`Version source: ${versionSourceLabel} -> ${version}`)

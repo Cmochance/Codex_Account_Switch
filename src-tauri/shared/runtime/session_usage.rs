@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::models::{QuotaSummary, QuotaWindow};
 
 use super::paths::get_codex_home;
+use super::quota_cache::{file_signature, CachedEntry, CachedSnapshot, QuotaCache};
 use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
 use super::session_files::{collect_jsonl_files, file_modified_ms};
 
@@ -212,20 +213,115 @@ pub fn load_latest_local_quota_snapshot_since(
     codex_home: Option<&Path>,
     min_source_mtime_ms: Option<u64>,
 ) -> Option<LocalQuotaSnapshot> {
-    for path in session_files_descending(codex_home).into_iter().take(32) {
-        let source_mtime_ms = file_modified_ms(&path);
+    let mut cache = QuotaCache::load(codex_home);
+    let scan_paths: Vec<PathBuf> = session_files_descending(codex_home)
+        .into_iter()
+        .take(32)
+        .collect();
+
+    // Tier-1 fast path: if the previously winning file still exists,
+    // is still the lex-largest jsonl in `sessions/`, and its
+    // `(mtime, size)` signature is unchanged, we already know the
+    // answer — no JSONL reads required. The dashboard's 15-second
+    // ticker hits this >99% of the time on an idle session corpus
+    // (a 1.1 GB / 232-file corpus parses in 0.5–5 s in the slow path
+    // on the maintainer's machine, vs. ~10 ms here).
+    if let Some(snapshot) = try_fast_path(&cache, &scan_paths, min_source_mtime_ms) {
+        return Some(snapshot);
+    }
+
+    let mut next_last_snapshot: Option<CachedSnapshot> = None;
+    let mut hit: Option<LocalQuotaSnapshot> = None;
+    for path in &scan_paths {
+        let signature = file_signature(path);
+        let source_mtime_ms = if signature.0 == 0 {
+            file_modified_ms(path)
+        } else {
+            Some(signature.0)
+        };
         if min_source_mtime_ms.is_some_and(|min_mtime| source_mtime_ms.unwrap_or(0) < min_mtime) {
             continue;
         }
-        if let Some(quota) = load_latest_quota_from_file(&path) {
-            return Some(LocalQuotaSnapshot {
+
+        // Per-file cache: skip parsing files that haven't moved. An
+        // entry whose `quota` is `None` means "previously parsed, no
+        // token_count event in this file" — we don't need to re-read.
+        let quota_for_path = match cache.lookup(path, signature) {
+            Some(entry) => entry.quota.clone(),
+            None => {
+                let parsed = load_latest_quota_from_file(path);
+                // Skip caching when stat failed (`signature == (0, 0)`):
+                // a stored `(0, 0)` entry would be a false hit on the
+                // next tick for any other transiently-inaccessible file
+                // and silently suppress its parse. The slow path will
+                // re-attempt this path on the next tick when stat works
+                // again.
+                if signature != (0, 0) {
+                    cache.upsert_entry(
+                        path.clone(),
+                        CachedEntry {
+                            mtime_ms: signature.0,
+                            size: signature.1,
+                            quota: parsed.clone(),
+                        },
+                    );
+                }
+                parsed
+            }
+        };
+
+        if let Some(quota) = quota_for_path {
+            next_last_snapshot = Some(CachedSnapshot {
+                path: path.clone(),
+                mtime_ms: signature.0,
+                size: signature.1,
+                quota: quota.clone(),
+                source_mtime_ms,
+            });
+            hit = Some(LocalQuotaSnapshot {
                 quota,
                 source_mtime_ms,
             });
+            break;
         }
     }
 
-    None
+    match next_last_snapshot {
+        Some(snapshot) => cache.set_last_snapshot(snapshot),
+        None => cache.clear_last_snapshot(),
+    }
+    cache.save(codex_home);
+
+    hit
+}
+
+fn try_fast_path(
+    cache: &QuotaCache,
+    scan_paths: &[PathBuf],
+    min_source_mtime_ms: Option<u64>,
+) -> Option<LocalQuotaSnapshot> {
+    let last = cache.last_snapshot.as_ref()?;
+    // Only short-circuit when the cached file is still the
+    // lex-largest entry — otherwise a brand-new session would be
+    // ignored until the cache happened to be invalidated by some
+    // other change.
+    let newest = scan_paths.first()?;
+    if newest != &last.path {
+        return None;
+    }
+    let signature = file_signature(&last.path);
+    if signature != (last.mtime_ms, last.size) {
+        return None;
+    }
+    if min_source_mtime_ms.is_some_and(|min_mtime| {
+        last.source_mtime_ms.unwrap_or(0) < min_mtime
+    }) {
+        return None;
+    }
+    Some(LocalQuotaSnapshot {
+        quota: last.quota.clone(),
+        source_mtime_ms: last.source_mtime_ms,
+    })
 }
 
 #[cfg(test)]
@@ -272,5 +368,164 @@ mod tests {
 
         assert_eq!(quota.five_hour.remaining_percent, Some(95));
         assert_eq!(quota.weekly.remaining_percent, Some(94));
+    }
+
+    /// Cache integration tests — guard the fast-path / per-file-cache
+    /// invariants of `load_latest_local_quota_snapshot_since`. These
+    /// regressions would silently re-introduce the multi-second
+    /// dashboard stalls the cache exists to prevent, *without*
+    /// breaking any of the parser-level assertions above, so they
+    /// need their own coverage.
+    mod cache_integration {
+        use super::super::*;
+        use std::fs;
+        use std::path::PathBuf;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn temp_codex_home(name: &str) -> PathBuf {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let pid = std::process::id();
+            let path = std::env::temp_dir()
+                .join(format!("codex-switch-session-usage-{name}-{pid}-{unique}"));
+            // Cache helpers resolve through `get_runtime_dir`, which
+            // hardcodes `account_backup/<platform>/`. Pre-create both
+            // so the test setup works on either CI host.
+            fs::create_dir_all(path.join("account_backup").join("windows")).unwrap();
+            fs::create_dir_all(path.join("account_backup").join("macos")).unwrap();
+            path
+        }
+
+        fn write_jsonl(codex_home: &Path, rel: &str, body: &str) {
+            let path = codex_home.join("sessions").join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, body).unwrap();
+        }
+
+        const QUOTA_LINE: &str = r#"{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":11,"resets_at":1730000000,"window_minutes":300},"secondary":{"used_percent":12,"resets_at":1730600000,"window_minutes":10080}}}}"#;
+        const QUOTA_LINE_DIFFERENT: &str = r#"{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":50,"resets_at":1730000000,"window_minutes":300},"secondary":{"used_percent":60,"resets_at":1730600000,"window_minutes":10080}}}}"#;
+
+        #[test]
+        fn fast_path_returns_seeded_snapshot_when_signature_matches() {
+            // Seed the cache with a DIFFERENT quota than what the
+            // file would yield if parsed. If the fast path works, the
+            // seeded value comes back; if a regression makes the
+            // function re-parse, the file's real quota (89) wins
+            // instead of the seeded 99.
+            let codex_home = temp_codex_home("fast-path-seeded");
+            let rel = "2026/05/10/rollout-A.jsonl";
+            write_jsonl(&codex_home, rel, QUOTA_LINE);
+            let path = codex_home.join("sessions").join(rel);
+            let signature = file_signature(&path);
+
+            let mut cache = QuotaCache::default();
+            cache.set_last_snapshot(CachedSnapshot {
+                path: path.clone(),
+                mtime_ms: signature.0,
+                size: signature.1,
+                quota: QuotaSummary {
+                    five_hour: QuotaWindow {
+                        remaining_percent: Some(99),
+                        refresh_at: None,
+                    },
+                    weekly: QuotaWindow::default(),
+                },
+                source_mtime_ms: Some(signature.0),
+            });
+            cache.save(Some(&codex_home));
+
+            let result = load_latest_local_quota_snapshot(Some(&codex_home))
+                .expect("fast path returns the seeded snapshot");
+            assert_eq!(
+                result.quota.five_hour.remaining_percent,
+                Some(99),
+                "fast path should return cached snapshot rather than re-parsing"
+            );
+
+            let _ = fs::remove_dir_all(&codex_home);
+        }
+
+        #[test]
+        fn fast_path_falls_through_when_a_newer_jsonl_appears() {
+            let codex_home = temp_codex_home("fast-path-new-file");
+            write_jsonl(&codex_home, "2026/05/10/rollout-A.jsonl", QUOTA_LINE);
+
+            let first = load_latest_local_quota_snapshot(Some(&codex_home))
+                .expect("first call returns quota");
+            assert_eq!(first.quota.five_hour.remaining_percent, Some(89));
+
+            // Add a lex-larger file with a different quota — the fast
+            // path's `newest != last.path` guard must reject the
+            // cached snapshot and pick up the new file.
+            write_jsonl(&codex_home, "2026/05/10/rollout-Z.jsonl", QUOTA_LINE_DIFFERENT);
+
+            let second = load_latest_local_quota_snapshot(Some(&codex_home))
+                .expect("second call returns quota from the new file");
+            assert_eq!(
+                second.quota.five_hour.remaining_percent,
+                Some(50),
+                "newest path should win over the cached snapshot"
+            );
+
+            let _ = fs::remove_dir_all(&codex_home);
+        }
+
+        #[test]
+        fn fast_path_falls_through_when_winning_file_signature_changes() {
+            let codex_home = temp_codex_home("fast-path-sig-change");
+            write_jsonl(&codex_home, "2026/05/10/rollout-A.jsonl", QUOTA_LINE);
+
+            let first = load_latest_local_quota_snapshot(Some(&codex_home))
+                .expect("first call returns quota");
+            assert_eq!(first.quota.five_hour.remaining_percent, Some(89));
+
+            // Append more data — different content + larger size.
+            // Either size or mtime change is enough to invalidate the
+            // fast-path signature check.
+            let path = codex_home.join("sessions/2026/05/10/rollout-A.jsonl");
+            let mut existing = fs::read_to_string(&path).unwrap();
+            existing.push('\n');
+            existing.push_str(QUOTA_LINE_DIFFERENT);
+            fs::write(&path, existing).unwrap();
+
+            let second = load_latest_local_quota_snapshot(Some(&codex_home))
+                .expect("second call returns quota");
+            assert_eq!(
+                second.quota.five_hour.remaining_percent,
+                Some(50),
+                "signature drift should force re-parse and pick up the newer event"
+            );
+
+            let _ = fs::remove_dir_all(&codex_home);
+        }
+
+        #[test]
+        fn per_file_cache_remembers_files_with_no_quota_event() {
+            let codex_home = temp_codex_home("per-file-skip");
+            // Older file: no token_count event — `load_latest_quota_from_file`
+            // returns `None`. Newer file: has a quota.
+            write_jsonl(&codex_home, "2026/05/10/rollout-A.jsonl", "{\"type\":\"event_msg\"}\n");
+            write_jsonl(&codex_home, "2026/05/10/rollout-Z.jsonl", QUOTA_LINE);
+
+            let first = load_latest_local_quota_snapshot(Some(&codex_home))
+                .expect("first call returns quota from rollout-Z");
+            assert_eq!(first.quota.five_hour.remaining_percent, Some(89));
+
+            // Delete the winning file so the slow path has to walk to
+            // the older one. If the per-file `quota: None` cache entry
+            // is honored, we get `None` without re-reading the empty
+            // file.
+            fs::remove_file(codex_home.join("sessions/2026/05/10/rollout-Z.jsonl")).unwrap();
+
+            let second = load_latest_local_quota_snapshot(Some(&codex_home));
+            assert!(
+                second.is_none(),
+                "older file's cached `None` should short-circuit; got {second:?}"
+            );
+
+            let _ = fs::remove_dir_all(&codex_home);
+        }
     }
 }
