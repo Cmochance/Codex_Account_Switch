@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Refresh fallback no longer burns user quota or runs an LLM round-trip. The legacy `codex exec "Reply with the single word OK."` path took 30–90 s and consumed real ChatGPT quota whenever the direct HTTP refresh failed (slow network, transient 401, GFW). It is now replaced by `codex app-server`'s JSON-RPC `account/read` + `account/rateLimits/read`, which return the same plan + rate-limit data in well under a second without touching the model. Requires `codex` ≥ 0.130.0 on this fallback path; older CLIs surface `APP_SERVER_METHOD_UNSUPPORTED` so the user can upgrade.
+- Closed a same-profile race between Refresh and Login: clicking Refresh on a card whose login is already in flight is now a no-op, mirroring the existing reverse guard (`handleLoginProfile` already blocks Login when the same profile has a Refresh pending). Cross-profile Refresh during a login remains allowed.
+- Tuned the app-server RPC fallback's per-method timeouts so slow-network users (the population the fallback exists for) don't trip `APP_SERVER_TIMEOUT` on a legitimately slow OAuth refresh. `account/read` (chains an OAuth refresh + account read server-side) now allows 25 s; `account/rateLimits/read` (single GET) gets 15 s to mirror `chatgpt_api`'s `HTTP_TIMEOUT`. Overall session ceiling raised to 60 s.
+- Hardened three macOS `discover_real_codex_cli_path_*` tests against parallel `HOME` / `PATH` env-var races by routing them through the existing `env_guard()` mutex.
+
 ## 1.5.7 - 2026-05-10
 
 - **Critical** — fixed a latent hang in `codex login` cancellation. The previous PID-based cancel had a microsecond race window where a recycled PID could be SIGTERM'd between `wait_with_output` returning and the slot being cleared (worse on Windows where `taskkill /F /T` would nuke an unrelated process tree). The slot now holds the actual `Child` handle, and cancel calls `Child::kill()` directly. Both cancel and natural-exit paths funnel through a `drop_killed_child` helper that does `kill()` + `wait()` so we don't leak zombies on Unix.

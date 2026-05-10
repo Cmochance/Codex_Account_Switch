@@ -3,6 +3,7 @@ pub mod hooks;
 use std::path::Path;
 
 use crate::errors::AppResult;
+use crate::shared::codex_app_server::AppServerSnapshot;
 use hooks::PlatformHooks;
 use tauri::App;
 
@@ -48,8 +49,11 @@ pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppR
     current_hooks().run_codex_login(cli_codex_home, runtime_codex_home)
 }
 
-pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
-    current_hooks().run_codex_auth_refresh(cli_codex_home, runtime_codex_home)
+pub fn fetch_account_via_app_server(
+    cli_codex_home: &Path,
+    runtime_codex_home: &Path,
+) -> AppResult<AppServerSnapshot> {
+    current_hooks().fetch_account_via_app_server(cli_codex_home, runtime_codex_home)
 }
 
 pub fn sync_on_window_close() -> AppResult<()> {

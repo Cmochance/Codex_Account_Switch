@@ -161,11 +161,11 @@ mod tests {
             unreachable!("not used in switch tests")
         }
 
-        fn run_codex_auth_refresh(
+        fn fetch_account_via_app_server(
             &self,
             _cli_codex_home: &Path,
             _runtime_codex_home: &Path,
-        ) -> AppResult<()> {
+        ) -> AppResult<crate::shared::codex_app_server::AppServerSnapshot> {
             unreachable!("not used in switch tests")
         }
 

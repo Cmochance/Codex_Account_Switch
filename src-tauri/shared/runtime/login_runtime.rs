@@ -287,11 +287,11 @@ mod tests {
             fs::write(runtime_codex_home.join("auth.json"), &self.auth_payload).unwrap();
             Ok(())
         }
-        fn run_codex_auth_refresh(
+        fn fetch_account_via_app_server(
             &self,
             _cli_codex_home: &Path,
             _runtime_codex_home: &Path,
-        ) -> AppResult<()> {
+        ) -> AppResult<crate::shared::codex_app_server::AppServerSnapshot> {
             unreachable!("not used in login_runtime tests")
         }
         fn sync_on_window_close(&self) -> AppResult<()> {
@@ -425,7 +425,11 @@ mod tests {
             fn run_codex_login(&self, _: &Path, _: &Path) -> AppResult<()> {
                 Ok(())
             }
-            fn run_codex_auth_refresh(&self, _: &Path, _: &Path) -> AppResult<()> {
+            fn fetch_account_via_app_server(
+                &self,
+                _: &Path,
+                _: &Path,
+            ) -> AppResult<crate::shared::codex_app_server::AppServerSnapshot> {
                 unreachable!()
             }
             fn sync_on_window_close(&self) -> AppResult<()> {

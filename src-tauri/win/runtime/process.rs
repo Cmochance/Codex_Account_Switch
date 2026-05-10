@@ -10,13 +10,13 @@ use std::time::Duration;
 
 use crate::errors::{AppError, AppResult};
 use crate::platform::hooks::PlatformHooks;
+use crate::shared::codex_app_server::{fetch_account_snapshot, AppServerSnapshot};
 use crate::shared::codex_cli_path::CodexPathResolver;
 pub use crate::shared::codex_cli_path::{InstallState, RealCodexPathSource};
 use crate::shared::login_cancel::wait_for_login_or_cancel;
 
 use super::paths::{get_codex_home, get_install_state_file};
 
-const AUTH_REFRESH_PROMPT: &str = "Reply with the single word OK.";
 const APP_PROCESS_NAME: &str = "Codex.exe";
 const WINDOWS_INVOKABLE_SUFFIXES: [&str; 4] = ["cmd", "exe", "bat", "com"];
 const WINDOWS_APPS_PATH_SEGMENT: &str = r"\microsoft\windowsapps\";
@@ -338,15 +338,13 @@ pub fn forward_to_real_codex(args: &[String], codex_home: Option<&Path>) -> AppR
     Ok(status.code().unwrap_or(1))
 }
 
-fn build_auth_refresh_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Command {
+fn build_app_server_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Command {
     let mut command = Command::new(real_codex_path);
-    command.args([
-        "exec",
-        "--skip-git-repo-check",
-        "--color",
-        "never",
-        AUTH_REFRESH_PROMPT,
-    ]);
+    // `codex app-server` is the upstream control-plane subcommand; it
+    // takes no sandbox/approval flags (those bind only to the TUI). See
+    // `openai/codex` `codex-rs/cli/src/main.rs` for the subcommand
+    // wiring.
+    command.arg("app-server");
     hide_console_window(&mut command);
     command.current_dir(runtime_codex_home);
     command.env("CODEX_HOME", runtime_codex_home);
@@ -373,72 +371,19 @@ fn build_login_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Com
     command
 }
 
-fn classify_auth_refresh_failure(message: &str) -> Option<AppError> {
-    let normalized = message.to_ascii_lowercase();
-    let requires_relogin = normalized.contains("token_invalidated")
-        || normalized.contains("refresh_token_reused")
-        || normalized.contains("authentication token has been invalidated")
-        || normalized.contains("refresh token has already been used")
-        || normalized.contains("please try signing in again")
-        || normalized.contains("please log out and sign in again");
-
-    if requires_relogin {
-        return Some(AppError::new(
-            "AUTH_REFRESH_RELOGIN_REQUIRED",
-            "This account session has expired. Please log in again.",
-        ));
-    }
-
-    None
-}
-
-pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
-    let Some((real_codex_path, real_codex_source)) =
-        resolve_real_codex_cli_with_source(Some(cli_codex_home))
-    else {
+pub fn fetch_account_via_app_server(
+    cli_codex_home: &Path,
+    runtime_codex_home: &Path,
+) -> AppResult<AppServerSnapshot> {
+    let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) else {
         return Err(AppError::new(
             "REAL_CODEX_NOT_FOUND",
             "Real Codex CLI path not found. Run `codex_switch_cli.exe install` first.",
         ));
     };
-    let source_label = match real_codex_source {
-        RealCodexPathSource::UserOverride => "user override",
-        RealCodexPathSource::InstallState => "install_state.json",
-        RealCodexPathSource::Discovery => "CLI discovery",
-    };
 
-    let output = build_auth_refresh_command(&real_codex_path, runtime_codex_home)
-        .output()
-        .map_err(|error| {
-            AppError::new(
-                "AUTH_REFRESH_COMMAND_FAILED",
-                format!(
-                    "Failed to start `codex exec` for auth refresh via {} (source: {}): {error}",
-                    real_codex_path.display(),
-                    source_label
-                ),
-            )
-        })?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let message = if !stderr.is_empty() {
-        stderr
-    } else if !stdout.is_empty() {
-        stdout
-    } else {
-        "`codex exec` exited without a success status while refreshing auth.".to_string()
-    };
-
-    if let Some(error) = classify_auth_refresh_failure(&message) {
-        return Err(error);
-    }
-
-    Err(AppError::new("AUTH_REFRESH_FAILED", message))
+    let command = build_app_server_command(&real_codex_path, runtime_codex_home);
+    fetch_account_snapshot(command)
 }
 
 pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
@@ -705,12 +650,12 @@ impl PlatformHooks for WindowsPlatformHooks {
         run_codex_login(cli_codex_home, runtime_codex_home)
     }
 
-    fn run_codex_auth_refresh(
+    fn fetch_account_via_app_server(
         &self,
         cli_codex_home: &Path,
         runtime_codex_home: &Path,
-    ) -> AppResult<()> {
-        run_codex_auth_refresh(cli_codex_home, runtime_codex_home)
+    ) -> AppResult<AppServerSnapshot> {
+        fetch_account_via_app_server(cli_codex_home, runtime_codex_home)
     }
 
     fn sync_root_openai_base_url_for_profile(
@@ -732,10 +677,9 @@ impl PlatformHooks for WindowsPlatformHooks {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_auth_refresh_command, classify_auth_refresh_failure, discover_real_codex_cli_path,
-        is_acceptable_real_codex_cli_path, load_install_state, resolve_real_codex_cli,
-        resolve_windows_app_target, windows_store_shell_target, AppLaunchTarget, InstallState,
-        AUTH_REFRESH_PROMPT, WINDOWS_STORE_APP_ID,
+        build_app_server_command, discover_real_codex_cli_path, is_acceptable_real_codex_cli_path,
+        load_install_state, resolve_real_codex_cli, resolve_windows_app_target,
+        windows_store_shell_target, AppLaunchTarget, InstallState, WINDOWS_STORE_APP_ID,
     };
     use crate::windows::env_guard;
     use serde_json::to_string_pretty;
@@ -904,10 +848,10 @@ mod tests {
     }
 
     #[test]
-    fn build_auth_refresh_command_targets_runtime_codex_home() {
-        let runtime_codex_home = temp_codex_home("auth-refresh-command");
+    fn build_app_server_command_targets_runtime_codex_home() {
+        let runtime_codex_home = temp_codex_home("app-server-command");
         let real_codex_path = runtime_codex_home.join("bin").join("codex.exe");
-        let command = build_auth_refresh_command(&real_codex_path, &runtime_codex_home);
+        let command = build_app_server_command(&real_codex_path, &runtime_codex_home);
 
         let args = command
             .get_args()
@@ -924,16 +868,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(command.get_program(), real_codex_path.as_os_str());
-        assert_eq!(
-            args,
-            vec![
-                "exec".to_string(),
-                "--skip-git-repo-check".to_string(),
-                "--color".to_string(),
-                "never".to_string(),
-                AUTH_REFRESH_PROMPT.to_string(),
-            ]
-        );
+        assert_eq!(args, vec!["app-server".to_string()]);
         assert_eq!(
             command.get_current_dir(),
             Some(runtime_codex_home.as_path())
@@ -955,34 +890,5 @@ mod tests {
             AppLaunchTarget::WindowsStore(windows_store_shell_target(WINDOWS_STORE_APP_ID))
         );
         let _ = fs::remove_dir_all(&codex_home);
-    }
-
-    #[test]
-    fn classify_auth_refresh_failure_detects_invalidated_token_errors() {
-        let error = classify_auth_refresh_failure(
-            "401 Unauthorized: Your authentication token has been invalidated. Please try signing in again. code: token_invalidated",
-        )
-        .unwrap();
-
-        assert_eq!(error.error_code, "AUTH_REFRESH_RELOGIN_REQUIRED");
-        assert_eq!(
-            error.message,
-            "This account session has expired. Please log in again."
-        );
-    }
-
-    #[test]
-    fn classify_auth_refresh_failure_detects_reused_refresh_token_errors() {
-        let error = classify_auth_refresh_failure(
-            "Failed to refresh token: 401 Unauthorized: {\"error\":{\"message\":\"Your refresh token has already been used to generate a new access token. Please try signing in again.\",\"code\":\"refresh_token_reused\"}}",
-        )
-        .unwrap();
-
-        assert_eq!(error.error_code, "AUTH_REFRESH_RELOGIN_REQUIRED");
-    }
-
-    #[test]
-    fn classify_auth_refresh_failure_ignores_non_auth_messages() {
-        assert!(classify_auth_refresh_failure("network timeout").is_none());
     }
 }

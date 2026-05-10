@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::errors::{AppError, AppResult};
 use crate::platform::hooks::PlatformHooks;
+use crate::shared::codex_app_server::{fetch_account_snapshot, AppServerSnapshot};
 use crate::shared::codex_cli_path::CodexPathResolver;
 pub use crate::shared::codex_cli_path::{InstallState, RealCodexPathSource};
 use crate::shared::login_cancel::wait_for_login_or_cancel;
@@ -15,7 +16,6 @@ use crate::shared::login_cancel::wait_for_login_or_cancel;
 use super::cli_shim::{get_install_state_file, managed_shim_path, real_codex_resolver_path};
 
 const APP_NAME: &str = "Codex";
-const AUTH_REFRESH_PROMPT: &str = "Reply with the single word OK.";
 static MACOS_PLATFORM_HOOKS: MacosPlatformHooks = MacosPlatformHooks;
 static MACOS_APP_PATH_CACHE: OnceLock<Option<String>> = OnceLock::new();
 
@@ -393,15 +393,14 @@ pub fn forward_to_real_codex(args: &[String], codex_home: Option<&Path>) -> AppR
     Ok(status.code().unwrap_or(1))
 }
 
-fn build_auth_refresh_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Command {
+fn build_app_server_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Command {
     let mut command = Command::new(real_codex_path);
-    command.args([
-        "exec",
-        "--skip-git-repo-check",
-        "--color",
-        "never",
-        AUTH_REFRESH_PROMPT,
-    ]);
+    // `codex app-server` is the canonical control-plane subcommand
+    // (verified against `openai/codex` `codex-rs/cli/src/main.rs`). It
+    // takes no sandbox/approval flags — the `-s` / `-a` flags only bind
+    // to the interactive TUI and are silently ignored here, so we omit
+    // them rather than carry dead weight on every refresh.
+    command.arg("app-server");
     command.current_dir(runtime_codex_home);
     command.env("CODEX_HOME", runtime_codex_home);
     command
@@ -423,26 +422,10 @@ fn build_login_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Com
     command
 }
 
-fn classify_auth_refresh_failure(message: &str) -> Option<AppError> {
-    let normalized = message.to_ascii_lowercase();
-    let requires_relogin = normalized.contains("token_invalidated")
-        || normalized.contains("refresh_token_reused")
-        || normalized.contains("authentication token has been invalidated")
-        || normalized.contains("refresh token has already been used")
-        || normalized.contains("please try signing in again")
-        || normalized.contains("please log out and sign in again");
-
-    if requires_relogin {
-        return Some(AppError::new(
-            "AUTH_REFRESH_RELOGIN_REQUIRED",
-            "This account session has expired. Please log in again.",
-        ));
-    }
-
-    None
-}
-
-pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
+pub fn fetch_account_via_app_server(
+    cli_codex_home: &Path,
+    runtime_codex_home: &Path,
+) -> AppResult<AppServerSnapshot> {
     let Some(real_codex_path) = resolve_real_codex_cli(Some(cli_codex_home)) else {
         return Err(AppError::new(
             "REAL_CODEX_NOT_FOUND",
@@ -450,34 +433,8 @@ pub fn run_codex_auth_refresh(cli_codex_home: &Path, runtime_codex_home: &Path) 
         ));
     };
 
-    let output = build_auth_refresh_command(&real_codex_path, runtime_codex_home)
-        .output()
-        .map_err(|error| {
-            AppError::new(
-                "AUTH_REFRESH_COMMAND_FAILED",
-                format!("Failed to start `codex exec` for auth refresh: {error}"),
-            )
-        })?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let message = if !stderr.is_empty() {
-        stderr
-    } else if !stdout.is_empty() {
-        stdout
-    } else {
-        "`codex exec` exited without a success status while refreshing auth.".to_string()
-    };
-
-    if let Some(error) = classify_auth_refresh_failure(&message) {
-        return Err(error);
-    }
-
-    Err(AppError::new("AUTH_REFRESH_FAILED", message))
+    let command = build_app_server_command(&real_codex_path, runtime_codex_home);
+    fetch_account_snapshot(command)
 }
 
 pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
@@ -591,12 +548,12 @@ impl PlatformHooks for MacosPlatformHooks {
         run_codex_login(cli_codex_home, runtime_codex_home)
     }
 
-    fn run_codex_auth_refresh(
+    fn fetch_account_via_app_server(
         &self,
         cli_codex_home: &Path,
         runtime_codex_home: &Path,
-    ) -> AppResult<()> {
-        run_codex_auth_refresh(cli_codex_home, runtime_codex_home)
+    ) -> AppResult<AppServerSnapshot> {
+        fetch_account_via_app_server(cli_codex_home, runtime_codex_home)
     }
 
     fn sync_on_window_close(&self) -> AppResult<()> {
@@ -607,10 +564,9 @@ impl PlatformHooks for MacosPlatformHooks {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_auth_refresh_command, codex_app_candidates, codex_cli_from_app_bundle,
+        build_app_server_command, codex_app_candidates, codex_cli_from_app_bundle,
         discover_real_codex_cli_path, resolve_real_codex_cli_with_source,
         set_user_codex_cli_path, validate_user_codex_cli_path, RealCodexPathSource,
-        AUTH_REFRESH_PROMPT,
     };
     use crate::macos::cli_shim::real_codex_resolver_path;
     use std::fs;
@@ -629,6 +585,7 @@ mod tests {
 
     #[test]
     fn discover_real_codex_cli_path_skips_managed_shim() {
+        let _guard = crate::macos::env_guard();
         let codex_home = temp_codex_home("discover-real-cli");
         let managed_bin = codex_home.join("bin");
         let npm_dir = codex_home.join("npm");
@@ -657,6 +614,7 @@ mod tests {
 
     #[test]
     fn discover_real_codex_cli_path_prefers_macos_shell_resolver() {
+        let _guard = crate::macos::env_guard();
         let codex_home = temp_codex_home("discover-real-cli-shell");
         let managed_bin = codex_home.join("bin");
         let runtime_dir = codex_home.join("account_backup").join("macos");
@@ -697,6 +655,7 @@ mod tests {
 
     #[test]
     fn discover_real_codex_cli_path_falls_back_to_app_bundle_cli() {
+        let _guard = crate::macos::env_guard();
         let codex_home = temp_codex_home("discover-real-cli-app-bundle");
         let managed_bin = codex_home.join("bin");
         let home_dir = codex_home.join("home");
@@ -734,11 +693,11 @@ mod tests {
     }
 
     #[test]
-    fn build_auth_refresh_command_targets_runtime_codex_home() {
+    fn build_app_server_command_targets_runtime_codex_home() {
         let real_codex_path = PathBuf::from("/opt/homebrew/bin/codex");
         let runtime_codex_home = PathBuf::from("/tmp/codex-home");
 
-        let command = build_auth_refresh_command(&real_codex_path, &runtime_codex_home);
+        let command = build_app_server_command(&real_codex_path, &runtime_codex_home);
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -757,16 +716,7 @@ mod tests {
             command.get_program().to_string_lossy(),
             real_codex_path.to_string_lossy()
         );
-        assert_eq!(
-            args,
-            vec![
-                "exec".to_string(),
-                "--skip-git-repo-check".to_string(),
-                "--color".to_string(),
-                "never".to_string(),
-                AUTH_REFRESH_PROMPT.to_string(),
-            ]
-        );
+        assert_eq!(args, vec!["app-server".to_string()]);
         assert_eq!(
             command.get_current_dir(),
             Some(runtime_codex_home.as_path())
