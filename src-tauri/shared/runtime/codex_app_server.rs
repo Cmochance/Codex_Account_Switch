@@ -35,10 +35,22 @@ use crate::models::{QuotaSummary, QuotaWindow};
 use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+/// `account/rateLimits/read` is one HTTPS GET to the same endpoint
+/// `chatgpt_api.rs` polls with `HTTP_TIMEOUT = 15s`, so match that
+/// budget — slow-network users are exactly the population this
+/// fallback exists to serve.
+const RATE_LIMITS_TIMEOUT: Duration = Duration::from_secs(15);
+/// `account/read` with `refreshToken: true` chains an OAuth refresh
+/// POST plus the account read itself. Each leg can legitimately take
+/// the full 15s on a high-latency link, so allow a wider window than
+/// the read-only call to avoid producing `APP_SERVER_TIMEOUT` in the
+/// exact "slow network" case the fallback was meant to recover from.
+const ACCOUNT_READ_TIMEOUT: Duration = Duration::from_secs(25);
 /// Hard upper bound on the whole RPC session. Defends against a child
-/// that hangs after responding to one method but not the next.
-const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
+/// that hangs after responding to one method but not the next. Sized
+/// to comfortably cover handshake + account/read + rateLimits/read at
+/// their per-method ceilings, with a small margin.
+const SESSION_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Pulled from `account/rateLimits/read` + `account/read`. `quota` is
 /// `None` when the response carried no rate-limit data (typical for free
@@ -310,7 +322,7 @@ fn read_account_plan(session: &mut Session) -> AppResult<Option<String>> {
     // tokens move within a single click rather than waiting on the
     // cached access_token to expire.
     let params = json!({ "refreshToken": true });
-    let result = session.call("account/read", Some(params), REQUEST_TIMEOUT)?;
+    let result = session.call("account/read", Some(params), ACCOUNT_READ_TIMEOUT)?;
     Ok(extract_plan_type(&result))
 }
 
@@ -328,7 +340,7 @@ fn extract_plan_type(result: &Value) -> Option<String> {
 }
 
 fn read_rate_limits(session: &mut Session) -> AppResult<Option<QuotaSummary>> {
-    let result = session.call("account/rateLimits/read", None, REQUEST_TIMEOUT)?;
+    let result = session.call("account/rateLimits/read", None, RATE_LIMITS_TIMEOUT)?;
     Ok(parse_rate_limits_response(&result))
 }
 
