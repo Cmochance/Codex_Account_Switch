@@ -294,7 +294,16 @@ async function drainRefreshQueue(): Promise<void> {
 }
 
 function handleRefreshProfile(profile: string): void {
-  if (state.loading || isRefreshPending(profile)) {
+  // Mirror `handleLoginProfile`'s `isRefreshPending(profile)` guard in
+  // the opposite direction: when the same profile already has a login
+  // in flight, both flows would otherwise race on writing per-profile
+  // `auth.json`. Cross-profile refresh during a login is still allowed
+  // (different sandbox + different `auth.json`).
+  if (
+    state.loading
+    || state.loginActiveProfile === profile
+    || isRefreshPending(profile)
+  ) {
     return;
   }
 
