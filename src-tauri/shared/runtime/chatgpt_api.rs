@@ -107,6 +107,34 @@ const USAGE_PATH: &str = "/wham/usage";
 const ACCOUNTS_CHECK_PATH: &str = "/accounts/check/v4-2023-04-27";
 const CODEX_USER_AGENT: &str = "codex-cli/1.0.0";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How old the cached `last_plan_check_ms` can get before a refresh
+/// path escalates to a full OAuth token rotation. Single source of
+/// truth for the per-card Refresh button (`mac/win refresh_runtime`)
+/// and for the bulk plan refresh (`commands/dashboard`) so a future
+/// tuning change moves all three in lock-step.
+pub const PLAN_FRESHNESS_TTL_MS: u64 = 6 * 60 * 60 * 1000;
+
+/// Predicate for "this refresh failure means the user has to log in
+/// again." Substring-checks the error code + message for the canonical
+/// ChatGPT relogin signatures so callers in `refresh_runtime` and
+/// `codex_app_server` can map the same set of inputs to the same
+/// `AUTH_REFRESH_RELOGIN_REQUIRED` outcome — without this, the
+/// HTTP fast-path was silently swallowing relogin errors and forcing
+/// the user to wait through a redundant app-server RPC fallback to
+/// see the same diagnostic.
+pub fn looks_like_relogin_required(error_code: &str, message: &str) -> bool {
+    if error_code == "AUTH_REFRESH_RELOGIN_REQUIRED" {
+        return true;
+    }
+    let lowered = message.to_ascii_lowercase();
+    lowered.contains("token_invalidated")
+        || lowered.contains("refresh_token_reused")
+        || lowered.contains("authentication token has been invalidated")
+        || lowered.contains("refresh token has already been used")
+        || lowered.contains("please try signing in again")
+        || lowered.contains("please log out and sign in again")
+}
 /// Refresh the access token a little before its actual expiry so a 401
 /// in-flight does not bubble up to the caller.
 const EXPIRY_SKEW_SECONDS: i64 = 60;
@@ -327,7 +355,19 @@ fn read_auth_file(profile_dir: &Path) -> AppResult<ProfileAuthFile> {
 }
 
 fn build_http_client() -> AppResult<Client> {
-    Client::builder()
+    // Cache the successful build only — `reqwest::blocking::Client`
+    // wraps an `Arc<Inner>` so `clone()` is cheap and reuses the TLS
+    // pool, but caching a Build *error* would poison the cell for
+    // the entire process lifetime. Failures are deterministic per
+    // binary today (TLS provider init), but a future commit adding
+    // proxy / cert config could legitimately fail transiently — so
+    // store only `Client` and let each call retry the build until
+    // one succeeds.
+    static SHARED_CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+    if let Some(client) = SHARED_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let new_client = Client::builder()
         .timeout(HTTP_TIMEOUT)
         .user_agent(CODEX_USER_AGENT)
         .build()
@@ -336,7 +376,11 @@ fn build_http_client() -> AppResult<Client> {
                 "HTTP_CLIENT_BUILD_FAILED",
                 format!("Failed to build HTTP client: {error}"),
             )
-        })
+        })?;
+    // `set` may fail if another thread populated first — either
+    // way we have a valid client to return.
+    let _ = SHARED_CLIENT.set(new_client.clone());
+    Ok(new_client)
 }
 
 fn build_chatgpt_headers(access_token: &str, account_id: Option<&str>) -> AppResult<HeaderMap> {

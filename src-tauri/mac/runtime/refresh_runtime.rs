@@ -6,7 +6,9 @@ use crate::errors::{AppError, AppResult};
 use crate::models::QuotaSummary;
 use crate::platform;
 use crate::shared::fs_ops::{copy_entry, remove_path};
-use crate::shared::metadata::{sync_profile_metadata_from_auth, sync_profile_quota};
+use crate::shared::metadata::{
+    load_profile_metadata, sync_profile_metadata_from_auth, sync_profile_quota,
+};
 use crate::shared::paths::{get_backup_root, get_codex_home, validate_profile_name};
 use crate::shared::profiles_index::load_profiles_index;
 use crate::shared::runtime_isolation::{
@@ -18,6 +20,25 @@ use super::cli_shim::get_refresh_runtime_dir;
 
 const REFRESH_RUNTIME_PROFILE_FILES: [&str; 2] =
     [RUNTIME_AUTH_FILENAME, RUNTIME_PROFILE_METADATA_FILENAME];
+
+fn should_force_oauth_rotation(profile_name: &str, codex_home: &Path) -> bool {
+    let metadata = load_profile_metadata(profile_name, Some(codex_home));
+    let Some(last_check) = metadata.last_plan_check_ms else {
+        return true;
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok());
+    match now_ms {
+        Some(now) => {
+            now.saturating_sub(last_check)
+                >= crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
+        }
+        // Clock unreadable: be conservative and rotate.
+        None => true,
+    }
+}
 
 fn ensure_refreshable_auth(auth_path: &Path) -> AppResult<()> {
     let raw = fs::read_to_string(auth_path).map_err(|error| {
@@ -91,20 +112,48 @@ fn try_refresh_via_chatgpt_api(
     codex_home: &Path,
     profile_dir: &Path,
 ) -> AppResult<Option<String>> {
-    // User-initiated card refresh: force OAuth token rotation so
-    // id_token claims (plan tier, subscription expiry) move within a
-    // single click instead of waiting for the access_token to expire.
-    // The 5-min silent dashboard ticker stays on the cheap path; only
-    // the explicit Refresh button takes the heavier hit.
+    // Force OAuth token rotation only when the cached plan info has
+    // gone stale (older than `STALE_PLAN_THRESHOLD_MS`). For the
+    // common case of clicking Refresh repeatedly within a session,
+    // skip the OAuth POST entirely and let the inner expiry check
+    // (`access_token_expired` in `chatgpt_api`) drive rotation only
+    // when actually needed. Rotating only the access_token saves
+    // 0.5–2 s per click on a slow network without losing the
+    // "user-initiated → fresh plan info" guarantee that motivated
+    // forcing rotation in the first place.
+    let force_rotation = should_force_oauth_rotation(profile_name, codex_home);
     let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api_with_options(
         profile_name,
         codex_home,
         crate::shared::chatgpt_api::RefreshOptions {
-            force_token_rotation: true,
+            force_token_rotation: force_rotation,
         },
     ) {
         Ok(value) => value,
-        Err(_) => return Ok(None),
+        Err(error) => {
+            // Re-login signatures must surface immediately rather
+            // than fall through to the app-server RPC fallback —
+            // both paths share the same refresh_token, so the
+            // fallback would hit the exact same error and we'd just
+            // have wasted a round-trip while the user stares at the
+            // spinner. Other failures (transient HTTP / parse /
+            // network) log and fall through; the RPC path can still
+            // succeed for unrelated reasons.
+            if crate::shared::chatgpt_api::looks_like_relogin_required(
+                &error.error_code,
+                &error.message,
+            ) {
+                return Err(AppError::new(
+                    "AUTH_REFRESH_RELOGIN_REQUIRED",
+                    "This account session has expired. Please log in again.",
+                ));
+            }
+            eprintln!(
+                "chatgpt_api fast path failed for {profile_name} ({}): {}; falling back to app-server RPC",
+                error.error_code, error.message
+            );
+            return Ok(None);
+        }
     };
     let plan_type_from_api = snapshot.plan_type.clone();
     let now_ms = std::time::SystemTime::now()
@@ -303,4 +352,81 @@ mod tests {
         let _ = fs::remove_dir_all(&codex_home);
     }
 
+    mod force_oauth_rotation {
+        use super::super::should_force_oauth_rotation;
+        use crate::models::ProfileMetadata;
+        use crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS;
+        use crate::shared::metadata::save_profile_metadata;
+        use std::fs;
+        use std::path::PathBuf;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn temp_codex_home(name: &str) -> PathBuf {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let pid = std::process::id();
+            let path = std::env::temp_dir()
+                .join(format!("codex-switch-force-rotate-{name}-{pid}-{unique}"));
+            fs::create_dir_all(path.join("account_backup").join("a")).unwrap();
+            path
+        }
+
+        fn now_ms() -> u64 {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64
+        }
+
+        fn write_metadata(codex_home: &PathBuf, last_plan_check_ms: Option<u64>) {
+            let mut metadata = ProfileMetadata::with_folder_name("a");
+            metadata.last_plan_check_ms = last_plan_check_ms;
+            save_profile_metadata("a", &metadata, Some(codex_home)).unwrap();
+        }
+
+        #[test]
+        fn missing_last_plan_check_forces_rotation() {
+            let codex_home = temp_codex_home("missing");
+            write_metadata(&codex_home, None);
+            assert!(should_force_oauth_rotation("a", &codex_home));
+            let _ = fs::remove_dir_all(&codex_home);
+        }
+
+        #[test]
+        fn recent_last_plan_check_skips_rotation() {
+            let codex_home = temp_codex_home("recent");
+            // 1 hour ago — well inside the 6h freshness TTL.
+            write_metadata(&codex_home, Some(now_ms().saturating_sub(60 * 60 * 1000)));
+            assert!(!should_force_oauth_rotation("a", &codex_home));
+            let _ = fs::remove_dir_all(&codex_home);
+        }
+
+        #[test]
+        fn stale_last_plan_check_forces_rotation() {
+            let codex_home = temp_codex_home("stale");
+            // Just past the TTL boundary.
+            write_metadata(
+                &codex_home,
+                Some(now_ms().saturating_sub(PLAN_FRESHNESS_TTL_MS + 1_000)),
+            );
+            assert!(should_force_oauth_rotation("a", &codex_home));
+            let _ = fs::remove_dir_all(&codex_home);
+        }
+
+        #[test]
+        fn future_dated_last_plan_check_does_not_force_rotation() {
+            // Clock-skew defense: a future-dated timestamp should
+            // *not* trigger a forced rotation. `saturating_sub`
+            // returns 0 → 0 < TTL → skip the rotation. Documenting
+            // the choice as a deliberate "trust local cache when
+            // clock is weird" stance instead of letting a future
+            // refactor flip the comparison.
+            let codex_home = temp_codex_home("future");
+            write_metadata(&codex_home, Some(now_ms() + 24 * 60 * 60 * 1000));
+            assert!(!should_force_oauth_rotation("a", &codex_home));
+            let _ = fs::remove_dir_all(&codex_home);
+        }
+    }
 }

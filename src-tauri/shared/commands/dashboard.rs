@@ -145,12 +145,33 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
     let backup_root = crate::shared::paths::get_backup_root(Some(&codex_home));
     let index = crate::shared::profiles_index::load_profiles_index(Some(&codex_home))
         .map_err(CommandError::from)?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok())
+        .unwrap_or(0);
 
     let mut refreshed: u32 = 0;
     for entry in &index.profiles {
         let profile_dir = backup_root.join(&entry.folder_name);
         if !crate::shared::chatgpt_api::profile_supports_api_refresh(&profile_dir) {
             continue;
+        }
+
+        // Skip profiles whose plan info was confirmed within the
+        // last 6 hours. Without this gate, every app launch and
+        // every day rollover paid for N × (OAuth POST + usage GET)
+        // back-to-back regardless of whether anything could have
+        // changed; on a 5-account workspace that's 10–25 s of
+        // background work the user could see "trickling" into the
+        // cards. With it, repeat launches within a working day are
+        // free.
+        if let Some(last_check) = entry.last_plan_check_ms {
+            if now_ms.saturating_sub(last_check)
+                < crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
+            {
+                continue;
+            }
         }
 
         let snapshot = match crate::shared::chatgpt_api::refresh_profile_via_api_with_options(
@@ -161,39 +182,58 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
             },
         ) {
             Ok(value) => value,
-            // Best-effort: a single account failing must not abort the
-            // batch (one expired refresh_token shouldn't block the
-            // other four profiles from getting fresh plan info).
-            Err(_) => continue,
+            Err(error) => {
+                // Best-effort: a single account failing must not abort
+                // the batch (one expired refresh_token shouldn't block
+                // the other four profiles from getting fresh plan
+                // info). Log it so a systematic failure across every
+                // profile is visible in stderr / Tauri logs instead of
+                // silently leaving the dashboard stale.
+                eprintln!(
+                    "bulk plan refresh skipped {} ({}): {}",
+                    entry.folder_name, error.error_code, error.message
+                );
+                continue;
+            }
         };
 
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .and_then(|value| u64::try_from(value.as_millis()).ok())
-            .unwrap_or(0);
         let plan_type_from_api = snapshot.plan_type.clone();
         // Update both quota and plan unconditionally on a successful
         // API response. `unwrap_or_default()` clears stale paid-window
         // data for downgraded-to-free profiles (the API returns no
         // rate_limit for them); without this clear we'd show old
         // 5h/weekly numbers next to a freshly-updated Free label.
-        let _ = crate::shared::metadata::sync_profile_quota(
+        if let Err(error) = crate::shared::metadata::sync_profile_quota(
             &entry.folder_name,
             snapshot.quota.unwrap_or_default(),
             Some(now_ms),
             Some(&codex_home),
-        );
-        let _ = crate::shared::metadata::sync_profile_metadata_from_auth(
+        ) {
+            eprintln!(
+                "bulk plan refresh: failed to persist quota for {}: {}",
+                entry.folder_name, error.message
+            );
+        }
+        if let Err(error) = crate::shared::metadata::sync_profile_metadata_from_auth(
             &entry.folder_name,
             plan_type_from_api,
             Some(&codex_home),
-        );
+        ) {
+            eprintln!(
+                "bulk plan refresh: failed to persist metadata for {}: {}",
+                entry.folder_name, error.message
+            );
+        }
         refreshed += 1;
     }
 
     if refreshed > 0 {
-        let _ = crate::shared::profiles_index::load_profiles_index(Some(&codex_home));
+        if let Err(error) = crate::shared::profiles_index::load_profiles_index(Some(&codex_home)) {
+            eprintln!(
+                "bulk plan refresh: post-loop index reload failed: {}",
+                error.message
+            );
+        }
     }
     Ok(refreshed)
 }

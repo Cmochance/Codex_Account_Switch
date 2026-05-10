@@ -279,7 +279,34 @@ async function drainRefreshQueue(): Promise<void> {
       try {
         await refreshProfile(profile);
         showToast(t(state.locale, "refreshedProfile", { profile }));
-        await refreshAllData(false);
+        // The backend already wrote the new quota / plan into the
+        // profiles index. Re-reading the snapshot picks those up
+        // for every card without paying for a JSONL scan.
+        //
+        // `getCurrentLiveQuota` only matters when the refreshed
+        // profile is also the active one — the live JSONL session
+        // count can be newer than the API value we just persisted
+        // (an in-flight `codex` session keeps appending
+        // `token_count` events) and `select_current_quota` picks
+        // the newer of the two. For non-active refreshes we skip
+        // it; the active card panel for that profile is rebuilt
+        // when the user switches to it, and the 15s ticker keeps
+        // the panel honest in the meantime.
+        try {
+          const snapshot = await getProfilesSnapshot();
+          applySnapshot(snapshot);
+          if (snapshot.current_card?.folder_name === profile) {
+            applyCurrentQuota(await getCurrentLiveQuota());
+          }
+        } catch (error) {
+          // Best-effort: a transient snapshot fetch failure leaves
+          // the cards on their pre-refresh state, which matches the
+          // pre-PR `refreshAllData(false)` behavior. Surface only
+          // to the console so a systematic failure is debuggable
+          // without spamming the user with a toast they can't act
+          // on.
+          console.warn("Snapshot refresh after profile refresh failed:", error);
+        }
       } catch (error) {
         showToast(refreshProfileErrorMessage(error), true);
       } finally {
