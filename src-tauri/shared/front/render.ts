@@ -52,6 +52,7 @@ export const elements = {
   settingsGithubButton: requiredElement<HTMLButtonElement>("settings-github-button"),
   settingsCheckUpdateButton: requiredElement<HTMLButtonElement>("settings-check-update-button"),
   settingsUpdateUrlInput: requiredElement<HTMLInputElement>("settings-update-url-input"),
+  settingsVersionValue: requiredElement<HTMLSpanElement>("settings-version-value"),
   updateDialog: requiredElement<HTMLDialogElement>("update-dialog"),
   updateDialogCopy: requiredElement<HTMLParagraphElement>("update-dialog-copy"),
   updateDialogLaterButton: requiredElement<HTMLButtonElement>("update-dialog-later-button"),
@@ -743,4 +744,9 @@ export function applyLocale(): void {
   elements.submitCodexCliButton.textContent = t(state.locale, "save");
   elements.settingsCodexCliLabel.textContent = t(state.locale, "settingsCodexCli");
   elements.settingsCodexCliButton.textContent = t(state.locale, "settingsCodexCliChange");
+  // Version label is locale-independent but lives next to the i18n
+  // settings rows; set it here so a single render pass paints both.
+  // `__CODEX_APP_VERSION__` is injected by Vite from `package.json` so
+  // it stays in lock-step with the Cargo version automatically.
+  elements.settingsVersionValue.textContent = __CODEX_APP_VERSION__;
 }

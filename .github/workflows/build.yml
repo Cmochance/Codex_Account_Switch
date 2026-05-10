@@ -54,6 +54,9 @@ jobs:
       - name: Type-check front-end
         run: npx tsc --noEmit
 
+      - name: Check for hardcoded version literals in HTML
+        run: npm run version:check
+
       - name: cargo check (lib)
         run: cargo check --manifest-path src-tauri/Cargo.toml --lib
 

@@ -10,6 +10,18 @@ const cargoTomlPath = resolve(repoRoot, 'src-tauri', 'Cargo.toml')
 const defaultVersionLogPath = resolve(repoRoot, 'src-tauri', 'target', 'release', 'version.md')
 const tauriVersionSource = '../package.json'
 
+/// Files where a hardcoded version literal in markup is always a bug —
+/// the HTML now relies on Vite-injected `__CODEX_APP_VERSION__` for the
+/// settings row, so any `1.x.y` string left here is a regression that
+/// will silently drift from `package.json` again. Add new
+/// product-facing HTML/JSX files here as the front-end grows so the
+/// check stays comprehensive.
+const versionHardcodeForbiddenPaths = [
+  'src-tauri/mac/front/index.html',
+  'src-tauri/win/front/index.html',
+]
+const versionHardcodePattern = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/g
+
 const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
 const readJson = (filePath) => JSON.parse(readFileSync(filePath, 'utf8'))
@@ -155,13 +167,49 @@ const syncPackageLockVersion = (version) => {
   }
 }
 
+const checkHardcodedVersions = () => {
+  const findings = []
+  for (const relPath of versionHardcodeForbiddenPaths) {
+    const absPath = resolve(repoRoot, relPath)
+    if (!existsSync(absPath)) {
+      continue
+    }
+    const contents = readFileSync(absPath, 'utf8')
+    const matches = [...contents.matchAll(versionHardcodePattern)].map((m) => m[0])
+    if (matches.length > 0) {
+      findings.push({ path: relPath, matches: [...new Set(matches)] })
+    }
+  }
+  if (findings.length === 0) {
+    return
+  }
+  const detail = findings
+    .map((entry) => `  ${entry.path}: ${entry.matches.join(', ')}`)
+    .join('\n')
+  throw new Error(
+    `Hardcoded version literal(s) found in product HTML — these will drift from package.json.\n` +
+      `Replace with the Vite-injected \`__CODEX_APP_VERSION__\` (rendered from \`render.ts\`).\n` +
+      `Offending files:\n${detail}`,
+  )
+}
+
 const args = process.argv.slice(2)
+const checkMode = args[0] === '--check'
 const setMode = args[0] === '--set'
 const setFromVersionLogMode = args[0] === '--set-from-version-log'
 const requestedVersion = setMode ? args[1] : null
 const requestedVersionLogPath = setFromVersionLogMode
   ? resolve(repoRoot, args[1] ?? defaultVersionLogPath)
   : null
+
+if (checkMode) {
+  // Read-only mode used by CI / pre-commit hooks. Skips the writes
+  // below and only validates that no hardcoded version literal has
+  // crept back into the front-end HTML.
+  checkHardcodedVersions()
+  console.log('Version drift check passed.')
+  process.exit(0)
+}
 
 if (setMode && setFromVersionLogMode) {
   throw new Error('Choose either --set or --set-from-version-log.')
@@ -212,5 +260,10 @@ const nextCargoToml = syncCargoVersion(cargoToml, version)
 if (nextCargoToml !== cargoToml) {
   writeFileSync(cargoTomlPath, nextCargoToml)
 }
+
+// Belt-and-braces: every sync run also enforces "no hardcoded version
+// in front-end HTML" so a stale literal can't silently rot through
+// release after release the way `1.5.0` did.
+checkHardcodedVersions()
 
 console.log(`Version source: ${versionSourceLabel} -> ${version}`)
