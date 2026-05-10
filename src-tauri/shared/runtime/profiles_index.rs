@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::sync::OnceLock;
+use std::time::{Instant, UNIX_EPOCH};
 
 use crate::errors::{AppError, AppResult};
 use crate::models::{
@@ -19,6 +20,60 @@ use super::profiles::{
 use super::session_usage::{load_latest_local_quota_snapshot, normalize_quota_summary};
 
 const PROFILES_INDEX_SCHEMA_VERSION: u32 = 3;
+
+/// How long a freshly-rebuilt index lives in the in-process cache
+/// before the next `load_profiles_index` call re-reads the disk.
+/// Tuned to dedupe the back-to-back IPC pair issued by the front-end
+/// `refreshAllData` call (`get_profiles_snapshot` + `get_current_live_quota`
+/// fire concurrently via `Promise.all` and each used to do its own
+/// reconcile + write of `profiles.json`) without holding stale data
+/// across user-visible state changes.
+const PROFILES_INDEX_CACHE_TTL_MS: u128 = 250;
+
+struct CachedProfilesIndex {
+    fetched_at: Instant,
+    index: ProfilesIndex,
+}
+
+fn cache_slot() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, CachedProfilesIndex>>
+{
+    static SLOT: OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, CachedProfilesIndex>>> =
+        OnceLock::new();
+    SLOT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn try_load_cached_index(codex_home: &Path) -> Option<ProfilesIndex> {
+    // Tests bypass the cache so per-test fs setup is observable on
+    // the next `load_profiles_index` call without explicit
+    // invalidation. Production has a single `codex_home` and benefits
+    // from the dedup; tests run with throw-away temp dirs and do
+    // their own state setup between calls.
+    if cfg!(test) {
+        return None;
+    }
+    let slot = cache_slot().lock().ok()?;
+    let entry = slot.get(codex_home)?;
+    if entry.fetched_at.elapsed().as_millis() >= PROFILES_INDEX_CACHE_TTL_MS {
+        return None;
+    }
+    Some(entry.index.clone())
+}
+
+fn store_cached_index(codex_home: &Path, index: &ProfilesIndex) {
+    if cfg!(test) {
+        return;
+    }
+    let Ok(mut slot) = cache_slot().lock() else {
+        return;
+    };
+    slot.insert(
+        codex_home.to_path_buf(),
+        CachedProfilesIndex {
+            fetched_at: Instant::now(),
+            index: index.clone(),
+        },
+    );
+}
 
 fn file_signature(path: &Path) -> (Option<u64>, Option<u64>) {
     let metadata = match fs::metadata(path) {
@@ -163,6 +218,9 @@ fn index_entry_matches_disk(entry: &ProfileIndexEntry, profile_dir: &Path) -> bo
 
 pub fn load_profiles_index(codex_home: Option<&Path>) -> AppResult<ProfilesIndex> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
+    if let Some(cached) = try_load_cached_index(&codex_home) {
+        return Ok(cached);
+    }
     let backup_root = get_backup_root(Some(&codex_home));
     let (mut index, mut changed) = match load_profiles_index_file(&codex_home) {
         Some(index) => (index, false),
@@ -207,6 +265,7 @@ pub fn load_profiles_index(codex_home: Option<&Path>) -> AppResult<ProfilesIndex
         save_profiles_index(&index, &codex_home)?;
     }
 
+    store_cached_index(&codex_home, &index);
     Ok(index)
 }
 
