@@ -95,10 +95,29 @@ impl QuotaCache {
         let Ok(raw) = fs::read_to_string(&path) else {
             return Self::default();
         };
-        let parsed: QuotaCache = serde_json::from_str(&raw).unwrap_or_default();
-        // A schema bump triggers a clean rebuild rather than guessing
-        // at fields the new code may not understand.
+        let parsed: QuotaCache = match serde_json::from_str(&raw) {
+            Ok(value) => value,
+            Err(error) => {
+                // Corrupt cache — partial atomic-write fallout, manual
+                // edit, or filesystem damage. Surface a single line on
+                // stderr so a "dashboard froze for 5 s once" report has
+                // something to correlate with, instead of a silent
+                // rebuild that overwrites the evidence on next save.
+                eprintln!(
+                    "quota_cache: failed to parse {} ({error}); rebuilding from scratch",
+                    path.display()
+                );
+                return Self::default();
+            }
+        };
         if parsed.schema_version != SCHEMA_VERSION {
+            // Schema bumps are expected on upgrade — log distinctly from
+            // a corrupt-file rebuild so the two cases stay
+            // distinguishable in any future bug report.
+            eprintln!(
+                "quota_cache: schema {} != current {SCHEMA_VERSION}, rebuilding",
+                parsed.schema_version
+            );
             return Self::default();
         }
         parsed
@@ -110,23 +129,54 @@ impl QuotaCache {
         let path = get_quota_cache_path(codex_home);
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                let _ = fs::create_dir_all(parent);
+                if let Err(error) = fs::create_dir_all(parent) {
+                    eprintln!(
+                        "quota_cache: failed to create {} ({error})",
+                        parent.display()
+                    );
+                    return;
+                }
             }
         }
-        let Ok(serialized) = serde_json::to_vec_pretty(self) else {
-            return;
+        let serialized = match serde_json::to_vec_pretty(self) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("quota_cache: failed to serialize cache ({error})");
+                return;
+            }
         };
-        // Atomic write: stage to sibling tmp, rename. Mirrors the
-        // helper in `chatgpt_api.rs:atomic_write_bytes`. Inline here
-        // instead of importing it to avoid a cross-module dep for
-        // ~10 lines of code.
-        let temp_path = path.with_extension("json.tmp");
-        if fs::write(&temp_path, &serialized).is_err() {
+        // Atomic write: stage to a sibling tmp file with a nanosecond
+        // suffix, then rename. The nanosecond suffix mirrors
+        // `chatgpt_api::atomic_write_bytes` and keeps two concurrent
+        // writers (e.g. release app + `tauri:dev`, or the GUI racing
+        // a CLI example binary) from overwriting each other's tmp
+        // file mid-write — without it both processes would fight for
+        // a fixed `quota_cache.json.tmp` and the loser's transactional
+        // intent would be discarded.
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or(0);
+        let mut temp_name = path
+            .file_name()
+            .map(|name| name.to_os_string())
+            .unwrap_or_default();
+        temp_name.push(format!(".{suffix}.tmp"));
+        let temp_path = path.with_file_name(temp_name);
+        if let Err(error) = fs::write(&temp_path, &serialized) {
             let _ = fs::remove_file(&temp_path);
+            eprintln!(
+                "quota_cache: failed to stage write to {} ({error})",
+                temp_path.display()
+            );
             return;
         }
-        if fs::rename(&temp_path, &path).is_err() {
+        if let Err(error) = fs::rename(&temp_path, &path) {
             let _ = fs::remove_file(&temp_path);
+            eprintln!(
+                "quota_cache: failed to publish write to {} ({error})",
+                path.display()
+            );
         }
     }
 

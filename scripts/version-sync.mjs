@@ -10,17 +10,21 @@ const cargoTomlPath = resolve(repoRoot, 'src-tauri', 'Cargo.toml')
 const defaultVersionLogPath = resolve(repoRoot, 'src-tauri', 'target', 'release', 'version.md')
 const tauriVersionSource = '../package.json'
 
-/// Files where a hardcoded version literal in markup is always a bug —
-/// the HTML now relies on Vite-injected `__CODEX_APP_VERSION__` for the
-/// settings row, so any `1.x.y` string left here is a regression that
-/// will silently drift from `package.json` again. Add new
-/// product-facing HTML/JSX files here as the front-end grows so the
-/// check stays comprehensive.
+/// Front-end HTML files where the Settings → Version element lives.
+/// Each file must contain a `<span id="settings-version-value">…</span>`
+/// whose text content is empty / a placeholder dash. Anything that
+/// looks like a semver literal inside that span is a regression — the
+/// row is supposed to be painted at runtime from the Vite-injected
+/// `__CODEX_APP_VERSION__`. Restricting the scan to that one element
+/// avoids false positives on unrelated version-shaped strings (release
+/// links, file paths, dates) that may appear elsewhere in the markup.
 const versionHardcodeForbiddenPaths = [
   'src-tauri/mac/front/index.html',
   'src-tauri/win/front/index.html',
 ]
-const versionHardcodePattern = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/g
+const settingsVersionElementPattern =
+  /<span\b[^>]*\bid\s*=\s*"settings-version-value"[^>]*>([^<]*)<\/span>/i
+const versionHardcodePattern = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/
 
 const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
@@ -172,23 +176,35 @@ const checkHardcodedVersions = () => {
   for (const relPath of versionHardcodeForbiddenPaths) {
     const absPath = resolve(repoRoot, relPath)
     if (!existsSync(absPath)) {
+      // Treat a missing path as a configuration drift — silently
+      // skipping it would let someone delete or rename the HTML file
+      // and lose the safety net unnoticed.
+      findings.push({ path: relPath, reason: 'file not found' })
       continue
     }
     const contents = readFileSync(absPath, 'utf8')
-    const matches = [...contents.matchAll(versionHardcodePattern)].map((m) => m[0])
-    if (matches.length > 0) {
-      findings.push({ path: relPath, matches: [...new Set(matches)] })
+    const elementMatch = contents.match(settingsVersionElementPattern)
+    if (!elementMatch) {
+      findings.push({
+        path: relPath,
+        reason: 'missing <span id="settings-version-value"> element',
+      })
+      continue
+    }
+    const inner = elementMatch[1].trim()
+    if (versionHardcodePattern.test(inner)) {
+      findings.push({ path: relPath, reason: `inner text "${inner}" looks like a version literal` })
     }
   }
   if (findings.length === 0) {
     return
   }
   const detail = findings
-    .map((entry) => `  ${entry.path}: ${entry.matches.join(', ')}`)
+    .map((entry) => `  ${entry.path}: ${entry.reason}`)
     .join('\n')
   throw new Error(
-    `Hardcoded version literal(s) found in product HTML — these will drift from package.json.\n` +
-      `Replace with the Vite-injected \`__CODEX_APP_VERSION__\` (rendered from \`render.ts\`).\n` +
+    `Settings → Version row drift detected.\n` +
+      `Each listed HTML file must contain <span id="settings-version-value"> whose inner text is a placeholder, not a version literal — the row is painted at runtime from the Vite-injected \`__CODEX_APP_VERSION__\`.\n` +
       `Offending files:\n${detail}`,
   )
 }
