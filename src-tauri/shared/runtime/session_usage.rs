@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::models::{QuotaSummary, QuotaWindow};
 
 use super::paths::get_codex_home;
+use super::quota_cache::{file_signature, CachedEntry, CachedSnapshot, QuotaCache};
 use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
 use super::session_files::{collect_jsonl_files, file_modified_ms};
 
@@ -212,20 +213,107 @@ pub fn load_latest_local_quota_snapshot_since(
     codex_home: Option<&Path>,
     min_source_mtime_ms: Option<u64>,
 ) -> Option<LocalQuotaSnapshot> {
-    for path in session_files_descending(codex_home).into_iter().take(32) {
-        let source_mtime_ms = file_modified_ms(&path);
+    let mut cache = QuotaCache::load(codex_home);
+    let scan_paths: Vec<PathBuf> = session_files_descending(codex_home)
+        .into_iter()
+        .take(32)
+        .collect();
+
+    // Tier-1 fast path: if the previously winning file still exists,
+    // is still the lex-largest jsonl in `sessions/`, and its
+    // `(mtime, size)` signature is unchanged, we already know the
+    // answer — no JSONL reads required. The dashboard's 15-second
+    // ticker hits this >99% of the time on an idle session corpus
+    // (a 1.1 GB / 232-file corpus parses in 0.5–5 s in the slow path
+    // on the maintainer's machine, vs. ~10 ms here).
+    if let Some(snapshot) = try_fast_path(&cache, &scan_paths, min_source_mtime_ms) {
+        return Some(snapshot);
+    }
+
+    let mut next_last_snapshot: Option<CachedSnapshot> = None;
+    let mut hit: Option<LocalQuotaSnapshot> = None;
+    for path in &scan_paths {
+        let signature = file_signature(path);
+        let source_mtime_ms = if signature.0 == 0 {
+            file_modified_ms(path)
+        } else {
+            Some(signature.0)
+        };
         if min_source_mtime_ms.is_some_and(|min_mtime| source_mtime_ms.unwrap_or(0) < min_mtime) {
             continue;
         }
-        if let Some(quota) = load_latest_quota_from_file(&path) {
-            return Some(LocalQuotaSnapshot {
+
+        // Per-file cache: skip parsing files that haven't moved. An
+        // entry whose `quota` is `None` means "previously parsed, no
+        // token_count event in this file" — we don't need to re-read.
+        let quota_for_path = match cache.lookup(path, signature) {
+            Some(entry) => entry.quota.clone(),
+            None => {
+                let parsed = load_latest_quota_from_file(path);
+                cache.upsert_entry(
+                    path.clone(),
+                    CachedEntry {
+                        mtime_ms: signature.0,
+                        size: signature.1,
+                        quota: parsed.clone(),
+                    },
+                );
+                parsed
+            }
+        };
+
+        if let Some(quota) = quota_for_path {
+            next_last_snapshot = Some(CachedSnapshot {
+                path: path.clone(),
+                mtime_ms: signature.0,
+                size: signature.1,
+                quota: quota.clone(),
+                source_mtime_ms,
+            });
+            hit = Some(LocalQuotaSnapshot {
                 quota,
                 source_mtime_ms,
             });
+            break;
         }
     }
 
-    None
+    match next_last_snapshot {
+        Some(snapshot) => cache.set_last_snapshot(snapshot),
+        None => cache.clear_last_snapshot(),
+    }
+    cache.save(codex_home);
+
+    hit
+}
+
+fn try_fast_path(
+    cache: &QuotaCache,
+    scan_paths: &[PathBuf],
+    min_source_mtime_ms: Option<u64>,
+) -> Option<LocalQuotaSnapshot> {
+    let last = cache.last_snapshot.as_ref()?;
+    // Only short-circuit when the cached file is still the
+    // lex-largest entry — otherwise a brand-new session would be
+    // ignored until the cache happened to be invalidated by some
+    // other change.
+    let newest = scan_paths.first()?;
+    if newest != &last.path {
+        return None;
+    }
+    let signature = file_signature(&last.path);
+    if signature != (last.mtime_ms, last.size) {
+        return None;
+    }
+    if min_source_mtime_ms.is_some_and(|min_mtime| {
+        last.source_mtime_ms.unwrap_or(0) < min_mtime
+    }) {
+        return None;
+    }
+    Some(LocalQuotaSnapshot {
+        quota: last.quota.clone(),
+        source_mtime_ms: last.source_mtime_ms,
+    })
 }
 
 #[cfg(test)]

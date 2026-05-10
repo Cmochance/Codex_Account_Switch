@@ -10,6 +10,7 @@ pub mod paths;
 pub mod profiles;
 pub mod process_lock;
 pub mod profiles_index;
+pub mod quota_cache;
 pub mod quota_routing;
 pub mod runtime_isolation;
 pub mod session_files;
