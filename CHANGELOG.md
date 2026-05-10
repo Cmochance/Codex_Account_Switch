@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.8 - 2026-05-10
 
 - Refresh fallback no longer burns user quota or runs an LLM round-trip. The legacy `codex exec "Reply with the single word OK."` path took 30–90 s and consumed real ChatGPT quota whenever the direct HTTP refresh failed (slow network, transient 401, GFW). It is now replaced by `codex app-server`'s JSON-RPC `account/read` + `account/rateLimits/read`, which return the same plan + rate-limit data in well under a second without touching the model. Requires `codex` ≥ 0.130.0 on this fallback path; older CLIs surface `APP_SERVER_METHOD_UNSUPPORTED` so the user can upgrade.
 - Closed a same-profile race between Refresh and Login: clicking Refresh on a card whose login is already in flight is now a no-op, mirroring the existing reverse guard (`handleLoginProfile` already blocks Login when the same profile has a Refresh pending). Cross-profile Refresh during a login remains allowed.
