@@ -140,13 +140,6 @@ pub async fn refresh_all_oauth_profile_plans_silent() -> Result<u32, CommandErro
         })?
 }
 
-/// Bulk-refresh skips any profile whose `last_plan_check_ms` is
-/// younger than this. Sized to be longer than the dashboard's 5-min
-/// silent ticker (so the active profile keeps moving on the cheap
-/// path) but short enough that a paid-tier change on a parked
-/// profile surfaces by the next day rollover.
-const BULK_REFRESH_STALE_THRESHOLD_MS: u64 = 6 * 60 * 60 * 1000;
-
 fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
     let codex_home = crate::shared::paths::get_codex_home();
     let backup_root = crate::shared::paths::get_backup_root(Some(&codex_home));
@@ -174,7 +167,9 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
         // cards. With it, repeat launches within a working day are
         // free.
         if let Some(last_check) = entry.last_plan_check_ms {
-            if now_ms.saturating_sub(last_check) < BULK_REFRESH_STALE_THRESHOLD_MS {
+            if now_ms.saturating_sub(last_check)
+                < crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
+            {
                 continue;
             }
         }
@@ -187,10 +182,19 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
             },
         ) {
             Ok(value) => value,
-            // Best-effort: a single account failing must not abort the
-            // batch (one expired refresh_token shouldn't block the
-            // other four profiles from getting fresh plan info).
-            Err(_) => continue,
+            Err(error) => {
+                // Best-effort: a single account failing must not abort
+                // the batch (one expired refresh_token shouldn't block
+                // the other four profiles from getting fresh plan
+                // info). Log it so a systematic failure across every
+                // profile is visible in stderr / Tauri logs instead of
+                // silently leaving the dashboard stale.
+                eprintln!(
+                    "bulk plan refresh skipped {} ({}): {}",
+                    entry.folder_name, error.error_code, error.message
+                );
+                continue;
+            }
         };
 
         let plan_type_from_api = snapshot.plan_type.clone();
@@ -199,22 +203,37 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
         // data for downgraded-to-free profiles (the API returns no
         // rate_limit for them); without this clear we'd show old
         // 5h/weekly numbers next to a freshly-updated Free label.
-        let _ = crate::shared::metadata::sync_profile_quota(
+        if let Err(error) = crate::shared::metadata::sync_profile_quota(
             &entry.folder_name,
             snapshot.quota.unwrap_or_default(),
             Some(now_ms),
             Some(&codex_home),
-        );
-        let _ = crate::shared::metadata::sync_profile_metadata_from_auth(
+        ) {
+            eprintln!(
+                "bulk plan refresh: failed to persist quota for {}: {}",
+                entry.folder_name, error.message
+            );
+        }
+        if let Err(error) = crate::shared::metadata::sync_profile_metadata_from_auth(
             &entry.folder_name,
             plan_type_from_api,
             Some(&codex_home),
-        );
+        ) {
+            eprintln!(
+                "bulk plan refresh: failed to persist metadata for {}: {}",
+                entry.folder_name, error.message
+            );
+        }
         refreshed += 1;
     }
 
     if refreshed > 0 {
-        let _ = crate::shared::profiles_index::load_profiles_index(Some(&codex_home));
+        if let Err(error) = crate::shared::profiles_index::load_profiles_index(Some(&codex_home)) {
+            eprintln!(
+                "bulk plan refresh: post-loop index reload failed: {}",
+                error.message
+            );
+        }
     }
     Ok(refreshed)
 }

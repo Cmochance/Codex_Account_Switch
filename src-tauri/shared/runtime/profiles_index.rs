@@ -59,6 +59,16 @@ fn try_load_cached_index(codex_home: &Path) -> Option<ProfilesIndex> {
     Some(entry.index.clone())
 }
 
+/// Invariant for callers mutating per-profile metadata (`auth.json`,
+/// `profile.json`, the `.current_profile` marker, or anything that
+/// shows up in `ProfileIndexEntry`): the mutation site MUST follow up
+/// with a `load_profiles_index` call so the cache repopulates from
+/// the post-write disk state. Today every action handler in
+/// `shared/commands/actions.rs`, both refresh paths in
+/// `mac/win/runtime/refresh_runtime.rs`, the bulk refresh in
+/// `dashboard.rs`, and `login_runtime` / `switch_core` all comply —
+/// breaking this invariant would silently leak stale data through
+/// the 250 ms cache window for the next concurrent IPC pair.
 fn store_cached_index(codex_home: &Path, index: &ProfilesIndex) {
     if cfg!(test) {
         return;
