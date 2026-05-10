@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Bulk plan refresh (run on app launch + each local-day rollover) now skips any profile whose `last_plan_check_ms` was confirmed within the last 6 hours. On a workspace with several OAuth accounts the previous launch trickled cards updating one-by-one for 10–25 s of background work; with the gate, repeat launches inside the same working day cost zero round-trips.
+- Per-card Refresh button stops forcing an OAuth token rotation on every click. Rotation now only fires when the cached `last_plan_check_ms` is older than 6 hours (or absent); within that window the click reuses the cached `id_token` claims and only refreshes the access_token if it's actually about to expire. Saves the OAuth POST round-trip (~0.5–2 s on a slow network) on a repeat-click without losing the "user-initiated → fresh plan info" guarantee — once a day per profile the heavier path still runs.
+- After a successful per-card Refresh the front-end no longer re-fires `getCurrentLiveQuota`. The backend's `refresh_profile` already wrote fresh plan + quota into the profiles index; the client just re-reads the snapshot now. Drops one IPC round-trip + one JSONL cache pass per click.
+- `chatgpt_api`'s blocking `reqwest::Client` is now built once per process and shared across calls. Cuts TLS-handshake / connection-setup overhead on bulk refresh (5-account batch saves 0.5–2 s) and on repeated single-card refreshes.
+- `load_profiles_index` gains a 250 ms in-process result cache so the front-end's concurrent `get_profiles_snapshot` + `get_current_live_quota` IPC pair (issued every `refreshAllData` and on every dashboard mount) reconciles + writes `profiles.json` once instead of twice. Tests bypass the cache via `cfg(test)` so per-test fs setup remains observable without explicit invalidation.
+
 ## 1.5.8 - 2026-05-10
 
 - Refresh fallback no longer burns user quota or runs an LLM round-trip. The legacy `codex exec "Reply with the single word OK."` path took 30–90 s and consumed real ChatGPT quota whenever the direct HTTP refresh failed (slow network, transient 401, GFW). It is now replaced by `codex app-server`'s JSON-RPC `account/read` + `account/rateLimits/read`, which return the same plan + rate-limit data in well under a second without touching the model. Requires `codex` ≥ 0.130.0 on this fallback path; older CLIs surface `APP_SERVER_METHOD_UNSUPPORTED` so the user can upgrade.

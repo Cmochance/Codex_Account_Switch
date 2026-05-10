@@ -279,7 +279,19 @@ async function drainRefreshQueue(): Promise<void> {
       try {
         await refreshProfile(profile);
         showToast(t(state.locale, "refreshedProfile", { profile }));
-        await refreshAllData(false);
+        // The backend already wrote the new quota / plan into the
+        // index as part of `refresh_profile`. Re-fetching the
+        // snapshot is enough to pick those up — skip the
+        // `getCurrentLiveQuota` half of `refreshAllData` since it
+        // would only re-walk the JSONL cache for data that's already
+        // live in the index we just rebuilt.
+        try {
+          applySnapshot(await getProfilesSnapshot());
+        } catch {
+          // Best-effort: a transient snapshot fetch failure leaves
+          // the cards on their pre-refresh state, which is no worse
+          // than skipping the refresh entirely.
+        }
       } catch (error) {
         showToast(refreshProfileErrorMessage(error), true);
       } finally {
