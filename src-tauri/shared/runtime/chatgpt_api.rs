@@ -327,16 +327,25 @@ fn read_auth_file(profile_dir: &Path) -> AppResult<ProfileAuthFile> {
 }
 
 fn build_http_client() -> AppResult<Client> {
-    Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .user_agent(CODEX_USER_AGENT)
-        .build()
-        .map_err(|error| {
-            AppError::new(
-                "HTTP_CLIENT_BUILD_FAILED",
-                format!("Failed to build HTTP client: {error}"),
-            )
-        })
+    // Build once per process and hand back clones from a shared pool.
+    // `reqwest::blocking::Client` already wraps an `Arc<Inner>`, so
+    // cloning is cheap and reuses the underlying TLS / connection
+    // pool. Without this, every `refresh_profile_via_api` call paid
+    // a fresh-handshake cost; the bulk-refresh path made N profiles
+    // worth of those handshakes back-to-back.
+    static SHARED_CLIENT: std::sync::OnceLock<Result<Client, String>> =
+        std::sync::OnceLock::new();
+    let cached = SHARED_CLIENT.get_or_init(|| {
+        Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .user_agent(CODEX_USER_AGENT)
+            .build()
+            .map_err(|error| format!("Failed to build HTTP client: {error}"))
+    });
+    match cached {
+        Ok(client) => Ok(client.clone()),
+        Err(message) => Err(AppError::new("HTTP_CLIENT_BUILD_FAILED", message.clone())),
+    }
 }
 
 fn build_chatgpt_headers(access_token: &str, account_id: Option<&str>) -> AppResult<HeaderMap> {
