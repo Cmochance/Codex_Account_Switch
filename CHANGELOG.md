@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.10 - 2026-05-16
 
 - Profiles page redesign: account cards become single-row list items (account name + plan / 5-hour and weekly quotas / actions all in one horizontal row). Profile-list page size raised from 4 to 8 entries per page.
 - Removed the placeholder Runtime tab and page (UI-only stub with no backend wiring).
