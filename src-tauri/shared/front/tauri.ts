@@ -143,7 +143,7 @@ let previewCurrentCard: CurrentCard = {
 let previewCurrentQuota: QuotaSummary = quota(84, "3小时后刷新", 61, "2天4小时后刷新");
 
 let previewSnapshot: ProfilesSnapshotResponse = {
-  page_size: 4,
+  page_size: 8,
   profiles: clone(previewProfiles),
   current_card: clone(previewCurrentCard),
   current_quota_card: clone(previewCurrentQuota),
