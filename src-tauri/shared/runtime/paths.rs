@@ -22,7 +22,7 @@ pub const RELEASES_URL: &str = "https://github.com/Cmochance/Codex_Account_Switc
 pub const UPDATE_CHECK_URL: &str =
     "https://api.github.com/repos/Cmochance/Codex_Account_Switch/releases/latest";
 pub const XIAOHONGSHU_URL: &str = "https://www.xiaohongshu.com/explore/69df8fca000000002302203c";
-pub const DEFAULT_PAGE_SIZE: u32 = 4;
+pub const DEFAULT_PAGE_SIZE: u32 = 8;
 
 fn fallback_home_dir() -> PathBuf {
     if let Some(path) = env::var_os("USERPROFILE") {

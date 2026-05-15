@@ -159,7 +159,7 @@ function mockAction(message: string, path: string | null = null): Promise<Action
 
 function refreshPreviewSnapshot(): void {
   previewSnapshot = {
-    page_size: 4,
+    page_size: 8,
     profiles: clone(previewSnapshot.profiles),
     current_card: clone(previewCurrentCard),
     current_quota_card: clone(previewCurrentQuota),

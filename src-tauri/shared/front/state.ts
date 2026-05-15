@@ -13,7 +13,7 @@ export const state = {
   route: "dashboard" as ShellRoute,
   locale: "en" as Locale,
   theme: "classic" as ThemeId,
-  pageSize: 4,
+  pageSize: 8,
   snapshot: null as ProfilesSnapshotResponse | null,
   currentQuota: null as QuotaSummary | null,
 };

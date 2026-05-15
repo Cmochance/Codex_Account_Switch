@@ -13,7 +13,7 @@ import { state } from "@front-shared/state";
 import { getThemeOption, isThemeId } from "@front-shared/theme";
 
 const isWindowsUiTarget = __CODEX_UI_TARGET__ === "windows";
-const shellRoutes: readonly ShellRoute[] = ["dashboard", "profiles", "runtime", "settings", "guide"];
+const shellRoutes: readonly ShellRoute[] = ["dashboard", "profiles", "settings", "guide"];
 
 function isShellRoute(value: string): value is ShellRoute {
   return shellRoutes.includes(value as ShellRoute);

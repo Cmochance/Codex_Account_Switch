@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Profiles page redesign: account cards become single-row list items (account name + plan / 5-hour and weekly quotas / actions all in one horizontal row). Profile-list page size raised from 4 to 8 entries per page.
+- Removed the placeholder Runtime tab and page (UI-only stub with no backend wiring).
+- Top navigation tabs centered horizontally instead of right-aligned.
+- Settings page trimmed: removed the unwired Forward port, Admin port, Launch at login, and Configuration backup rows. Codex CLI path row collapsed from two lines to a single inline row with the "Change" button on the right.
+
 ## 1.5.9 - 2026-05-10
 
 - Bulk plan refresh (run on app launch + each local-day rollover) now skips any profile whose `last_plan_check_ms` was confirmed within the last 6 hours. On a workspace with several OAuth accounts the previous launch trickled cards updating one-by-one for 10–25 s of background work; with the gate, repeat launches inside the same working day cost zero round-trips.
