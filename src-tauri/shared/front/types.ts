@@ -97,4 +97,4 @@ export interface CodexCliStatus {
   suggested_paths: string[];
 }
 
-export type ShellRoute = "dashboard" | "profiles" | "runtime" | "settings" | "guide";
+export type ShellRoute = "dashboard" | "profiles" | "settings" | "guide";
