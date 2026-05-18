@@ -29,7 +29,7 @@
 - **plan / quota 智能缓存**：bulk plan refresh 在 6 小时窗口内跳过已确认账号，per-card 刷新按钮也共享同一缓存；切换 / 登录 / 刷新后直接复用 backend 写回的 snapshot，不重复发 IPC。
 - **Custom Base URL**：每个账号可独立配置 `OPENAI_BASE_URL`；配置后按钮变红警示（自定义 Base 与 ChatGPT OAuth 账号互斥）。
 - **Codex CLI 路径自检**：自动定位 `codex` 可执行（PATH / `~/.codex/bin` / Homebrew / nvm），找不到或路径错误时设置页可手动指定，结果写入 `install_state.json` 优先生效。
-- **跨平台原生 Tauri**：macOS arm64 与 Windows x64 提供原生窗口、原生标题栏 / 关闭按钮，配套 5 套浅色 / 深色主题与中英文界面。
+- **跨平台原生 Tauri**：macOS arm64 / x64 与 Windows x64 提供原生窗口、原生标题栏 / 关闭按钮，配套 5 套浅色 / 深色主题与中英文界面。
 - **本地预览模式**：没有 Tauri 运行时（直接 `vite` 跑前端）时自动使用 mock snapshot，方便单纯调样式。
 
 ## 下载
@@ -41,6 +41,8 @@
 ```text
 codex_switch_<版本>_aarch64.dmg            macOS Apple Silicon DMG（拖拽到 Applications）
 codex_switch_<版本>_aarch64.pkg            macOS Apple Silicon PKG 安装包
+codex_switch_<版本>_x64.dmg                macOS Intel DMG（拖拽到 Applications）
+codex_switch_<版本>_x64.pkg                macOS Intel PKG 安装包
 codex_switch_<版本>_x64-setup.exe          Windows x64 NSIS 安装包
 ```
 
@@ -106,6 +108,8 @@ npm run tauri:build:macos-release
 dist/
   codex_switch_<版本>_aarch64.dmg
   codex_switch_<版本>_aarch64.pkg
+  codex_switch_<版本>_x64.dmg            （macOS Intel runner）
+  codex_switch_<版本>_x64.pkg            （macOS Intel runner）
   codex_switch_<版本>_x64-setup.exe      （Windows runner）
   history/
     v<旧版本>/
@@ -119,7 +123,7 @@ Windows 构建走 CI 的 `tauri build --target x86_64-pc-windows-msvc`；本地 
 ## 版本与发布
 
 - 版本号源头是 `package.json`，`npm run version:sync` / `npm run version:set -- <semver>` 把同一版本写到 `package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`，并在 `src-tauri/mac/front/index.html` / `win/front/index.html` 通过 Vite-injected `__CODEX_APP_VERSION__` 渲染到设置页。
-- GitHub Release tag 用完整 semver（如 `v1.5.10`）。push tag → `.github/workflows/build.yml` 自动跑 macOS arm64 + Windows x64 构建并把产物上传到一个 **draft release**，不会自动转 Latest。
+- GitHub Release tag 用完整 semver（如 `v1.5.10`）。push tag → `.github/workflows/build.yml` 自动跑 macOS arm64 + macOS x64 + Windows x64 构建并把产物上传到一个 **draft release**，不会自动转 Latest。
 - 不要把补丁版本的 asset 上传到旧的两段式 tag（如 `1.5`）。
 - macOS 安装包仅作 Release asset 发布，不提交到 Git。
 
@@ -177,7 +181,7 @@ App 暂未做 Apple Developer 代码签名 / notarization。第一次启动按�
 
 ## 平台支持
 
-- **macOS**：原生 Tauri 桌面端（Apple Silicon），同时保留 `macOS-backup/` 下的 legacy shell 流程兼容。
+- **macOS**：原生 Tauri 桌面端（Apple Silicon + Intel），同时保留 `macOS-backup/` 下的 legacy shell 流程兼容。
 - **Windows**：原生 Tauri 桌面端（x64），通过 Release 中的 `.exe` 分发。
 - **Linux**：暂未做正式发布；前端代码跨平台，理论可自行 `cargo tauri build` 出 AppImage / deb，但 macOS-backup 与 Codex CLI 路径探测未覆盖 Linux 路径约定。
 
