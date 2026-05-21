@@ -40,10 +40,12 @@ function quota(
     five_hour: {
       remaining_percent: fiveHourPercent,
       refresh_at: fiveHourRefresh,
+      reset_at_timestamp: null,
     },
     weekly: {
       remaining_percent: weeklyPercent,
       refresh_at: weeklyRefresh,
+      reset_at_timestamp: null,
     },
   };
 }

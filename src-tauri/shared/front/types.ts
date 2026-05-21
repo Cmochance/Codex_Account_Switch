@@ -1,6 +1,7 @@
 export interface QuotaWindow {
   remaining_percent: number | null;
   refresh_at: string | null;
+  reset_at_timestamp: number | null;
 }
 
 export interface QuotaSummary {

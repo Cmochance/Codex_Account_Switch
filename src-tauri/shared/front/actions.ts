@@ -94,7 +94,7 @@ let pendingLoginRetry: (() => Promise<void>) | null = null;
 let cancelledLoginProfile: string | null = null;
 
 function isRefreshPending(profile: string): boolean {
-  return state.refreshActiveProfile === profile || state.refreshQueue.includes(profile);
+  return state.refreshActiveProfiles.includes(profile);
 }
 
 function clearDialogError(element: HTMLParagraphElement): void {
@@ -261,71 +261,30 @@ async function handleSwitchProfile(profile: string): Promise<void> {
   }
 }
 
-async function drainRefreshQueue(): Promise<void> {
-  if (state.refreshWorkerActive) {
-    return;
-  }
-
-  state.refreshWorkerActive = true;
+async function performProfileRefresh(profile: string): Promise<void> {
+  state.refreshActiveProfiles.push(profile);
+  rerenderDashboard();
   try {
-    while (state.refreshQueue.length > 0) {
-      const profile = state.refreshQueue.shift();
-      if (!profile) {
-        continue;
+    await refreshProfile(profile);
+    showToast(t(state.locale, "refreshedProfile", { profile }));
+    try {
+      const snapshot = await getProfilesSnapshot();
+      applySnapshot(snapshot);
+      if (snapshot.current_card?.folder_name === profile) {
+        applyCurrentQuota(await getCurrentLiveQuota());
       }
-
-      state.refreshActiveProfile = profile;
-      rerenderDashboard();
-      try {
-        await refreshProfile(profile);
-        showToast(t(state.locale, "refreshedProfile", { profile }));
-        // The backend already wrote the new quota / plan into the
-        // profiles index. Re-reading the snapshot picks those up
-        // for every card without paying for a JSONL scan.
-        //
-        // `getCurrentLiveQuota` only matters when the refreshed
-        // profile is also the active one — the live JSONL session
-        // count can be newer than the API value we just persisted
-        // (an in-flight `codex` session keeps appending
-        // `token_count` events) and `select_current_quota` picks
-        // the newer of the two. For non-active refreshes we skip
-        // it; the active card panel for that profile is rebuilt
-        // when the user switches to it, and the 15s ticker keeps
-        // the panel honest in the meantime.
-        try {
-          const snapshot = await getProfilesSnapshot();
-          applySnapshot(snapshot);
-          if (snapshot.current_card?.folder_name === profile) {
-            applyCurrentQuota(await getCurrentLiveQuota());
-          }
-        } catch (error) {
-          // Best-effort: a transient snapshot fetch failure leaves
-          // the cards on their pre-refresh state, which matches the
-          // pre-PR `refreshAllData(false)` behavior. Surface only
-          // to the console so a systematic failure is debuggable
-          // without spamming the user with a toast they can't act
-          // on.
-          console.warn("Snapshot refresh after profile refresh failed:", error);
-        }
-      } catch (error) {
-        showToast(refreshProfileErrorMessage(error), true);
-      } finally {
-        state.refreshActiveProfile = null;
-        rerenderDashboard();
-      }
+    } catch (error) {
+      console.warn("Snapshot refresh after profile refresh failed:", error);
     }
+  } catch (error) {
+    showToast(refreshProfileErrorMessage(error), true);
   } finally {
-    state.refreshWorkerActive = false;
+    state.refreshActiveProfiles = state.refreshActiveProfiles.filter(p => p !== profile);
     rerenderDashboard();
   }
 }
 
 function handleRefreshProfile(profile: string): void {
-  // Mirror `handleLoginProfile`'s `isRefreshPending(profile)` guard in
-  // the opposite direction: when the same profile already has a login
-  // in flight, both flows would otherwise race on writing per-profile
-  // `auth.json`. Cross-profile refresh during a login is still allowed
-  // (different sandbox + different `auth.json`).
   if (
     state.loading
     || state.loginActiveProfile === profile
@@ -334,9 +293,7 @@ function handleRefreshProfile(profile: string): void {
     return;
   }
 
-  state.refreshQueue.push(profile);
-  rerenderDashboard();
-  void drainRefreshQueue();
+  void performProfileRefresh(profile);
 }
 
 function loginErrorCode(error: unknown): string | undefined {
@@ -1006,6 +963,12 @@ export function bootstrap(): void {
   window.setInterval(() => {
     void refreshActiveQuotaSilently();
   }, 5 * 60_000);
+
+  // Relative countdown timer tick: rerender the dashboard every 15 seconds
+  // to update the remaining relative countdown times.
+  window.setInterval(() => {
+    rerenderDashboard();
+  }, 15_000);
 
   // Bulk plan refresh: forces an OAuth refresh on every OAuth profile so
   // the cached id_token claims (plan tier, subscription expiry) move
