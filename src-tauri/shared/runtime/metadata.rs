@@ -81,51 +81,48 @@ fn decode_token_claims(token: &str) -> Option<IdTokenClaims> {
 fn load_auth_metadata_from_path(auth_path: &Path) -> Option<AuthDerivedMetadata> {
     let raw = fs::read_to_string(auth_path).ok()?;
     let auth = serde_json::from_str::<AuthFile>(&raw).ok()?;
-    let tokens = auth.tokens?;
     let mut metadata = AuthDerivedMetadata::default();
 
-    let claims = tokens
-        .id_token
-        .as_deref()
-        .and_then(decode_token_claims)
-        .or_else(|| tokens.access_token.as_deref().and_then(decode_token_claims));
+    if let Some(tokens) = &auth.tokens {
+        let claims = tokens
+            .id_token
+            .as_deref()
+            .and_then(decode_token_claims)
+            .or_else(|| tokens.access_token.as_deref().and_then(decode_token_claims));
 
-    if let Some(claims) = claims {
-        metadata.account_label = normalized_value(claims.email);
-        let nested_plan = claims
-            .auth
-            .as_ref()
-            .and_then(|auth| normalized_value(auth.chatgpt_plan_type.clone()));
-        let nested_expiry = claims
-            .auth
-            .as_ref()
-            .and_then(|auth| normalized_value(auth.chatgpt_subscription_active_until.clone()));
-        let top_level_plan = normalized_value(claims.chatgpt_plan_type);
-        let top_level_expiry = normalized_value(claims.chatgpt_subscription_active_until);
+        if let Some(claims) = claims {
+            metadata.account_label = normalized_value(claims.email);
+            let nested_plan = claims
+                .auth
+                .as_ref()
+                .and_then(|auth| normalized_value(auth.chatgpt_plan_type.clone()));
+            let nested_expiry = claims
+                .auth
+                .as_ref()
+                .and_then(|auth| normalized_value(auth.chatgpt_subscription_active_until.clone()));
+            let top_level_plan = normalized_value(claims.chatgpt_plan_type);
+            let top_level_expiry = normalized_value(claims.chatgpt_subscription_active_until);
 
-        let plan_name = nested_plan.or(top_level_plan);
-        let subscription_expires_at = nested_expiry.or(top_level_expiry);
+            let plan_name = nested_plan.or(top_level_plan);
+            let subscription_expires_at = nested_expiry.or(top_level_expiry);
 
-        // `has_plan_claims` is the signal apply_auth_metadata uses to
-        // decide whether to overwrite stored plan_name. It must remain
-        // true even when only the top-level fallback yielded a value,
-        // so a JWT shape change doesn't silently leave plan stale.
-        if claims.auth.is_some() || plan_name.is_some() || subscription_expires_at.is_some() {
-            metadata.has_plan_claims = true;
-            metadata.plan_name = plan_name;
-            metadata.subscription_expires_at = subscription_expires_at;
+            // `has_plan_claims` is the signal apply_auth_metadata uses to
+            // decide whether to overwrite stored plan_name. It must remain
+            // true even when only the top-level fallback yielded a value,
+            // so a JWT shape change doesn't silently leave plan stale.
+            if claims.auth.is_some() || plan_name.is_some() || subscription_expires_at.is_some() {
+                metadata.has_plan_claims = true;
+                metadata.plan_name = plan_name;
+                metadata.subscription_expires_at = subscription_expires_at;
+            }
+        }
+
+        if metadata.account_label.is_none() {
+            metadata.account_label = normalized_value(tokens.account_id.clone());
         }
     }
 
-    if metadata.account_label.is_none() {
-        metadata.account_label = normalized_value(tokens.account_id);
-    }
-
-    if metadata.account_label.is_some() || metadata.has_plan_claims {
-        Some(metadata)
-    } else {
-        None
-    }
+    Some(metadata)
 }
 
 fn load_auth_metadata(
@@ -661,5 +658,43 @@ mod tests {
             derived.subscription_expires_at.as_deref(),
             Some("2099-12-31T23:59:59+00:00")
         );
+    }
+
+    #[test]
+    fn apikey_auth_mode_returns_some_derived_metadata() {
+        let dir = temp_dir("apikey-auth-mode");
+        let auth_json = r#"{"auth_mode":"apikey"}"#;
+        std::fs::write(dir.join("auth.json"), auth_json).unwrap();
+
+        let derived = load_auth_metadata_from_path(&dir.join("auth.json"))
+            .expect("apikey auth metadata should parse and return Some");
+
+        assert_eq!(derived.account_label, None);
+        assert_eq!(derived.plan_name, None);
+        assert_eq!(derived.subscription_expires_at, None);
+        assert!(!derived.has_plan_claims);
+    }
+
+    #[test]
+    fn missing_claims_and_account_id_returns_some_empty_metadata() {
+        let dir = temp_dir("missing-claims-and-acc-id");
+        // A placeholder tokens object (e.g. for reverse proxies / developer cards)
+        // with empty/missing or dummy values should return Some with None fields.
+        let auth_json = r#"{
+            "tokens": {
+                "access_token": "replace-me",
+                "id_token": "replace-me",
+                "account_id": "replace-me"
+            }
+        }"#;
+        std::fs::write(dir.join("auth.json"), auth_json).unwrap();
+
+        let derived = load_auth_metadata_from_path(&dir.join("auth.json"))
+            .expect("placeholder auth metadata should parse and return Some");
+
+        assert_eq!(derived.account_label, None);
+        assert_eq!(derived.plan_name, None);
+        assert_eq!(derived.subscription_expires_at, None);
+        assert!(!derived.has_plan_claims);
     }
 }
