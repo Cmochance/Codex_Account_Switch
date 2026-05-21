@@ -44,9 +44,13 @@ codex_switch_<版本>_aarch64.pkg            macOS Apple Silicon PKG 安装包
 codex_switch_<版本>_x64.dmg                macOS Intel DMG（拖拽到 Applications）
 codex_switch_<版本>_x64.pkg                macOS Intel PKG 安装包
 codex_switch_<版本>_x64-setup.exe          Windows x64 NSIS 安装包
+codex_switch_<版本>_amd64.deb              Linux x86_64 Debian/Ubuntu 包（sudo dpkg -i 安装）
+codex_switch_<版本>_amd64.AppImage         Linux x86_64 通用便携包（chmod +x 后直接运行）
 ```
 
 > macOS / Windows 都暂未做代码签名，首次启动可能提示「未知开发者 / 未知发布者」；macOS 可在「系统设置 → 隐私与安全」放行，Windows 可在 SmartScreen 弹窗点「更多信息 → 仍要运行」。
+>
+> Linux 为实验性发布（Ubuntu 22.04 / glibc 2.35 基线构建）：UI、账号切换、plan/quota 查看可用；与 Codex CLI 的部分交互（路径自检、`codex login` spawn 等）当前走 Windows 路径分支，Linux-native 体验尚未单独适配，欢迎反馈 issue。
 
 ## 快速开始
 
@@ -183,7 +187,7 @@ App 暂未做 Apple Developer 代码签名 / notarization。第一次启动按�
 
 - **macOS**：原生 Tauri 桌面端（Apple Silicon + Intel），同时保留 `macOS-backup/` 下的 legacy shell 流程兼容。
 - **Windows**：原生 Tauri 桌面端（x64），通过 Release 中的 `.exe` 分发。
-- **Linux**：暂未做正式发布；前端代码跨平台，理论可自行 `cargo tauri build` 出 AppImage / deb，但 macOS-backup 与 Codex CLI 路径探测未覆盖 Linux 路径约定。
+- **Linux**：**实验性发布**（Ubuntu 22.04 / glibc 2.35 基线，x86_64），通过 Release 中的 `.deb` / `.AppImage` 分发。前端 UI、账号切换、plan / quota 查看与 macOS / Windows 一致；与 Codex CLI 的交互（路径自检、`codex login` spawn）当前复用 Windows runtime 分支，尚未做 Linux-native 适配，欢迎踩到具体问题后开 issue 反馈。
 
 平台专属逻辑放在 `src-tauri/mac/**` 或 `src-tauri/win/**`，跨平台逻辑都在 `src-tauri/shared/**`。
 

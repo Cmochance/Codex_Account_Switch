@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.11 - 2026-05-16
+
+- Added experimental Linux x86_64 build to the release pipeline. Tagged releases now publish `.deb` (Debian/Ubuntu) and `.AppImage` (generic portable) artifacts alongside the existing macOS / Windows ones. Built on `ubuntu-22.04` (glibc 2.35) so binaries run on Ubuntu 22.04+ / Debian 12+ and equivalent distros. UI, profile switching, and plan / quota readout work as on the other platforms; Linux-native paths for Codex CLI discovery and `codex login` spawning are not separately adapted yet (the non-macOS code branch is currently reused), so feedback issues are welcome.
+
 ## 1.5.10 - 2026-05-16
 
 - Profiles page redesign: account cards become single-row list items (account name + plan / 5-hour and weekly quotas / actions all in one horizontal row). Profile-list page size raised from 4 to 8 entries per page.
