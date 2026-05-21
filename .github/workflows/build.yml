@@ -182,7 +182,7 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            artifacts/codex-switch-macos-arm64/*
-            artifacts/codex-switch-macos-x64/*
-            artifacts/codex-switch-windows-x86_64/*
-            artifacts/codex-switch-linux-x86_64/*
+            artifacts/codex-switch-macos-arm64/**/*
+            artifacts/codex-switch-macos-x64/**/*
+            artifacts/codex-switch-windows-x86_64/**/*
+            artifacts/codex-switch-linux-x86_64/**/*
