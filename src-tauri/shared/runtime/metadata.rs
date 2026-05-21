@@ -420,6 +420,7 @@ mod tests {
             five_hour: QuotaWindow {
                 remaining_percent: Some(99),
                 refresh_at: Some("2026-04-21 13:37".to_string()),
+                ..QuotaWindow::default()
             },
             ..QuotaSummary::default()
         }
@@ -565,6 +566,7 @@ mod tests {
                 weekly: QuotaWindow {
                     remaining_percent: Some(82),
                     refresh_at: Some("2026-05-15 12:00".to_string()),
+                    ..QuotaWindow::default()
                 },
             },
             ..ProfileMetadata::default()

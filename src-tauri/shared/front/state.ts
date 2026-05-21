@@ -5,9 +5,7 @@ import type { ThemeId } from "@front-shared/theme";
 export const state = {
   page: 1,
   loading: false,
-  refreshQueue: [] as string[],
-  refreshActiveProfile: null as string | null,
-  refreshWorkerActive: false,
+  refreshActiveProfiles: [] as string[],
   loginActiveProfile: null as string | null,
   currentProfile: null as string | null,
   route: "dashboard" as ShellRoute,

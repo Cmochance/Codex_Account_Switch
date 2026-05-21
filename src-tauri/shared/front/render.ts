@@ -148,8 +148,28 @@ function formatPercent(value: number | null): string {
   return value == null ? "--" : `${value}%`;
 }
 
-function formatRefresh(value: string | null): string {
-  return value || "--";
+function formatRefresh(entry: QuotaWindow | undefined): string {
+  if (!entry) {
+    return "--";
+  }
+  if (entry.reset_at_timestamp != null) {
+    const diff = entry.reset_at_timestamp - Math.floor(Date.now() / 1000);
+    if (diff > 0) {
+      const h = Math.floor(diff / 3600);
+      const m = Math.floor((diff % 3600) / 60);
+      if (h > 0) {
+        return t(state.locale, "resetsIn", { value: `${h}h ${m}m` });
+      } else if (m > 0) {
+        const s = diff % 60;
+        return t(state.locale, "resetsIn", { value: `${m}m ${s}s` });
+      } else {
+        return t(state.locale, "resetsIn", { value: `${diff}s` });
+      }
+    } else {
+      return t(state.locale, "resetting");
+    }
+  }
+  return entry.refresh_at || "--";
 }
 
 function escapeHtml(value: string): string {
@@ -333,7 +353,7 @@ function buildMetricLineMarkup(
     <section class="${metricClass}${unavailable ? " is-unavailable" : ""}">
       <div class="${lineClass}">
         <span class="${titleClass}">${escapeHtml(label)}</span>
-        <span class="${refreshClass}">${escapeHtml(formatRefresh(entry?.refresh_at ?? null))}</span>
+        <span class="${refreshClass}">${escapeHtml(formatRefresh(entry))}</span>
         <span class="${valueClass}">${escapeHtml(formatPercent(unavailable ? null : entry?.remaining_percent ?? null))}</span>
       </div>
       <div class="quota-track">
@@ -508,10 +528,8 @@ export function renderProfiles(
 
   elements.profilesGrid.innerHTML = dashboard.profiles
     .map((profile) => {
-      const refreshRunning = state.refreshActiveProfile === profile.folder_name;
-      const refreshQueued =
-        !refreshRunning && state.refreshQueue.includes(profile.folder_name);
-      const refreshPending = refreshRunning || refreshQueued;
+      const refreshRunning = state.refreshActiveProfiles.includes(profile.folder_name);
+      const refreshPending = refreshRunning;
       const loginRunning = state.loginActiveProfile === profile.folder_name;
       // Any in-flight login (on this card or any other) blocks new logins
       // because the OAuth port and `.switch.lock` are global resources.
@@ -526,20 +544,16 @@ export function renderProfiles(
       const baseDisabled = state.loading || cardBusy;
       const switchDisabled =
         !profile.auth_present || state.loading || cardBusy || loginPending || profile.status === "current";
-      // The login button stays clickable while *this* card's login is in
-      // flight so the user can cancel the codex login process when they
-      // close the OAuth tab without finishing. It's still disabled when
-      // some other card holds the global login lock.
+
+      const refreshTitle = refreshRunning
+        ? t(state.locale, "profileRefreshRunning")
+        : refreshDisabled
+          ? t(state.locale, "profileRefreshDisabled")
+          : t(state.locale, "profileRefreshReady");
+
       const loginDisabled =
         state.loading || refreshPending || (loginPending && !loginRunning);
       const unavailable = isProfileUnavailable(profile);
-      const refreshTitle = refreshRunning
-        ? t(state.locale, "profileRefreshRunning")
-        : refreshQueued
-          ? t(state.locale, "profileRefreshQueued")
-          : refreshDisabled
-            ? t(state.locale, "profileRefreshDisabled")
-            : t(state.locale, "profileRefreshReady");
 
       const planTooltip = planFreshnessTitle(profile.plan_name, profile.last_plan_check_ms);
       const planClasses = [

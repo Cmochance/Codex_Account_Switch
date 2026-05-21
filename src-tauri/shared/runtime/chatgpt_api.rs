@@ -137,7 +137,7 @@ pub fn looks_like_relogin_required(error_code: &str, message: &str) -> bool {
 }
 /// Refresh the access token a little before its actual expiry so a 401
 /// in-flight does not bubble up to the caller.
-const EXPIRY_SKEW_SECONDS: i64 = 60;
+const EXPIRY_SKEW_SECONDS: i64 = 300;
 
 /// Outcome of a single ChatGPT-API refresh round-trip.
 ///
@@ -626,6 +626,7 @@ fn quota_window_from_rate_limit(window: &RateLimitWindow) -> QuotaWindow {
     QuotaWindow {
         remaining_percent,
         refresh_at,
+        reset_at_timestamp: window.reset_at,
     }
 }
 

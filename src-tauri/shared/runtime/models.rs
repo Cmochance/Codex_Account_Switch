@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct QuotaWindow {
     pub remaining_percent: Option<u8>,
     pub refresh_at: Option<String>,
+    pub reset_at_timestamp: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

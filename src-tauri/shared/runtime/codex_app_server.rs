@@ -386,22 +386,21 @@ fn quota_window_from_app_server(window: &Value) -> QuotaWindow {
     });
     let remaining_percent =
         used_percent.map(|used| (100.0 - used).round().clamp(0.0, 100.0) as u8);
-    let refresh_at = window
-        .get("resetsAt")
-        .and_then(Value::as_i64)
-        .and_then(|seconds| {
-            Utc.timestamp_opt(seconds, 0)
-                .single()
-                .map(|datetime| {
-                    datetime
-                        .with_timezone(&Local)
-                        .format("%Y-%m-%d %H:%M")
-                        .to_string()
-                })
-        });
+    let reset_at_timestamp = window.get("resetsAt").and_then(Value::as_i64);
+    let refresh_at = reset_at_timestamp.and_then(|seconds| {
+        Utc.timestamp_opt(seconds, 0)
+            .single()
+            .map(|datetime| {
+                datetime
+                    .with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+    });
     QuotaWindow {
         remaining_percent,
         refresh_at,
+        reset_at_timestamp,
     }
 }
 

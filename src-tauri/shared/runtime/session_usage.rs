@@ -75,6 +75,7 @@ fn normalize_quota_window(window: QuotaWindow) -> QuotaWindow {
     QuotaWindow {
         remaining_percent: window.remaining_percent.map(|value| value.min(100)),
         refresh_at: window.refresh_at,
+        reset_at_timestamp: window.reset_at_timestamp,
     }
 }
 
@@ -113,10 +114,12 @@ fn quota_window_from_rate_limit(window: Option<SessionRateLimitWindow>) -> Quota
         .used_percent
         .map(|used_percent| (100.0 - used_percent).round().clamp(0.0, 100.0) as u8);
     let refresh_at = window.resets_at.and_then(format_reset_time);
+    let reset_at_timestamp = window.resets_at;
 
     QuotaWindow {
         remaining_percent,
         refresh_at,
+        reset_at_timestamp,
     }
 }
 
@@ -429,6 +432,7 @@ mod tests {
                     five_hour: QuotaWindow {
                         remaining_percent: Some(99),
                         refresh_at: None,
+                        ..QuotaWindow::default()
                     },
                     weekly: QuotaWindow::default(),
                 },

@@ -259,10 +259,12 @@ mod tests {
             five_hour: QuotaWindow {
                 remaining_percent: Some(80),
                 refresh_at: Some("2026-05-10 10:00".to_string()),
+                ..QuotaWindow::default()
             },
             weekly: QuotaWindow {
                 remaining_percent: Some(50),
                 refresh_at: None,
+                ..QuotaWindow::default()
             },
         }
     }

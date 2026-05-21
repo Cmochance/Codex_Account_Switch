@@ -231,6 +231,18 @@ pub fn load_profiles_index(codex_home: Option<&Path>) -> AppResult<ProfilesIndex
     if let Some(cached) = try_load_cached_index(&codex_home) {
         return Ok(cached);
     }
+
+    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    let _guard = LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    // Double check cache after acquiring the lock to avoid redundant disk reads/writes
+    if let Some(cached) = try_load_cached_index(&codex_home) {
+        return Ok(cached);
+    }
+
     let backup_root = get_backup_root(Some(&codex_home));
     let (mut index, mut changed) = match load_profiles_index_file(&codex_home) {
         Some(index) => (index, false),
