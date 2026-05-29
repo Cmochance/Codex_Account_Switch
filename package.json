@@ -28,7 +28,7 @@
     "tauri:build:windows:portable": "npm run version:sync && tauri build --target x86_64-pc-windows-msvc --no-bundle",
     "tauri:build:macos-dmg": "npm run tauri:build:macos-release",
     "tauri:build:macos-app": "npm run version:sync && npm run macos:artifacts:prepare:app && tauri build --bundles app --no-sign && npm run macos:artifacts:finalize:app",
-    "tauri:build:macos-release": "npm run version:sync && npm run macos:artifacts:prepare:release && tauri build --bundles app,dmg --no-sign && npm run macos:pkg && npm run macos:artifacts:finalize:release"
+    "tauri:build:macos-release": "npm run version:sync && npm run macos:artifacts:prepare:release && tauri build --bundles app,dmg && npm run macos:pkg && npm run macos:artifacts:finalize:release"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1"
