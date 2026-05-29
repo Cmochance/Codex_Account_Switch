@@ -176,6 +176,12 @@ pub fn probe_version_with_timeout(command: Command, timeout: Duration) -> Option
     })
 }
 
+/// After the probed child exits, how long to wait for its stdout to finish
+/// draining before giving up on capturing it. A child that left a
+/// background process holding the pipe never yields EOF, so this bounds
+/// that case instead of blocking forever.
+const STDOUT_DRAIN_GRACE: Duration = Duration::from_secs(1);
+
 /// Run `command` bounded by `timeout`, draining stdout on a reader thread
 /// so a chatty child can't backpressure its own pipe and deadlock. Returns
 /// the full captured stdout on a successful (exit-0) run; `None` if it
@@ -200,25 +206,39 @@ pub fn run_capturing_stdout_with_timeout(
             return None;
         }
     };
-    // Drain stdout concurrently: a child that writes more than the pipe
-    // buffer (~64 KB) before exiting would otherwise block on write()
-    // forever while we poll try_wait. Joined only after exit/kill.
-    let mut reader = child.stdout.take().map(|mut stdout| {
-        thread::spawn(move || {
-            let mut buf = String::new();
-            let _ = stdout.read_to_string(&mut buf);
-            buf
+    // Drain stdout on a thread that posts to a channel — then wait with a
+    // bounded recv_timeout, NOT an unbounded join. Two hazards this guards:
+    // (1) a child that writes more than the pipe buffer (~64 KB) before
+    // exiting would block on write() while we poll try_wait; (2) a child
+    // that exits but leaves a background process holding the stdout pipe
+    // never yields EOF, so read_to_string — and an unbounded join() after
+    // it — would block forever and defeat the timeout. We abandon the
+    // (detached) reader after STDOUT_DRAIN_GRACE in that case.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let has_reader = child
+        .stdout
+        .take()
+        .map(|mut stdout| {
+            thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = stdout.read_to_string(&mut buf);
+                let _ = tx.send(buf);
+            });
         })
-    });
+        .is_some();
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let stdout = reader
-                    .take()
-                    .and_then(|handle| handle.join().ok())
-                    .unwrap_or_default();
-                return status.success().then_some(stdout);
+                if !status.success() {
+                    return None;
+                }
+                let stdout = if has_reader {
+                    rx.recv_timeout(STDOUT_DRAIN_GRACE).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                return Some(stdout);
             }
             Ok(None) => {
                 if Instant::now() >= deadline {

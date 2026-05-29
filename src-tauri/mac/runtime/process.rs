@@ -82,15 +82,14 @@ fn discover_real_codex_cli_from_shell(managed_shim_path: Option<&Path>) -> Optio
     let managed_shim_text = managed_shim_path
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let output = Command::new(&resolver_path)
-        .arg(managed_shim_text)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut command = Command::new(&resolver_path);
+    command.arg(managed_shim_text);
+    // Bounded like the other shell spawns: even this first-party resolver
+    // script sources the login environment, which can stall on a hung rc.
+    let stdout = crate::shared::codex_cli_path::run_capturing_stdout_with_timeout(
+        command,
+        LOGIN_SHELL_PROBE_TIMEOUT,
+    )?;
     let resolved = stdout
         .lines()
         .map(str::trim)
