@@ -1,6 +1,7 @@
-//! Shared `InstallState` schema + `CodexPathResolver` trait + the four
+//! Shared `InstallState` schema + `CodexPathResolver` trait + the
 //! Tauri-command helpers (`get_codex_cli_status` / `set_codex_cli_path`
-//! / `clear_codex_cli_path` / `build_codex_cli_status`).
+//! / `clear_codex_cli_path` / `redetect_codex_cli_path` /
+//! `build_codex_cli_status`).
 //!
 //! Before this module each platform (`mac/runtime/process.rs` +
 //! `mac/runtime/profile_actions.rs` and the Windows mirrors) carried
@@ -13,11 +14,14 @@
 //! the `CodexPathResolver` trait so this shared layer is OS-agnostic.
 
 use std::path::{Path, PathBuf};
+use std::process::{Child, ExitStatus};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::errors::AppResult;
-use crate::models::CodexCliStatus;
+use crate::models::{CodexCliRedetectResult, CodexCliStatus};
 
 /// Persistent install metadata. Both mac and Windows used to declare
 /// this struct independently; consolidating here keeps the on-disk
@@ -77,6 +81,13 @@ pub trait CodexPathResolver {
     /// Common install locations that exist on disk right now. Frontend
     /// renders these as click-to-fill chips in the dialog.
     fn suggested_paths(&self, codex_home: &Path) -> Vec<PathBuf>;
+
+    /// Force a fresh scan that ignores the cached/override path and
+    /// returns only candidates verified runnable via `codex --version`
+    /// (deduped, best-first). Backs the Settings "auto-detect" button:
+    /// `resolve_with_source` trusts a previously-saved path, so when
+    /// that path is wrong the user needs this to rescan from scratch.
+    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<PathBuf>;
 }
 
 /// Build the snapshot the front-end consumes. Used by both
@@ -129,6 +140,57 @@ pub fn clear_codex_cli_path(
     build_codex_cli_status(resolver, codex_home)
 }
 
+/// Force a fresh detection scan and report which candidates are
+/// runnable, alongside a refreshed status snapshot. Backs the Settings
+/// "auto-detect" button — the front-end auto-applies a lone candidate
+/// and lets the user pick when several survive the probe.
+pub fn redetect_codex_cli_path(
+    resolver: &dyn CodexPathResolver,
+    codex_home: &Path,
+) -> CodexCliRedetectResult {
+    let candidates = resolver
+        .redetect_runnable_paths(codex_home)
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    CodexCliRedetectResult {
+        candidates,
+        status: build_codex_cli_status(resolver, codex_home),
+    }
+}
+
+/// Poll-wait for a child process, killing it if it outlives `timeout`.
+/// Shared by the per-platform `codex --version` runnable probes so a
+/// hung or input-waiting candidate can't wedge the re-detection scan.
+/// The platforms own `Command` construction (console hiding, Windows
+/// extension resolution); only this bounded wait is common.
+pub fn wait_child_with_timeout(mut child: Child, timeout: Duration) -> Option<ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => {
+                // A real try_wait failure (EINTR, ECHILD, a Windows handle
+                // error) is indistinguishable from a clean timeout to the
+                // caller — both return None — so leave a diagnostic trail
+                // instead of silently demoting the candidate.
+                eprintln!("wait_child_with_timeout: try_wait failed: {error}");
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +210,10 @@ mod tests {
         // return Err(that AppError) to test ? propagation.
         set_error: RefCell<Option<AppError>>,
         suggestions: Vec<PathBuf>,
+        // What `redetect_runnable_paths` returns — the "verified
+        // runnable" subset, independent of `suggestions`. RefCell so a
+        // test can vary it (empty / multiple) per case.
+        runnable: RefCell<Vec<PathBuf>>,
         clear_calls: RefCell<u32>,
     }
 
@@ -157,6 +223,7 @@ mod tests {
                 state: RefCell::new(None),
                 set_error: RefCell::new(None),
                 suggestions: vec![PathBuf::from("/fake/suggested/codex")],
+                runnable: RefCell::new(vec![PathBuf::from("/fake/runnable/codex")]),
                 clear_calls: RefCell::new(0),
             }
         }
@@ -187,6 +254,10 @@ mod tests {
 
         fn suggested_paths(&self, _codex_home: &Path) -> Vec<PathBuf> {
             self.suggestions.clone()
+        }
+
+        fn redetect_runnable_paths(&self, _codex_home: &Path) -> Vec<PathBuf> {
+            self.runnable.borrow().clone()
         }
     }
 
@@ -255,5 +326,116 @@ mod tests {
             Some("/fake/discovered/codex")
         );
         assert_eq!(status.source, "discovery");
+    }
+
+    #[test]
+    fn redetect_returns_runnable_candidates_plus_refreshed_status() {
+        let resolver = FakeResolver::new();
+        let codex_home = PathBuf::from("/fake/home");
+        // Seed auto-discovery so the bundled status snapshot is non-empty.
+        *resolver.state.borrow_mut() = Some((
+            PathBuf::from("/fake/discovered/codex"),
+            RealCodexPathSource::Discovery,
+        ));
+
+        let result = redetect_codex_cli_path(&resolver, &codex_home);
+
+        // Candidates come straight from the resolver's runnable probe,
+        // not from the suggestion list.
+        assert_eq!(result.candidates, vec!["/fake/runnable/codex".to_string()]);
+        // The bundled status is rebuilt live, so the Settings row can
+        // refresh from the same call.
+        assert_eq!(
+            result.status.resolved_path.as_deref(),
+            Some("/fake/discovered/codex")
+        );
+        assert_eq!(result.status.source, "discovery");
+    }
+
+    #[test]
+    fn redetect_with_no_runnable_candidates_returns_empty_plus_status() {
+        let resolver = FakeResolver::new();
+        let codex_home = PathBuf::from("/fake/home");
+        // Nothing survives the runnable probe...
+        *resolver.runnable.borrow_mut() = vec![];
+        // ...but auto-discovery still resolves a (stale) path, so the
+        // bundled status must stay populated for the Settings row.
+        *resolver.state.borrow_mut() = Some((
+            PathBuf::from("/fake/stale/codex"),
+            RealCodexPathSource::Discovery,
+        ));
+
+        let result = redetect_codex_cli_path(&resolver, &codex_home);
+
+        assert!(result.candidates.is_empty());
+        assert_eq!(
+            result.status.resolved_path.as_deref(),
+            Some("/fake/stale/codex")
+        );
+    }
+
+    #[test]
+    fn redetect_preserves_multiple_candidates_in_order() {
+        let resolver = FakeResolver::new();
+        let codex_home = PathBuf::from("/fake/home");
+        *resolver.runnable.borrow_mut() = vec![
+            PathBuf::from("/fake/first/codex"),
+            PathBuf::from("/fake/second/codex"),
+        ];
+
+        let result = redetect_codex_cli_path(&resolver, &codex_home);
+
+        // Order is the contract the front-end relies on (it prefills [0]).
+        assert_eq!(
+            result.candidates,
+            vec![
+                "/fake/first/codex".to_string(),
+                "/fake/second/codex".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_child_with_timeout_returns_status_for_fast_exit() {
+        use std::process::Command;
+
+        // Absolute path + shell builtin so a sibling test that mutates
+        // PATH (the mac/win `discover_*` tests do) can't make these spawns
+        // fail with NotFound. `exit N` is a builtin, so no PATH lookup.
+        let zero = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("spawn /bin/sh");
+        assert!(wait_child_with_timeout(zero, Duration::from_secs(5))
+            .is_some_and(|status| status.success()));
+
+        // A clean non-zero exit must be observed as Some(!success), never
+        // collapsed into the timeout/error None — `probe_codex_runnable`
+        // relies on telling "ran but failed" from "didn't run".
+        let nonzero = Command::new("/bin/sh")
+            .args(["-c", "exit 3"])
+            .spawn()
+            .expect("spawn /bin/sh");
+        assert!(wait_child_with_timeout(nonzero, Duration::from_secs(5))
+            .is_some_and(|status| !status.success()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_child_with_timeout_kills_and_returns_none_on_overrun() {
+        use std::process::Command;
+
+        let start = Instant::now();
+        // Absolute path (present on macOS + Ubuntu) so a PATH-mutating
+        // sibling test can't break the spawn.
+        let sleeper = Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn /bin/sleep");
+        // 200ms budget against a 30s sleep: it must be killed and reported
+        // as None, and we must not actually block anywhere near 30s.
+        assert!(wait_child_with_timeout(sleeper, Duration::from_millis(200)).is_none());
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 }

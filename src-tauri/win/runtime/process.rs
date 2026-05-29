@@ -511,6 +511,10 @@ impl CodexPathResolver for WindowsCodexPathResolver {
     fn suggested_paths(&self, codex_home: &Path) -> Vec<PathBuf> {
         suggested_codex_cli_paths(Some(codex_home))
     }
+
+    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<PathBuf> {
+        redetect_runnable_codex_cli_paths(Some(codex_home))
+    }
 }
 
 /// Return common codex CLI install locations on Windows that actually
@@ -567,6 +571,71 @@ pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
     }
 
     suggestions
+}
+
+/// How long a single `codex --version` probe may run before we kill it
+/// and treat the candidate as unusable. A little more generous than
+/// macOS: a Windows `.cmd` shim plus npm wrapper has a slower cold
+/// start, but a healthy codex still answers well under this.
+const RUNNABLE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Upper bound on how many candidates the auto-detect scan will probe.
+/// Each probe spawns a child (up to `RUNNABLE_PROBE_TIMEOUT`), so without
+/// a cap a machine with many `where codex` hits could stall the scan.
+/// Realistic machines have 1-3 candidates.
+const MAX_PROBE_CANDIDATES: usize = 12;
+
+/// Whether `path` is an actually-runnable codex CLI: it must be a file
+/// and `codex --version` must exit successfully within the probe
+/// timeout. This is what lets auto-detect reject a stale or broken path
+/// that a mere existence check would accept. The "ran but failed" and
+/// "couldn't spawn" cases are logged so a broken install leaves a
+/// diagnostic trail instead of looking identical to "not found".
+fn probe_codex_runnable(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let mut command = Command::new(path);
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    match hide_console_window(&mut command).spawn() {
+        Ok(child) => match crate::shared::codex_cli_path::wait_child_with_timeout(
+            child,
+            RUNNABLE_PROBE_TIMEOUT,
+        ) {
+            Some(status) if status.success() => true,
+            Some(status) => {
+                eprintln!(
+                    "codex probe: {} ran but `--version` exited unsuccessfully ({status})",
+                    path.display()
+                );
+                false
+            }
+            None => false,
+        },
+        Err(error) => {
+            eprintln!("codex probe: failed to spawn {}: {error}", path.display());
+            false
+        }
+    }
+}
+
+/// Force a fresh scan for the Settings auto-detect button, keeping only
+/// candidates that pass the runnable probe. Reuses
+/// `suggested_codex_cli_paths`, which already resolves Windows
+/// extensions, filters the managed shim / Windows Apps aliases, and
+/// folds in `where codex` (every PATH match) — so it is the full
+/// candidate set. Ignores the cached/override path so a wrong saved
+/// path can be corrected.
+pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
+    suggested_codex_cli_paths(codex_home)
+        .into_iter()
+        .take(MAX_PROBE_CANDIDATES)
+        .filter(|path| probe_codex_runnable(path))
+        .collect()
 }
 
 pub fn quit_codex_app_if_running() -> AppResult<bool> {
@@ -678,8 +747,9 @@ impl PlatformHooks for WindowsPlatformHooks {
 mod tests {
     use super::{
         build_app_server_command, discover_real_codex_cli_path, is_acceptable_real_codex_cli_path,
-        load_install_state, resolve_real_codex_cli, resolve_windows_app_target,
-        windows_store_shell_target, AppLaunchTarget, InstallState, WINDOWS_STORE_APP_ID,
+        load_install_state, probe_codex_runnable, resolve_real_codex_cli,
+        resolve_windows_app_target, windows_store_shell_target, AppLaunchTarget, InstallState,
+        WINDOWS_STORE_APP_ID,
     };
     use crate::windows::env_guard;
     use serde_json::to_string_pretty;
@@ -693,6 +763,44 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("codex-switch-process-{name}-{unique}"))
+    }
+
+    // Runs on the Linux `cargo test --lib` job (the win module compiles on
+    // non-macOS): a `#!/bin/sh` candidate is spawnable there, and
+    // `hide_console_window` is a no-op off Windows. Pins the three
+    // behaviours auto-detect depends on: a non-file is rejected without
+    // spawning, a binary that runs but exits non-zero is rejected (broken
+    // install), and only a zero-exit binary is accepted.
+    #[cfg(unix)]
+    #[test]
+    fn probe_codex_runnable_rejects_missing_and_failing_accepts_zero_exit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let codex_home = temp_codex_home("probe-runnable");
+        fs::create_dir_all(&codex_home).unwrap();
+
+        // (a) non-file path → false, never spawned.
+        assert!(!probe_codex_runnable(&codex_home.join("does-not-exist")));
+
+        let set_exec = |path: &std::path::Path| {
+            let mut perm = fs::metadata(path).unwrap().permissions();
+            perm.set_mode(0o755);
+            fs::set_permissions(path, perm).unwrap();
+        };
+
+        // (b) exists + runs but exits non-zero → false (broken install).
+        let bad = codex_home.join("bad-codex");
+        fs::write(&bad, "#!/bin/sh\nexit 3\n").unwrap();
+        set_exec(&bad);
+        assert!(!probe_codex_runnable(&bad));
+
+        // (c) exists + exits zero → true.
+        let good = codex_home.join("good-codex");
+        fs::write(&good, "#!/bin/sh\nexit 0\n").unwrap();
+        set_exec(&good);
+        assert!(probe_codex_runnable(&good));
+
+        let _ = fs::remove_dir_all(&codex_home);
     }
 
     #[test]

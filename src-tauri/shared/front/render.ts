@@ -116,6 +116,7 @@ export const elements = {
   settingsCodexCliLabel: requiredElement<HTMLElement>("settings-codex-cli-label"),
   settingsCodexCliValue: requiredElement<HTMLParagraphElement>("settings-codex-cli-value"),
   settingsCodexCliButton: requiredElement<HTMLButtonElement>("settings-codex-cli-button"),
+  settingsCodexCliDetectButton: requiredElement<HTMLButtonElement>("settings-codex-cli-detect-button"),
   codexCliDialog: requiredElement<HTMLDialogElement>("codex-cli-dialog"),
   codexCliForm: requiredElement<HTMLFormElement>("codex-cli-form"),
   codexCliDialogTitle: requiredElement<HTMLHeadingElement>("codex-cli-dialog-title"),
@@ -758,6 +759,7 @@ export function applyLocale(): void {
   elements.submitCodexCliButton.textContent = t(state.locale, "save");
   elements.settingsCodexCliLabel.textContent = t(state.locale, "settingsCodexCli");
   elements.settingsCodexCliButton.textContent = t(state.locale, "settingsCodexCliChange");
+  elements.settingsCodexCliDetectButton.textContent = t(state.locale, "settingsCodexCliDetect");
   // Version label is locale-independent but lives next to the i18n
   // settings rows; set it here so a single render pass paints both.
   // `__CODEX_APP_VERSION__` is injected by Vite from `package.json` so

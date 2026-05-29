@@ -98,4 +98,11 @@ export interface CodexCliStatus {
   suggested_paths: string[];
 }
 
+export interface CodexCliRedetectResult {
+  /** Paths verified runnable by the forced scan, deduped, best-first. */
+  candidates: string[];
+  /** Refreshed status snapshot so the Settings row can update in step. */
+  status: CodexCliStatus;
+}
+
 export type ShellRoute = "dashboard" | "profiles" | "settings" | "guide";

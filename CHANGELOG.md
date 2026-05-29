@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.12 - 2026-05-29
+
+- Settings → Codex CLI path gains an **Auto-detect** button next to "Change". Unlike the existing path self-check (which trusts the cached / override path), it force-rescans every common install location plus PATH and verifies each candidate is actually runnable via `codex --version`. A lone runnable hit is applied immediately; several open the dialog with the verified candidates to pick from; none falls back to the manual dialog. Targets the two cases the self-check can't: auto-detection landed on a wrong / stale path, or the user doesn't know where to point it. Backed by a new `redetect_codex_cli_path` command that runs on the blocking pool (each candidate probe spawns a child) with a per-candidate timeout so a hung binary can't wedge the scan. macOS + Windows symmetric.
+
 ## 1.5.11 - 2026-05-16
 
 - Added experimental Linux x86_64 build to the release pipeline. Tagged releases now publish `.deb` (Debian/Ubuntu) and `.AppImage` (generic portable) artifacts alongside the existing macOS / Windows ones. Built on `ubuntu-22.04` (glibc 2.35) so binaries run on Ubuntu 22.04+ / Debian 12+ and equivalent distros. UI, profile switching, and plan / quota readout work as on the other platforms; Linux-native paths for Codex CLI discovery and `codex login` spawning are not separately adapted yet (the non-macOS code branch is currently reused), so feedback issues are welcome.

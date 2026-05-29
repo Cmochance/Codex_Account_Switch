@@ -252,6 +252,10 @@ impl CodexPathResolver for MacosCodexPathResolver {
     fn suggested_paths(&self, codex_home: &Path) -> Vec<PathBuf> {
         suggested_codex_cli_paths(Some(codex_home))
     }
+
+    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<PathBuf> {
+        redetect_runnable_codex_cli_paths(Some(codex_home))
+    }
 }
 
 /// Soft cap on how long the PATH walk can spend stat'ing entries
@@ -299,6 +303,82 @@ pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
     }
 
     suggestions
+}
+
+/// How long a single `codex --version` probe may run before we kill it
+/// and treat the candidate as unusable. Keeps a hung or input-waiting
+/// binary from wedging the auto-detect scan; a healthy codex answers
+/// well under this.
+const RUNNABLE_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Upper bound on how many candidates the auto-detect scan will probe.
+/// Each probe spawns a child (up to `RUNNABLE_PROBE_TIMEOUT`), so without
+/// a cap a pathological PATH with many `codex` entries could stall the
+/// scan. Realistic machines have 1-3 candidates.
+const MAX_PROBE_CANDIDATES: usize = 12;
+
+/// Whether `path` is an actually-runnable codex CLI: it must be a file
+/// and `codex --version` must exit successfully within the probe
+/// timeout. This is what lets auto-detect reject a stale or broken path
+/// that a mere existence check would accept. The "ran but failed" and
+/// "couldn't spawn" cases are logged so a broken install leaves a
+/// diagnostic trail instead of looking identical to "not found".
+fn probe_codex_runnable(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let mut command = Command::new(path);
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    match command.spawn() {
+        Ok(child) => match crate::shared::codex_cli_path::wait_child_with_timeout(
+            child,
+            RUNNABLE_PROBE_TIMEOUT,
+        ) {
+            Some(status) if status.success() => true,
+            Some(status) => {
+                eprintln!(
+                    "codex probe: {} ran but `--version` exited unsuccessfully ({status})",
+                    path.display()
+                );
+                false
+            }
+            None => false,
+        },
+        Err(error) => {
+            eprintln!("codex probe: failed to spawn {}: {error}", path.display());
+            false
+        }
+    }
+}
+
+/// Force a fresh scan for the Settings auto-detect button: gather every
+/// candidate the discovery + suggestion paths know about (login-shell
+/// resolver, fixed install locations, PATH), then keep only those that
+/// pass the runnable probe. Ignores the cached/override path entirely so
+/// a wrong saved path can be corrected.
+pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
+    let managed_shim = codex_home.map(managed_shim_path);
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // The login-shell resolver catches version-manager installs (nvm /
+    // asdf) that aren't on the GUI app's PATH; suggestions cover the
+    // fixed locations plus a bounded PATH walk.
+    if let Some(shell_path) = discover_real_codex_cli_from_shell(managed_shim.as_deref()) {
+        push_candidate(&mut candidates, shell_path);
+    }
+    for path in suggested_codex_cli_paths(codex_home) {
+        push_candidate(&mut candidates, path);
+    }
+
+    candidates
+        .into_iter()
+        .take(MAX_PROBE_CANDIDATES)
+        .filter(|path| probe_codex_runnable(path))
+        .collect()
 }
 
 fn codex_app_candidates() -> Vec<PathBuf> {

@@ -214,6 +214,21 @@ pub struct CodexCliStatus {
     pub suggested_paths: Vec<String>,
 }
 
+/// Result of a forced re-detection scan triggered by the Settings
+/// "auto-detect" button. Unlike `get_codex_cli_status` (which honours
+/// the cached/override path), this rescans from scratch and keeps only
+/// the candidates that pass a `codex --version` runnable probe.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexCliRedetectResult {
+    /// Paths that were verified runnable, deduped and best-first. The
+    /// front-end auto-applies a lone hit and lets the user pick when
+    /// there are several.
+    pub candidates: Vec<String>,
+    /// Refreshed status snapshot so the Settings row and the dialog can
+    /// update in lock-step after the scan.
+    pub status: CodexCliStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetCodexCliPathPayload {
     pub path: String,

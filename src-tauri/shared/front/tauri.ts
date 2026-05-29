@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   ActionResponse,
+  CodexCliRedetectResult,
   CodexCliStatus,
   CommandError,
   CurrentCard,
@@ -334,6 +335,15 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
           source: command === "set_codex_cli_path" ? "user_override" : "discovery",
           suggested_paths: ["/preview/codex", "/preview/usr/local/bin/codex"],
         }) as Promise<T>;
+      case "redetect_codex_cli_path":
+        return Promise.resolve({
+          candidates: ["/preview/codex"],
+          status: {
+            resolved_path: "/preview/codex",
+            source: "user_override",
+            suggested_paths: ["/preview/codex", "/preview/usr/local/bin/codex"],
+          },
+        }) as Promise<T>;
       case "cancel_codex_login":
         return Promise.resolve(true) as Promise<T>;
       case "open_profile_folder":
@@ -462,6 +472,10 @@ export function setCodexCliPath(path: string): Promise<CodexCliStatus> {
 
 export function clearCodexCliPath(): Promise<CodexCliStatus> {
   return invokeCommand<CodexCliStatus>("clear_codex_cli_path");
+}
+
+export function redetectCodexCliPath(): Promise<CodexCliRedetectResult> {
+  return invokeCommand<CodexCliRedetectResult>("redetect_codex_cli_path");
 }
 
 export function cancelCodexLogin(): Promise<boolean> {
