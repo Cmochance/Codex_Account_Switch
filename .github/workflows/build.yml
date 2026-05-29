@@ -170,19 +170,28 @@ jobs:
           fi
           npm run ${{ matrix.tauri_script }}
 
-      - name: Verify macOS .app is codesigned
+      - name: Verify macOS .app inside dmg is codesigned
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # Fail early if the bundle came out unsigned — an unsigned .app is
-          # exactly what shows "is damaged" on Sequoia with no way to open.
-          # Mirrors codex-app-transfer release.yml's codesign sanity check.
-          app="$(find src-tauri/target dist -type d -name 'codex_switch.app' -print -quit 2>/dev/null)"
-          if [[ -z "$app" ]]; then
-            echo "::error::no codex_switch.app found to verify"; exit 1
+          # Verify the app INSIDE the dmg — the release finalize step
+          # (macos:artifacts:finalize:release) removes the standalone .app and
+          # keeps only the dmg/pkg, so that's what users actually download. An
+          # unsigned/mismatched bundle is exactly what shows "is damaged" on
+          # Sequoia. Mirrors codex-app-transfer's codesign sanity check.
+          dmg="$(find src-tauri/target dist -name '*.dmg' -print -quit 2>/dev/null)"
+          if [[ -z "$dmg" ]]; then echo "::error::no dmg found to verify"; exit 1; fi
+          echo "verifying app inside: $dmg"
+          hdiutil attach "$dmg" -nobrowse -mountpoint /tmp/verify-dmg
+          app="$(find /tmp/verify-dmg -maxdepth 2 -name '*.app' -print -quit)"
+          rc=1
+          if [[ -n "$app" ]]; then
+            codesign --verify --deep --strict --verbose=2 "$app"; rc=$?
+          else
+            echo "::error::no .app inside dmg"
           fi
-          echo "verifying codesign on: $app"
-          codesign --verify --deep --strict --verbose=2 "$app"
+          hdiutil detach /tmp/verify-dmg >/dev/null 2>&1 || true
+          [[ $rc -eq 0 ]] || { echo "::error::dmg app failed codesign verify"; exit 1; }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
