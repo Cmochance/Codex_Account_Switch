@@ -9,6 +9,7 @@ use std::time::Duration;
 use crate::errors::{AppError, AppResult};
 use crate::platform::hooks::PlatformHooks;
 use crate::shared::codex_app_server::{fetch_account_snapshot, AppServerSnapshot};
+use crate::models::CodexCliCandidate;
 use crate::shared::codex_cli_path::CodexPathResolver;
 pub use crate::shared::codex_cli_path::{InstallState, RealCodexPathSource};
 use crate::shared::login_cancel::wait_for_login_or_cancel;
@@ -253,7 +254,7 @@ impl CodexPathResolver for MacosCodexPathResolver {
         suggested_codex_cli_paths(Some(codex_home))
     }
 
-    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<PathBuf> {
+    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<CodexCliCandidate> {
         redetect_runnable_codex_cli_paths(Some(codex_home))
     }
 }
@@ -317,56 +318,78 @@ const RUNNABLE_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// scan. Realistic machines have 1-3 candidates.
 const MAX_PROBE_CANDIDATES: usize = 12;
 
-/// Whether `path` is an actually-runnable codex CLI: it must be a file
-/// and `codex --version` must exit successfully within the probe
-/// timeout. This is what lets auto-detect reject a stale or broken path
-/// that a mere existence check would accept. The "ran but failed" and
-/// "couldn't spawn" cases are logged so a broken install leaves a
-/// diagnostic trail instead of looking identical to "not found".
-fn probe_codex_runnable(path: &Path) -> bool {
+/// Probe whether `path` is a runnable codex CLI and capture its version.
+/// `Some(version)` (possibly empty) means it's a file that ran and exited
+/// 0; `None` means not-a-file, couldn't spawn, exited non-zero, or timed
+/// out. The failure is logged so a broken install leaves a diagnostic
+/// trail instead of looking identical to "not found".
+fn probe_codex_version(path: &Path) -> Option<String> {
     if !path.is_file() {
-        return false;
+        return None;
     }
     let mut command = Command::new(path);
-    command
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    match command.spawn() {
-        Ok(child) => match crate::shared::codex_cli_path::wait_child_with_timeout(
-            child,
-            RUNNABLE_PROBE_TIMEOUT,
-        ) {
-            Some(status) if status.success() => true,
-            Some(status) => {
-                eprintln!(
-                    "codex probe: {} ran but `--version` exited unsuccessfully ({status})",
-                    path.display()
-                );
-                false
-            }
-            None => false,
-        },
-        Err(error) => {
-            eprintln!("codex probe: failed to spawn {}: {error}", path.display());
-            false
-        }
+    command.arg("--version");
+    let result =
+        crate::shared::codex_cli_path::probe_version_with_timeout(command, RUNNABLE_PROBE_TIMEOUT);
+    if result.is_none() {
+        eprintln!(
+            "codex probe: {} is not a runnable codex (spawn / non-zero exit / timeout)",
+            path.display()
+        );
     }
+    result
+}
+
+/// Resolve codex through the user's login shell, so installs on the
+/// shell's PATH (nvm / asdf / brew / fnm / any rc-managed location) are
+/// found even when the app was launched from Finder with the narrow
+/// launchd PATH. A non-interactive login shell + `command -v` avoids
+/// loading the user's `codex` shell *function* (if any), so we resolve to
+/// the real binary; the result is verified to be an absolute file.
+fn discover_codex_via_login_shell(managed_shim_path: Option<&Path>) -> Option<PathBuf> {
+    let shell = env::var_os("SHELL")?;
+    let output = Command::new(&shell)
+        .args(["-lc", "command -v codex"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let resolved = stdout
+        .lines()
+        .map(str::trim)
+        .find(|value| !value.is_empty())?;
+    let candidate = PathBuf::from(resolved);
+    // `command -v` of a function/alias returns a bare name, not a path —
+    // require an absolute path to a real file so we never feed that back.
+    if !candidate.is_absolute() || !candidate.is_file() {
+        return None;
+    }
+    if managed_shim_path.is_some_and(|managed| managed == candidate.as_path()) {
+        return None;
+    }
+    Some(candidate)
 }
 
 /// Force a fresh scan for the Settings auto-detect button: gather every
 /// candidate the discovery + suggestion paths know about (login-shell
-/// resolver, fixed install locations, PATH), then keep only those that
-/// pass the runnable probe. Ignores the cached/override path entirely so
-/// a wrong saved path can be corrected.
-pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
+/// resolution, managed-shim resolver, Codex.app bundle, fixed install
+/// locations, PATH), then keep only those that pass the runnable probe,
+/// capturing each one's version. Ignores the cached/override path so a
+/// wrong saved path can be corrected.
+pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<CodexCliCandidate> {
     let managed_shim = codex_home.map(managed_shim_path);
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    // The login-shell resolver catches version-manager installs (nvm /
-    // asdf) that aren't on the GUI app's PATH; suggestions cover the
-    // fixed locations plus a bounded PATH walk.
+    // Login-shell resolution first — catches nvm / asdf / brew / fnm
+    // installs on the user's PATH even under Finder's narrow launchd PATH.
+    if let Some(path) = discover_codex_via_login_shell(managed_shim.as_deref()) {
+        push_candidate(&mut candidates, path);
+    }
+    // The managed-shim resolver (present when codex_switch installed its
+    // shim) and the suggestion list (Codex.app bundle, fixed locations,
+    // bounded PATH walk) fill in the rest.
     if let Some(shell_path) = discover_real_codex_cli_from_shell(managed_shim.as_deref()) {
         push_candidate(&mut candidates, shell_path);
     }
@@ -377,7 +400,12 @@ pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathB
     candidates
         .into_iter()
         .take(MAX_PROBE_CANDIDATES)
-        .filter(|path| probe_codex_runnable(path))
+        .filter_map(|path| {
+            probe_codex_version(&path).map(|version| CodexCliCandidate {
+                path: path.to_string_lossy().into_owned(),
+                version: (!version.is_empty()).then_some(version),
+            })
+        })
         .collect()
 }
 

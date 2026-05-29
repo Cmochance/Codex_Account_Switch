@@ -98,9 +98,16 @@ export interface CodexCliStatus {
   suggested_paths: string[];
 }
 
+export interface CodexCliCandidate {
+  /** Absolute path to the verified-runnable codex binary. */
+  path: string;
+  /** `codex --version` line (e.g. "codex-cli 0.133.0"), or null if it ran but printed nothing parseable. */
+  version: string | null;
+}
+
 export interface CodexCliRedetectResult {
-  /** Paths verified runnable by the forced scan, deduped, best-first. */
-  candidates: string[];
+  /** Candidates verified runnable by the forced scan, deduped, best-first. */
+  candidates: CodexCliCandidate[];
   /** Refreshed status snapshot so the Settings row can update in step. */
   status: CodexCliStatus;
 }

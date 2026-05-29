@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::errors::{AppError, AppResult};
 use crate::platform::hooks::PlatformHooks;
 use crate::shared::codex_app_server::{fetch_account_snapshot, AppServerSnapshot};
+use crate::models::CodexCliCandidate;
 use crate::shared::codex_cli_path::CodexPathResolver;
 pub use crate::shared::codex_cli_path::{InstallState, RealCodexPathSource};
 use crate::shared::login_cancel::wait_for_login_or_cancel;
@@ -512,7 +513,7 @@ impl CodexPathResolver for WindowsCodexPathResolver {
         suggested_codex_cli_paths(Some(codex_home))
     }
 
-    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<PathBuf> {
+    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<CodexCliCandidate> {
         redetect_runnable_codex_cli_paths(Some(codex_home))
     }
 }
@@ -585,42 +586,27 @@ const RUNNABLE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Realistic machines have 1-3 candidates.
 const MAX_PROBE_CANDIDATES: usize = 12;
 
-/// Whether `path` is an actually-runnable codex CLI: it must be a file
-/// and `codex --version` must exit successfully within the probe
-/// timeout. This is what lets auto-detect reject a stale or broken path
-/// that a mere existence check would accept. The "ran but failed" and
-/// "couldn't spawn" cases are logged so a broken install leaves a
-/// diagnostic trail instead of looking identical to "not found".
-fn probe_codex_runnable(path: &Path) -> bool {
+/// Probe whether `path` is a runnable codex CLI and capture its version.
+/// `Some(version)` (possibly empty) means it's a file that ran and exited
+/// 0; `None` means not-a-file, couldn't spawn, exited non-zero, or timed
+/// out. The failure is logged so a broken install leaves a diagnostic
+/// trail instead of looking identical to "not found".
+fn probe_codex_version(path: &Path) -> Option<String> {
     if !path.is_file() {
-        return false;
+        return None;
     }
     let mut command = Command::new(path);
-    command
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    match hide_console_window(&mut command).spawn() {
-        Ok(child) => match crate::shared::codex_cli_path::wait_child_with_timeout(
-            child,
-            RUNNABLE_PROBE_TIMEOUT,
-        ) {
-            Some(status) if status.success() => true,
-            Some(status) => {
-                eprintln!(
-                    "codex probe: {} ran but `--version` exited unsuccessfully ({status})",
-                    path.display()
-                );
-                false
-            }
-            None => false,
-        },
-        Err(error) => {
-            eprintln!("codex probe: failed to spawn {}: {error}", path.display());
-            false
-        }
+    command.arg("--version");
+    hide_console_window(&mut command);
+    let result =
+        crate::shared::codex_cli_path::probe_version_with_timeout(command, RUNNABLE_PROBE_TIMEOUT);
+    if result.is_none() {
+        eprintln!(
+            "codex probe: {} is not a runnable codex (spawn / non-zero exit / timeout)",
+            path.display()
+        );
     }
+    result
 }
 
 /// Force a fresh scan for the Settings auto-detect button, keeping only
@@ -630,11 +616,16 @@ fn probe_codex_runnable(path: &Path) -> bool {
 /// folds in `where codex` (every PATH match) — so it is the full
 /// candidate set. Ignores the cached/override path so a wrong saved
 /// path can be corrected.
-pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
+pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<CodexCliCandidate> {
     suggested_codex_cli_paths(codex_home)
         .into_iter()
         .take(MAX_PROBE_CANDIDATES)
-        .filter(|path| probe_codex_runnable(path))
+        .filter_map(|path| {
+            probe_codex_version(&path).map(|version| CodexCliCandidate {
+                path: path.to_string_lossy().into_owned(),
+                version: (!version.is_empty()).then_some(version),
+            })
+        })
         .collect()
 }
 
@@ -747,7 +738,7 @@ impl PlatformHooks for WindowsPlatformHooks {
 mod tests {
     use super::{
         build_app_server_command, discover_real_codex_cli_path, is_acceptable_real_codex_cli_path,
-        load_install_state, probe_codex_runnable, resolve_real_codex_cli,
+        load_install_state, probe_codex_version, resolve_real_codex_cli,
         resolve_windows_app_target, windows_store_shell_target, AppLaunchTarget, InstallState,
         WINDOWS_STORE_APP_ID,
     };
@@ -773,14 +764,14 @@ mod tests {
     // install), and only a zero-exit binary is accepted.
     #[cfg(unix)]
     #[test]
-    fn probe_codex_runnable_rejects_missing_and_failing_accepts_zero_exit() {
+    fn probe_codex_version_rejects_missing_and_failing_captures_zero_exit() {
         use std::os::unix::fs::PermissionsExt;
 
         let codex_home = temp_codex_home("probe-runnable");
         fs::create_dir_all(&codex_home).unwrap();
 
-        // (a) non-file path → false, never spawned.
-        assert!(!probe_codex_runnable(&codex_home.join("does-not-exist")));
+        // (a) non-file path → None, never spawned.
+        assert_eq!(probe_codex_version(&codex_home.join("does-not-exist")), None);
 
         let set_exec = |path: &std::path::Path| {
             let mut perm = fs::metadata(path).unwrap().permissions();
@@ -788,17 +779,20 @@ mod tests {
             fs::set_permissions(path, perm).unwrap();
         };
 
-        // (b) exists + runs but exits non-zero → false (broken install).
+        // (b) exists + runs but exits non-zero → None (broken install).
         let bad = codex_home.join("bad-codex");
         fs::write(&bad, "#!/bin/sh\nexit 3\n").unwrap();
         set_exec(&bad);
-        assert!(!probe_codex_runnable(&bad));
+        assert_eq!(probe_codex_version(&bad), None);
 
-        // (c) exists + exits zero → true.
+        // (c) exists + exits zero, prints a version → Some(version).
         let good = codex_home.join("good-codex");
-        fs::write(&good, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::write(&good, "#!/bin/sh\necho codex-cli 0.133.0\n").unwrap();
         set_exec(&good);
-        assert!(probe_codex_runnable(&good));
+        assert_eq!(
+            probe_codex_version(&good).as_deref(),
+            Some("codex-cli 0.133.0")
+        );
 
         let _ = fs::remove_dir_all(&codex_home);
     }

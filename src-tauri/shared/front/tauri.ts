@@ -337,7 +337,7 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
         }) as Promise<T>;
       case "redetect_codex_cli_path":
         return Promise.resolve({
-          candidates: ["/preview/codex"],
+          candidates: [{ path: "/preview/codex", version: "codex-cli 0.133.0" }],
           status: {
             resolved_path: "/preview/codex",
             source: "user_override",

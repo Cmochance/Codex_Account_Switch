@@ -13,15 +13,16 @@
 //! managed-shim filtering — are kept per-platform and reached through
 //! the `CodexPathResolver` trait so this shared layer is OS-agnostic.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ExitStatus};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::errors::AppResult;
-use crate::models::{CodexCliRedetectResult, CodexCliStatus};
+use crate::models::{CodexCliCandidate, CodexCliRedetectResult, CodexCliStatus};
 
 /// Persistent install metadata. Both mac and Windows used to declare
 /// this struct independently; consolidating here keeps the on-disk
@@ -83,11 +84,12 @@ pub trait CodexPathResolver {
     fn suggested_paths(&self, codex_home: &Path) -> Vec<PathBuf>;
 
     /// Force a fresh scan that ignores the cached/override path and
-    /// returns only candidates verified runnable via `codex --version`
-    /// (deduped, best-first). Backs the Settings "auto-detect" button:
-    /// `resolve_with_source` trusts a previously-saved path, so when
-    /// that path is wrong the user needs this to rescan from scratch.
-    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<PathBuf>;
+    /// returns every candidate verified runnable via `codex --version`
+    /// (deduped, best-first, with the version string captured). Backs the
+    /// Settings "auto-detect" button: `resolve_with_source` trusts a
+    /// previously-saved path, so when that path is wrong — or there are
+    /// several installs — the user needs this to rescan from scratch.
+    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<CodexCliCandidate>;
 }
 
 /// Build the snapshot the front-end consumes. Used by both
@@ -148,27 +150,46 @@ pub fn redetect_codex_cli_path(
     resolver: &dyn CodexPathResolver,
     codex_home: &Path,
 ) -> CodexCliRedetectResult {
-    let candidates = resolver
-        .redetect_runnable_paths(codex_home)
-        .into_iter()
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect();
     CodexCliRedetectResult {
-        candidates,
+        candidates: resolver.redetect_runnable_paths(codex_home),
         status: build_codex_cli_status(resolver, codex_home),
     }
 }
 
-/// Poll-wait for a child process, killing it if it outlives `timeout`.
-/// Shared by the per-platform `codex --version` runnable probes so a
-/// hung or input-waiting candidate can't wedge the re-detection scan.
-/// The platforms own `Command` construction (console hiding, Windows
-/// extension resolution); only this bounded wait is common.
-pub fn wait_child_with_timeout(mut child: Child, timeout: Duration) -> Option<ExitStatus> {
+/// Run a configured `codex --version` `command`, bounded by `timeout`,
+/// and return its trimmed first stdout line on a successful exit. This is
+/// the one-shot "is this a real, runnable codex, and which version" probe
+/// behind auto-detect: `Some(version)` means it ran and exited 0 (the
+/// string may be empty if it printed nothing parseable); `None` means it
+/// couldn't spawn, exited non-zero, errored, or overran the timeout (the
+/// child is then killed so a hung / input-waiting binary can't wedge the
+/// scan). Shared so mac + Windows reuse the poll/kill/capture logic; each
+/// platform only builds the `Command` (console hiding, extension res).
+pub fn probe_version_with_timeout(mut command: Command, timeout: Duration) -> Option<String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().ok()?;
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Some(status),
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut out = String::new();
+                if let Some(mut stdout) = child.stdout.take() {
+                    let _ = stdout.read_to_string(&mut out);
+                }
+                return Some(
+                    out.lines()
+                        .map(str::trim)
+                        .find(|line| !line.is_empty())
+                        .unwrap_or("")
+                        .to_owned(),
+                );
+            }
             Ok(None) => {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
@@ -182,7 +203,7 @@ pub fn wait_child_with_timeout(mut child: Child, timeout: Duration) -> Option<Ex
                 // error) is indistinguishable from a clean timeout to the
                 // caller — both return None — so leave a diagnostic trail
                 // instead of silently demoting the candidate.
-                eprintln!("wait_child_with_timeout: try_wait failed: {error}");
+                eprintln!("probe_version_with_timeout: try_wait failed: {error}");
                 let _ = child.kill();
                 let _ = child.wait();
                 return None;
@@ -211,9 +232,9 @@ mod tests {
         set_error: RefCell<Option<AppError>>,
         suggestions: Vec<PathBuf>,
         // What `redetect_runnable_paths` returns — the "verified
-        // runnable" subset, independent of `suggestions`. RefCell so a
-        // test can vary it (empty / multiple) per case.
-        runnable: RefCell<Vec<PathBuf>>,
+        // runnable" candidates, independent of `suggestions`. RefCell so
+        // a test can vary it (empty / multiple) per case.
+        runnable: RefCell<Vec<CodexCliCandidate>>,
         clear_calls: RefCell<u32>,
     }
 
@@ -223,7 +244,10 @@ mod tests {
                 state: RefCell::new(None),
                 set_error: RefCell::new(None),
                 suggestions: vec![PathBuf::from("/fake/suggested/codex")],
-                runnable: RefCell::new(vec![PathBuf::from("/fake/runnable/codex")]),
+                runnable: RefCell::new(vec![CodexCliCandidate {
+                    path: "/fake/runnable/codex".to_string(),
+                    version: Some("codex-cli 1.2.3".to_string()),
+                }]),
                 clear_calls: RefCell::new(0),
             }
         }
@@ -256,7 +280,7 @@ mod tests {
             self.suggestions.clone()
         }
 
-        fn redetect_runnable_paths(&self, _codex_home: &Path) -> Vec<PathBuf> {
+        fn redetect_runnable_paths(&self, _codex_home: &Path) -> Vec<CodexCliCandidate> {
             self.runnable.borrow().clone()
         }
     }
@@ -341,8 +365,14 @@ mod tests {
         let result = redetect_codex_cli_path(&resolver, &codex_home);
 
         // Candidates come straight from the resolver's runnable probe,
-        // not from the suggestion list.
-        assert_eq!(result.candidates, vec!["/fake/runnable/codex".to_string()]);
+        // not from the suggestion list — version included.
+        assert_eq!(
+            result.candidates,
+            vec![CodexCliCandidate {
+                path: "/fake/runnable/codex".to_string(),
+                version: Some("codex-cli 1.2.3".to_string()),
+            }]
+        );
         // The bundled status is rebuilt live, so the Settings row can
         // refresh from the same call.
         assert_eq!(
@@ -379,63 +409,63 @@ mod tests {
         let resolver = FakeResolver::new();
         let codex_home = PathBuf::from("/fake/home");
         *resolver.runnable.borrow_mut() = vec![
-            PathBuf::from("/fake/first/codex"),
-            PathBuf::from("/fake/second/codex"),
+            CodexCliCandidate {
+                path: "/fake/first/codex".to_string(),
+                version: Some("codex-cli 0.133.0".to_string()),
+            },
+            CodexCliCandidate {
+                path: "/fake/second/codex".to_string(),
+                version: None,
+            },
         ];
 
         let result = redetect_codex_cli_path(&resolver, &codex_home);
 
         // Order is the contract the front-end relies on (it prefills [0]).
+        let paths: Vec<&str> = result.candidates.iter().map(|c| c.path.as_str()).collect();
+        assert_eq!(paths, vec!["/fake/first/codex", "/fake/second/codex"]);
+        // Version rides along per candidate (one known, one unparsed).
         assert_eq!(
-            result.candidates,
-            vec![
-                "/fake/first/codex".to_string(),
-                "/fake/second/codex".to_string(),
-            ]
+            result.candidates[0].version.as_deref(),
+            Some("codex-cli 0.133.0")
         );
+        assert_eq!(result.candidates[1].version, None);
     }
 
     #[cfg(unix)]
     #[test]
-    fn wait_child_with_timeout_returns_status_for_fast_exit() {
-        use std::process::Command;
-
-        // Absolute path + shell builtin so a sibling test that mutates
+    fn probe_version_with_timeout_captures_version_on_success() {
+        // Absolute path + shell builtins so a sibling test that mutates
         // PATH (the mac/win `discover_*` tests do) can't make these spawns
-        // fail with NotFound. `exit N` is a builtin, so no PATH lookup.
-        let zero = Command::new("/bin/sh")
-            .args(["-c", "exit 0"])
-            .spawn()
-            .expect("spawn /bin/sh");
-        assert!(wait_child_with_timeout(zero, Duration::from_secs(5))
-            .is_some_and(|status| status.success()));
+        // fail with NotFound. `echo` / `exit` are builtins — no PATH lookup.
+        let mut ok = Command::new("/bin/sh");
+        ok.args(["-c", "echo codex-cli 9.9.9"]);
+        assert_eq!(
+            probe_version_with_timeout(ok, Duration::from_secs(5)).as_deref(),
+            Some("codex-cli 9.9.9")
+        );
 
-        // A clean non-zero exit must be observed as Some(!success), never
-        // collapsed into the timeout/error None — `probe_codex_runnable`
-        // relies on telling "ran but failed" from "didn't run".
-        let nonzero = Command::new("/bin/sh")
-            .args(["-c", "exit 3"])
-            .spawn()
-            .expect("spawn /bin/sh");
-        assert!(wait_child_with_timeout(nonzero, Duration::from_secs(5))
-            .is_some_and(|status| !status.success()));
+        // A clean non-zero exit → None (never a captured string): redetect
+        // relies on this to reject "ran but failed" candidates.
+        let mut bad = Command::new("/bin/sh");
+        bad.args(["-c", "exit 3"]);
+        assert_eq!(probe_version_with_timeout(bad, Duration::from_secs(5)), None);
     }
 
     #[cfg(unix)]
     #[test]
-    fn wait_child_with_timeout_kills_and_returns_none_on_overrun() {
-        use std::process::Command;
-
+    fn probe_version_with_timeout_kills_and_returns_none_on_overrun() {
         let start = Instant::now();
         // Absolute path (present on macOS + Ubuntu) so a PATH-mutating
         // sibling test can't break the spawn.
-        let sleeper = Command::new("/bin/sleep")
-            .arg("30")
-            .spawn()
-            .expect("spawn /bin/sleep");
+        let mut sleeper = Command::new("/bin/sleep");
+        sleeper.arg("30");
         // 200ms budget against a 30s sleep: it must be killed and reported
         // as None, and we must not actually block anywhere near 30s.
-        assert!(wait_child_with_timeout(sleeper, Duration::from_millis(200)).is_none());
+        assert_eq!(
+            probe_version_with_timeout(sleeper, Duration::from_millis(200)),
+            None
+        );
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 }

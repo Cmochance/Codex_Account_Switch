@@ -40,7 +40,7 @@ import {
   switchProfile,
   updateProfileBaseUrl,
 } from "@front-shared/tauri";
-import type { CodexCliRedetectResult, CodexCliStatus } from "@front-shared/types";
+import type { CodexCliCandidate, CodexCliRedetectResult, CodexCliStatus } from "@front-shared/types";
 import {
   applyLocale,
   elements,
@@ -679,7 +679,7 @@ function codexCliSourceLabel(source: CodexCliStatus["source"]): string {
   }
 }
 
-function renderCodexCliStatus(status: CodexCliStatus, detected?: string[]): void {
+function renderCodexCliStatus(status: CodexCliStatus, detected?: CodexCliCandidate[]): void {
   if (status.resolved_path) {
     elements.codexCliCurrentValue.textContent = status.resolved_path;
     elements.codexCliCurrentSource.textContent = ` (${codexCliSourceLabel(status.source)})`;
@@ -693,13 +693,18 @@ function renderCodexCliStatus(status: CodexCliStatus, detected?: string[]): void
   }
 
   // When auto-detect routes here with verified-runnable candidates, show
-  // those (labelled accordingly) instead of the raw common-location
-  // hints, so the user only picks from paths that actually ran.
+  // those (with versions) instead of the raw common-location hints, so
+  // the user only picks from installs that actually ran.
   const showingDetected = detected !== undefined && detected.length > 0;
-  const chips = showingDetected ? detected : status.suggested_paths;
   elements.codexCliSuggestionsHeading.textContent = showingDetected
     ? t(state.locale, "codexCliDetectedHeading")
     : t(state.locale, "codexCliSuggestionsHeading");
+
+  // Normalise both sources to { path, version } so one render loop serves
+  // detected candidates (with versions) and plain suggestion hints.
+  const chips: CodexCliCandidate[] = showingDetected
+    ? detected
+    : status.suggested_paths.map((path) => ({ path, version: null }));
 
   elements.codexCliSuggestions.replaceChildren();
   if (chips.length === 0) {
@@ -710,13 +715,15 @@ function renderCodexCliStatus(status: CodexCliStatus, detected?: string[]): void
     return;
   }
 
-  for (const path of chips) {
+  for (const candidate of chips) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "codex-cli-suggestion";
-    button.textContent = path;
+    button.textContent = candidate.version
+      ? `${candidate.path}  ·  ${candidate.version}`
+      : candidate.path;
     button.addEventListener("click", () => {
-      elements.codexCliInput.value = path;
+      elements.codexCliInput.value = candidate.path;
       elements.codexCliInput.focus();
       elements.codexCliInput.select();
       clearDialogError(elements.codexCliDialogError);
@@ -727,7 +734,7 @@ function renderCodexCliStatus(status: CodexCliStatus, detected?: string[]): void
 
 async function openCodexCliDialog(
   onSavedRetry?: () => Promise<void>,
-  detectedCandidates?: string[],
+  detectedCandidates?: CodexCliCandidate[],
 ): Promise<void> {
   pendingLoginRetry = onSavedRetry ?? null;
   clearDialogError(elements.codexCliDialogError);
@@ -747,10 +754,17 @@ async function openCodexCliDialog(
     );
   }
 
-  // Prefill the first detected candidate when auto-detect routed here
-  // with several runnable hits; otherwise fall back to the resolved path.
+  // Detected-mode opens after auto-detect found several runnable codex,
+  // so use a "pick one" copy — NOT the default "couldn't find it" copy
+  // that misled users into thinking detection had failed.
+  const hasDetected = detectedCandidates !== undefined && detectedCandidates.length > 0;
+  elements.codexCliDialogCopy.textContent = hasDetected
+    ? t(state.locale, "codexCliDetectPickCopy")
+    : t(state.locale, "codexCliDialogCopy");
+
+  // Prefill the first detected candidate; otherwise the resolved path.
   if (detectedCandidates !== undefined && detectedCandidates.length > 0) {
-    elements.codexCliInput.value = detectedCandidates[0];
+    elements.codexCliInput.value = detectedCandidates[0].path;
   } else if (status.resolved_path) {
     elements.codexCliInput.value = status.resolved_path;
   }
@@ -777,18 +791,19 @@ async function handleDetectCodexCli(): Promise<void> {
   try {
     const result: CodexCliRedetectResult = await redetectCodexCliPath();
     if (result.candidates.length === 1) {
-      // Lone runnable hit → apply it straight away. If the backend's
-      // set/validate then rejects it (managed shim, or the file vanished
-      // between probe and set), don't dump the raw error — fall back to
-      // the dialog prefilled with the candidate so the user can adjust.
+      // Lone runnable hit → apply it straight away (the small-user
+      // fallback: one click, done). If the backend's set/validate then
+      // rejects it (managed shim, or the file vanished between probe and
+      // set), don't dump the raw error — fall back to the dialog with the
+      // candidate so the user can adjust.
       const only = result.candidates[0];
       try {
-        const status = await setCodexCliPath(only);
+        const status = await setCodexCliPath(only.path);
         applyCodexCliSettingsDisplay(status);
-        showToast(t(state.locale, "codexCliDetectApplied", { path: only }));
+        showToast(t(state.locale, "codexCliDetectApplied", { path: only.path }));
       } catch {
         applyCodexCliSettingsDisplay(result.status);
-        void openCodexCliDialog(undefined, [only]);
+        void openCodexCliDialog(undefined, result.candidates);
       }
     } else if (result.candidates.length === 0) {
       // Nothing runnable. Distinguish "no codex anywhere" from "codex
