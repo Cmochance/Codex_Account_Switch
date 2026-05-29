@@ -165,30 +165,60 @@ pub fn redetect_codex_cli_path(
 /// child is then killed so a hung / input-waiting binary can't wedge the
 /// scan). Shared so mac + Windows reuse the poll/kill/capture logic; each
 /// platform only builds the `Command` (console hiding, extension res).
-pub fn probe_version_with_timeout(mut command: Command, timeout: Duration) -> Option<String> {
+pub fn probe_version_with_timeout(command: Command, timeout: Duration) -> Option<String> {
+    run_capturing_stdout_with_timeout(command, timeout).map(|stdout| {
+        stdout
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("")
+            .to_owned()
+    })
+}
+
+/// Run `command` bounded by `timeout`, draining stdout on a reader thread
+/// so a chatty child can't backpressure its own pipe and deadlock. Returns
+/// the full captured stdout on a successful (exit-0) run; `None` if it
+/// couldn't spawn, exited non-zero, errored, or overran the timeout (the
+/// child is then killed). Shared by the `codex --version` probe (caller
+/// takes the first line = version) and the login-shell resolver (caller
+/// takes the last line = path), so the poll / kill / drain logic — and the
+/// hard timeout that keeps an arbitrary user login shell from wedging the
+/// scan — lives in exactly one place.
+pub fn run_capturing_stdout_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+) -> Option<String> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let mut child = command.spawn().ok()?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            eprintln!("run_capturing_stdout_with_timeout: spawn failed: {error}");
+            return None;
+        }
+    };
+    // Drain stdout concurrently: a child that writes more than the pipe
+    // buffer (~64 KB) before exiting would otherwise block on write()
+    // forever while we poll try_wait. Joined only after exit/kill.
+    let mut reader = child.stdout.take().map(|mut stdout| {
+        thread::spawn(move || {
+            let mut buf = String::new();
+            let _ = stdout.read_to_string(&mut buf);
+            buf
+        })
+    });
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                let mut out = String::new();
-                if let Some(mut stdout) = child.stdout.take() {
-                    let _ = stdout.read_to_string(&mut out);
-                }
-                return Some(
-                    out.lines()
-                        .map(str::trim)
-                        .find(|line| !line.is_empty())
-                        .unwrap_or("")
-                        .to_owned(),
-                );
+                let stdout = reader
+                    .take()
+                    .and_then(|handle| handle.join().ok())
+                    .unwrap_or_default();
+                return status.success().then_some(stdout);
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
@@ -201,9 +231,8 @@ pub fn probe_version_with_timeout(mut command: Command, timeout: Duration) -> Op
             Err(error) => {
                 // A real try_wait failure (EINTR, ECHILD, a Windows handle
                 // error) is indistinguishable from a clean timeout to the
-                // caller — both return None — so leave a diagnostic trail
-                // instead of silently demoting the candidate.
-                eprintln!("probe_version_with_timeout: try_wait failed: {error}");
+                // caller — both return None — so leave a diagnostic trail.
+                eprintln!("run_capturing_stdout_with_timeout: try_wait failed: {error}");
                 let _ = child.kill();
                 let _ = child.wait();
                 return None;
@@ -467,5 +496,19 @@ mod tests {
             None
         );
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_capturing_does_not_deadlock_on_large_stdout() {
+        // Emit well over the ~64 KB pipe buffer before exiting. Without the
+        // reader thread the child would block on write() and we'd hit the
+        // timeout; with it, this drains and returns well under the budget.
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "yes 0123456789abcdef | head -n 20000; echo done"]);
+        let start = Instant::now();
+        let out = run_capturing_stdout_with_timeout(command, Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_secs(4));
+        assert!(out.expect("exit 0 with captured stdout").contains("done"));
     }
 }

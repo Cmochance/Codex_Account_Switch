@@ -318,6 +318,12 @@ const RUNNABLE_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// scan. Realistic machines have 1-3 candidates.
 const MAX_PROBE_CANDIDATES: usize = 12;
 
+/// Login shells source the user's full profile chain (nvm / asdf / brew
+/// shellenv / network-y rc files), which can be slower than a bare
+/// `--version`, so give the login-shell resolve a more generous budget —
+/// but still hard-bounded so a hung profile can't wedge the whole scan.
+const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// Probe whether `path` is a runnable codex CLI and capture its version.
 /// `Some(version)` (possibly empty) means it's a file that ran and exited
 /// 0; `None` means not-a-file, couldn't spawn, exited non-zero, or timed
@@ -348,17 +354,21 @@ fn probe_codex_version(path: &Path) -> Option<String> {
 /// the real binary; the result is verified to be an absolute file.
 fn discover_codex_via_login_shell(managed_shim_path: Option<&Path>) -> Option<PathBuf> {
     let shell = env::var_os("SHELL")?;
-    let output = Command::new(&shell)
-        .args(["-lc", "command -v codex"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut command = Command::new(&shell);
+    command.args(["-lc", "command -v codex"]);
+    // Bounded via the shared helper: a slow / hung login profile (nvm,
+    // asdf, network-y rc files) must NOT wedge the scan the way an
+    // unbounded `.output()` would — this runs first and synchronously.
+    let stdout = crate::shared::codex_cli_path::run_capturing_stdout_with_timeout(
+        command,
+        LOGIN_SHELL_PROBE_TIMEOUT,
+    )?;
+    // `command -v` prints the resolved path last — after any banner a noisy
+    // profile may have echoed to stdout — so take the last non-empty line.
     let resolved = stdout
         .lines()
         .map(str::trim)
+        .rev()
         .find(|value| !value.is_empty())?;
     let candidate = PathBuf::from(resolved);
     // `command -v` of a function/alias returns a bare name, not a path —
