@@ -3,6 +3,8 @@
 ## 1.5.12 - 2026-05-29
 
 - Settings → Codex CLI path gains an **Auto-detect** button next to "Change". Unlike the existing path self-check (which trusts the cached / override path), it force-rescans every common install location plus PATH and verifies each candidate is actually runnable via `codex --version`. A lone runnable hit is applied immediately; several open the dialog with the verified candidates to pick from; none falls back to the manual dialog. Targets the two cases the self-check can't: auto-detection landed on a wrong / stale path, or the user doesn't know where to point it. Backed by a new `redetect_codex_cli_path` command that runs on the blocking pool (each candidate probe spawns a child) with a per-candidate timeout so a hung binary can't wedge the scan. macOS + Windows symmetric.
+- macOS release builds are now **ad-hoc codesigned** instead of `--no-sign`. `--no-sign` left only the Rust linker's binary-level ad-hoc signature (`flags 0x20002 adhoc,linker-signed`) with no full bundle codesign, so `codesign --verify` reported "code has no resources but signature indicates they must be present" — a mismatched signature that macOS Sequoia 15+ flags as "is damaged" (no "Open anyway") once the download is quarantined. The release workflow now exports `APPLE_SIGNING_IDENTITY` (a real Developer ID when the secret is set, else ad-hoc `-`) so Tauri does a complete bundle codesign, plus a `codesign --verify --deep --strict` gate before upload. Downloads now open via the normal "unverified developer → Open anyway" flow.
+- Linux `.deb` / `.AppImage` now actually attach to the release: the asset glob is recursive (`**/*`) so it matches the `bundle/deb/` and `bundle/appimage/` subdirectories the artifact preserves (#46).
 
 ## 1.5.11 - 2026-05-16
 

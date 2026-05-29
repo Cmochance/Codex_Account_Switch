@@ -149,7 +149,40 @@ jobs:
           npm run version:set -- "${version}"
 
       - name: Build (${{ matrix.tauri_script }})
-        run: npm run ${{ matrix.tauri_script }}
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY_RAW: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          # macOS: sign the bundle so Gatekeeper doesn't reject downloads as
+          # "damaged". A completely unsigned .app (the old --no-sign) is
+          # refused outright on macOS Sequoia 15+ with NO "Open anyway" path;
+          # an ad-hoc signature (codesign --sign -) restores the open option.
+          # Use a real Developer ID when the APPLE_SIGNING_IDENTITY secret is
+          # configured, otherwise fall back to ad-hoc "-". (Mirrors the
+          # codex-app-transfer release.yml signing path.)
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            if [[ -n "$APPLE_SIGNING_IDENTITY_RAW" ]]; then
+              export APPLE_SIGNING_IDENTITY="$APPLE_SIGNING_IDENTITY_RAW"
+            else
+              export APPLE_SIGNING_IDENTITY="-"
+              echo "::notice::macOS: no APPLE_SIGNING_IDENTITY secret — using ad-hoc identity (-)"
+            fi
+          fi
+          npm run ${{ matrix.tauri_script }}
+
+      - name: Verify macOS .app is codesigned
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Fail early if the bundle came out unsigned — an unsigned .app is
+          # exactly what shows "is damaged" on Sequoia with no way to open.
+          # Mirrors codex-app-transfer release.yml's codesign sanity check.
+          app="$(find src-tauri/target dist -type d -name 'codex_switch.app' -print -quit 2>/dev/null)"
+          if [[ -z "$app" ]]; then
+            echo "::error::no codex_switch.app found to verify"; exit 1
+          fi
+          echo "verifying codesign on: $app"
+          codesign --verify --deep --strict --verbose=2 "$app"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
