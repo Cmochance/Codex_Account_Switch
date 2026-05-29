@@ -988,6 +988,14 @@ p {
   min-width: 0;
 }
 
+/* Two action buttons now share this row with the path value (auto-detect
+   + change). Drop the fixed min-width so they size to their label and
+   leave the flexible remainder to the (ellipsised) path value. */
+.settings-cli-inline .settings-action-button {
+  min-width: auto;
+  flex: none;
+}
+
 .settings-value--inline {
   flex: 1;
   min-width: 0;

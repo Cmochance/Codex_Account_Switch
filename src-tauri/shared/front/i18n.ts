@@ -242,6 +242,17 @@ const enMessages = {
   settingsCodexCli: "Codex CLI path",
   settingsCodexCliChange: "Change",
   settingsCodexCliEmpty: "Not detected",
+  settingsCodexCliDetect: "Auto-detect",
+  settingsCodexCliDetecting: "Detecting…",
+  codexCliDetectedHeading: "Detected (verified runnable)",
+  codexCliDetectApplied: "Detected and set: {path}",
+  codexCliDetectNone: "Couldn't auto-detect codex. Set the path manually below.",
+  codexCliDetectFoundButBroken:
+    "Found codex on disk, but none of them would run. Reinstall codex or set a working path below.",
+  codexCliDetectPickCopy:
+    "Found multiple runnable codex installs — pick the one to use, or set a path manually below.",
+  codexCliDetectMultiple: "Found {count} runnable codex binaries — pick one.",
+  codexCliDetectFailed: "Auto-detect failed.",
 } as const;
 
 export type MessageKey = keyof typeof enMessages;
@@ -488,6 +499,17 @@ const messages: Record<Locale, Messages> = {
     settingsCodexCli: "Codex CLI 路径",
     settingsCodexCliChange: "更改",
     settingsCodexCliEmpty: "未检测到",
+    settingsCodexCliDetect: "自动检测",
+    settingsCodexCliDetecting: "检测中…",
+    codexCliDetectedHeading: "已检测到（已验证可运行）",
+    codexCliDetectApplied: "已检测并设置：{path}",
+    codexCliDetectNone: "未能自动检测到 codex，请在下方手动设置路径。",
+    codexCliDetectFoundButBroken:
+      "找到了 codex，但都无法运行。请重装 codex 或在下方指定一个可用路径。",
+    codexCliDetectPickCopy:
+      "检测到多个可运行的 codex，选择要使用的那个；也可以在下方手动指定。",
+    codexCliDetectMultiple: "检测到 {count} 个可运行的 codex，请选择一个。",
+    codexCliDetectFailed: "自动检测失败。",
   },
 };
 

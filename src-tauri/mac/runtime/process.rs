@@ -9,6 +9,7 @@ use std::time::Duration;
 use crate::errors::{AppError, AppResult};
 use crate::platform::hooks::PlatformHooks;
 use crate::shared::codex_app_server::{fetch_account_snapshot, AppServerSnapshot};
+use crate::models::CodexCliCandidate;
 use crate::shared::codex_cli_path::CodexPathResolver;
 pub use crate::shared::codex_cli_path::{InstallState, RealCodexPathSource};
 use crate::shared::login_cancel::wait_for_login_or_cancel;
@@ -81,15 +82,14 @@ fn discover_real_codex_cli_from_shell(managed_shim_path: Option<&Path>) -> Optio
     let managed_shim_text = managed_shim_path
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let output = Command::new(&resolver_path)
-        .arg(managed_shim_text)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut command = Command::new(&resolver_path);
+    command.arg(managed_shim_text);
+    // Bounded like the other shell spawns: even this first-party resolver
+    // script sources the login environment, which can stall on a hung rc.
+    let stdout = crate::shared::codex_cli_path::run_capturing_stdout_with_timeout(
+        command,
+        LOGIN_SHELL_PROBE_TIMEOUT,
+    )?;
     let resolved = stdout
         .lines()
         .map(str::trim)
@@ -252,6 +252,10 @@ impl CodexPathResolver for MacosCodexPathResolver {
     fn suggested_paths(&self, codex_home: &Path) -> Vec<PathBuf> {
         suggested_codex_cli_paths(Some(codex_home))
     }
+
+    fn redetect_runnable_paths(&self, codex_home: &Path) -> Vec<CodexCliCandidate> {
+        redetect_runnable_codex_cli_paths(Some(codex_home))
+    }
 }
 
 /// Soft cap on how long the PATH walk can spend stat'ing entries
@@ -299,6 +303,119 @@ pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
     }
 
     suggestions
+}
+
+/// How long a single `codex --version` probe may run before we kill it
+/// and treat the candidate as unusable. Keeps a hung or input-waiting
+/// binary from wedging the auto-detect scan; a healthy codex answers
+/// well under this.
+const RUNNABLE_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Upper bound on how many candidates the auto-detect scan will probe.
+/// Each probe spawns a child (up to `RUNNABLE_PROBE_TIMEOUT`), so without
+/// a cap a pathological PATH with many `codex` entries could stall the
+/// scan. Realistic machines have 1-3 candidates.
+const MAX_PROBE_CANDIDATES: usize = 12;
+
+/// Login shells source the user's full profile chain (nvm / asdf / brew
+/// shellenv / network-y rc files), which can be slower than a bare
+/// `--version`, so give the login-shell resolve a more generous budget —
+/// but still hard-bounded so a hung profile can't wedge the whole scan.
+const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Probe whether `path` is a runnable codex CLI and capture its version.
+/// `Some(version)` (possibly empty) means it's a file that ran and exited
+/// 0; `None` means not-a-file, couldn't spawn, exited non-zero, or timed
+/// out. The failure is logged so a broken install leaves a diagnostic
+/// trail instead of looking identical to "not found".
+fn probe_codex_version(path: &Path) -> Option<String> {
+    if !path.is_file() {
+        return None;
+    }
+    let mut command = Command::new(path);
+    command.arg("--version");
+    let result =
+        crate::shared::codex_cli_path::probe_version_with_timeout(command, RUNNABLE_PROBE_TIMEOUT);
+    if result.is_none() {
+        eprintln!(
+            "codex probe: {} is not a runnable codex (spawn / non-zero exit / timeout)",
+            path.display()
+        );
+    }
+    result
+}
+
+/// Resolve codex through the user's login shell, so installs on the
+/// shell's PATH (nvm / asdf / brew / fnm / any rc-managed location) are
+/// found even when the app was launched from Finder with the narrow
+/// launchd PATH. A non-interactive login shell + `command -v` avoids
+/// loading the user's `codex` shell *function* (if any), so we resolve to
+/// the real binary; the result is verified to be an absolute file.
+fn discover_codex_via_login_shell(managed_shim_path: Option<&Path>) -> Option<PathBuf> {
+    let shell = env::var_os("SHELL")?;
+    let mut command = Command::new(&shell);
+    command.args(["-lc", "command -v codex"]);
+    // Bounded via the shared helper: a slow / hung login profile (nvm,
+    // asdf, network-y rc files) must NOT wedge the scan the way an
+    // unbounded `.output()` would — this runs first and synchronously.
+    let stdout = crate::shared::codex_cli_path::run_capturing_stdout_with_timeout(
+        command,
+        LOGIN_SHELL_PROBE_TIMEOUT,
+    )?;
+    // `command -v` prints the resolved path last — after any banner a noisy
+    // profile may have echoed to stdout — so take the last non-empty line.
+    let resolved = stdout
+        .lines()
+        .map(str::trim)
+        .rev()
+        .find(|value| !value.is_empty())?;
+    let candidate = PathBuf::from(resolved);
+    // `command -v` of a function/alias returns a bare name, not a path —
+    // require an absolute path to a real file so we never feed that back.
+    if !candidate.is_absolute() || !candidate.is_file() {
+        return None;
+    }
+    if managed_shim_path.is_some_and(|managed| managed == candidate.as_path()) {
+        return None;
+    }
+    Some(candidate)
+}
+
+/// Force a fresh scan for the Settings auto-detect button: gather every
+/// candidate the discovery + suggestion paths know about (login-shell
+/// resolution, managed-shim resolver, Codex.app bundle, fixed install
+/// locations, PATH), then keep only those that pass the runnable probe,
+/// capturing each one's version. Ignores the cached/override path so a
+/// wrong saved path can be corrected.
+pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<CodexCliCandidate> {
+    let managed_shim = codex_home.map(managed_shim_path);
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // Login-shell resolution first — catches nvm / asdf / brew / fnm
+    // installs on the user's PATH even under Finder's narrow launchd PATH.
+    if let Some(path) = discover_codex_via_login_shell(managed_shim.as_deref()) {
+        push_candidate(&mut candidates, path);
+    }
+    // The managed-shim resolver (present when codex_switch installed its
+    // shim) and the suggestion list (Codex.app bundle, fixed locations,
+    // bounded PATH walk) fill in the rest.
+    if let Some(shell_path) = discover_real_codex_cli_from_shell(managed_shim.as_deref()) {
+        push_candidate(&mut candidates, shell_path);
+    }
+    for path in suggested_codex_cli_paths(codex_home) {
+        push_candidate(&mut candidates, path);
+    }
+
+    candidates
+        .into_iter()
+        .take(MAX_PROBE_CANDIDATES)
+        .filter_map(|path| {
+            probe_codex_version(&path).map(|version| CodexCliCandidate {
+                path: path.to_string_lossy().into_owned(),
+                version: (!version.is_empty()).then_some(version),
+            })
+        })
+        .collect()
 }
 
 fn codex_app_candidates() -> Vec<PathBuf> {

@@ -28,7 +28,7 @@
 - **登录可取消**：进行中的 `codex login` OAuth 流程支持点击同一按钮取消（向子进程 SIGTERM / taskkill），解决浏览器关闭后应用卡在等待回调的场景。
 - **plan / quota 智能缓存**：bulk plan refresh 在 6 小时窗口内跳过已确认账号，per-card 刷新按钮也共享同一缓存；切换 / 登录 / 刷新后直接复用 backend 写回的 snapshot，不重复发 IPC。
 - **Custom Base URL**：每个账号可独立配置 `OPENAI_BASE_URL`；配置后按钮变红警示（自定义 Base 与 ChatGPT OAuth 账号互斥）。
-- **Codex CLI 路径自检**：自动定位 `codex` 可执行（PATH / `~/.codex/bin` / Homebrew / nvm），找不到或路径错误时设置页可手动指定，结果写入 `install_state.json` 优先生效。
+- **Codex CLI 路径自检**：自动定位 `codex` 可执行（PATH / `~/.codex/bin` / Homebrew / nvm），找不到或路径错误时设置页可手动指定，结果写入 `install_state.json` 优先生效。设置页还提供「自动检测」按钮：忽略可能出错的缓存重新扫描所有常见位置，并用 `codex --version` 验证候选确实可运行——唯一命中直接应用，多个命中时让你选。
 - **跨平台原生 Tauri**：macOS arm64 / x64 与 Windows x64 提供原生窗口、原生标题栏 / 关闭按钮，配套 5 套浅色 / 深色主题与中英文界面。
 - **本地预览模式**：没有 Tauri 运行时（直接 `vite` 跑前端）时自动使用 mock snapshot，方便单纯调样式。
 
@@ -143,7 +143,7 @@ npm run version:check             # CI 用：拒绝把 semver 字面量写回 *.
 
 ### 没有 Codex CLI 怎么办
 
-应用启动后会探测 `codex` 路径；探测失败时设置页会标红「Codex CLI 路径未找到」，可手动指定（写入 `install_state.json` 的 `user_codex_path` 优先级最高）。未装 Codex CLI 也能用 plan / quota 查看（走 ChatGPT OAuth token 直接拉 rate-limits），但「登录」按钮和切换后启动 Codex 等动作需要 CLI 存在。
+应用启动后会探测 `codex` 路径；探测失败时设置页会标红「Codex CLI 路径未找到」，可手动指定（写入 `install_state.json` 的 `user_codex_path` 优先级最高）。也可以点设置页「Codex CLI 路径」行的「自动检测」按钮强制重新扫描，并用 `codex --version` 验证候选——比启动时的自检更主动，适合自动定位出错或不清楚 `codex` 装在哪的情况。未装 Codex CLI 也能用 plan / quota 查看（走 ChatGPT OAuth token 直接拉 rate-limits），但「登录」按钮和切换后启动 Codex 等动作需要 CLI 存在。
 
 ### 切换账号会丢失原账号的 sessions / 历史吗
 

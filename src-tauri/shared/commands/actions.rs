@@ -1,8 +1,8 @@
 use crate::errors::CommandError;
 use crate::models::{
-    ActionResponse, AddProfilePayload, CodexCliStatus, OpenUrlPayload, ProfilePayload,
-    RenameProfilePayload, SetCodexCliPathPayload, UpdateCheckPayload, UpdateCheckResponse,
-    UpdateProfileBaseUrlPayload,
+    ActionResponse, AddProfilePayload, CodexCliRedetectResult, CodexCliStatus, OpenUrlPayload,
+    ProfilePayload, RenameProfilePayload, SetCodexCliPathPayload, UpdateCheckPayload,
+    UpdateCheckResponse, UpdateProfileBaseUrlPayload,
 };
 
 #[cfg(target_os = "macos")]
@@ -220,6 +220,28 @@ pub fn clear_codex_cli_path() -> Result<CodexCliStatus, CommandError> {
         platform_runtime::codex_cli_resolver(),
         &codex_home,
     ))
+}
+
+/// Force a fresh codex CLI detection scan for the Settings auto-detect
+/// button. Runs on the blocking pool because it probes each candidate
+/// with `codex --version`, which can take a second or two per path and
+/// would otherwise stall the UI thread.
+#[tauri::command]
+pub async fn redetect_codex_cli_path() -> Result<CodexCliRedetectResult, CommandError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let codex_home = platform_runtime::paths::get_codex_home();
+        crate::shared::codex_cli_path::redetect_codex_cli_path(
+            platform_runtime::codex_cli_resolver(),
+            &codex_home,
+        )
+    })
+    .await
+    .map_err(|error| {
+        CommandError::new(
+            "CODEX_CLI_REDETECT_FAILED",
+            format!("Redetect task failed: {error}"),
+        )
+    })
 }
 
 #[tauri::command]

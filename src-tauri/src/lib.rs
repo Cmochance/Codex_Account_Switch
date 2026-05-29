@@ -59,6 +59,7 @@ pub fn run() {
             commands::actions::get_codex_cli_status,
             commands::actions::set_codex_cli_path,
             commands::actions::clear_codex_cli_path,
+            commands::actions::redetect_codex_cli_path,
             commands::actions::cancel_codex_login,
             commands::switch::switch_profile,
         ])
