@@ -370,19 +370,29 @@ fn select_current_quota(
 pub fn load_profiles_snapshot(codex_home: Option<&Path>) -> AppResult<ProfilesSnapshotResponse> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
     let index = load_profiles_index(Some(&codex_home))?;
-    let current_profile = index.current_profile.as_deref();
-    let current_entry = current_profile.and_then(|profile_name| {
-        index
-            .profiles
-            .iter()
-            .find(|entry| entry.folder_name == profile_name)
-    });
 
     // Surface "the live ~/.codex account isn't saved to any card" so the
     // dashboard can prompt the user. Recomputed every snapshot so it reflects
     // reality even between launches (e.g. an external `codex login` mid-session).
     let unmanaged_live_account =
         detect_unmanaged_live_account(&get_backup_root(Some(&codex_home)), &codex_home);
+
+    // When the live account is unmanaged, the `.current_profile` marker is stale
+    // (it names a card the live account doesn't belong to). Bootstrap clears it
+    // on launch, but for mid-session drift it hasn't run yet — so suppress the
+    // current card here too, or this snapshot would both flag the live account
+    // as unmanaged AND show an old card as "current".
+    let current_profile = if unmanaged_live_account.is_some() {
+        None
+    } else {
+        index.current_profile.as_deref()
+    };
+    let current_entry = current_profile.and_then(|profile_name| {
+        index
+            .profiles
+            .iter()
+            .find(|entry| entry.folder_name == profile_name)
+    });
 
     Ok(ProfilesSnapshotResponse {
         page_size: DEFAULT_PAGE_SIZE,
@@ -407,6 +417,17 @@ pub fn load_profiles_snapshot(codex_home: Option<&Path>) -> AppResult<ProfilesSn
 pub fn load_current_live_quota(codex_home: Option<&Path>) -> AppResult<CurrentQuotaResponse> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
     let index = load_profiles_index(Some(&codex_home))?;
+
+    // Mirror load_profiles_snapshot: when the live account is unmanaged the
+    // `.current_profile` marker is stale, so report no current quota rather than
+    // the drifted-away card's numbers.
+    if detect_unmanaged_live_account(&get_backup_root(Some(&codex_home)), &codex_home).is_some() {
+        return Ok(CurrentQuotaResponse {
+            profile: None,
+            quota: None,
+        });
+    }
+
     let Some(current_profile) = index.current_profile.clone() else {
         return Ok(CurrentQuotaResponse {
             profile: None,
@@ -435,4 +456,74 @@ pub fn load_current_live_quota(codex_home: Option<&Path>) -> AppResult<CurrentQu
         profile: Some(entry.folder_name.clone()),
         quota: Some(quota),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_profiles_snapshot;
+    use crate::shared::paths::get_current_profile_file;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_codex_home(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("codex-switch-snapshot-{name}-{unique}"))
+    }
+
+    fn auth_with_account(account_id: &str) -> String {
+        format!(
+            "{{\"tokens\":{{\"account_id\":{}}}}}",
+            serde_json::Value::String(account_id.to_string())
+        )
+    }
+
+    /// codex_home with one managed card "a" (account X) marked current.
+    fn seed(name: &str) -> PathBuf {
+        let codex_home = temp_codex_home(name);
+        let profile_a = codex_home.join("account_backup").join("a");
+        fs::create_dir_all(&profile_a).unwrap();
+        fs::write(profile_a.join("auth.json"), auth_with_account("acct_X")).unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
+        codex_home
+    }
+
+    #[test]
+    fn snapshot_shows_current_card_when_live_account_matches_marker() {
+        let codex_home = seed("snapshot-managed");
+        fs::write(codex_home.join("auth.json"), auth_with_account("acct_X")).unwrap();
+
+        let snapshot = load_profiles_snapshot(Some(&codex_home)).unwrap();
+
+        assert_eq!(snapshot.unmanaged_live_account, None);
+        assert_eq!(
+            snapshot.current_card.as_ref().map(|card| card.folder_name.as_str()),
+            Some("a")
+        );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn snapshot_suppresses_current_card_when_live_account_unmanaged() {
+        let codex_home = seed("snapshot-unmanaged");
+        // Live root drifted to an account no card owns (mid-session external login).
+        fs::write(codex_home.join("auth.json"), auth_with_account("acct_Z")).unwrap();
+
+        let snapshot = load_profiles_snapshot(Some(&codex_home)).unwrap();
+
+        assert!(snapshot.unmanaged_live_account.is_some());
+        assert!(
+            snapshot.current_card.is_none(),
+            "stale current card must be suppressed when the live account is unmanaged"
+        );
+        assert!(snapshot.current_quota_card.is_none());
+        assert!(
+            snapshot.profiles.iter().all(|card| card.status != "current"),
+            "no card in the list should be flagged current"
+        );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
 }
