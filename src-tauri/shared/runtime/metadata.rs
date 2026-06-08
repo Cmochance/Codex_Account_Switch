@@ -125,6 +125,37 @@ fn load_auth_metadata_from_path(auth_path: &Path) -> Option<AuthDerivedMetadata>
     Some(metadata)
 }
 
+/// Stable account fingerprint for an on-disk `auth.json`, used to verify
+/// *which account* a file actually belongs to before the switch / bootstrap
+/// write-back copies it into a profile slot. Prefers the OAuth-stable
+/// `tokens.account_id`; falls back to the id_token / access_token `email`
+/// claim.
+///
+/// Returns `None` when no identifying field is parseable — placeholder cards
+/// (`replace-me`), apikey-mode auth (no `tokens`), or an unreadable / absent
+/// file. Callers MUST treat `None` as "identity unknown" (preserve legacy
+/// behavior) rather than as a mismatch, so apikey / placeholder profiles keep
+/// refreshing normally.
+///
+/// The result is type-prefixed (`acct:` / `email:`) so an account_id can never
+/// collide with an email that happens to share the same text.
+pub fn load_account_identity_from_path(auth_path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(auth_path).ok()?;
+    let auth = serde_json::from_str::<AuthFile>(&raw).ok()?;
+    let tokens = auth.tokens?;
+
+    if let Some(account_id) = normalized_value(tokens.account_id.clone()) {
+        return Some(format!("acct:{account_id}"));
+    }
+
+    let claims = tokens
+        .id_token
+        .as_deref()
+        .and_then(decode_token_claims)
+        .or_else(|| tokens.access_token.as_deref().and_then(decode_token_claims))?;
+    normalized_value(claims.email).map(|email| format!("email:{email}"))
+}
+
 fn load_auth_metadata(
     profile_name: &str,
     codex_home: Option<&Path>,
@@ -698,5 +729,43 @@ mod tests {
         assert_eq!(derived.plan_name, None);
         assert_eq!(derived.subscription_expires_at, None);
         assert!(!derived.has_plan_claims);
+    }
+
+    #[test]
+    fn account_identity_prefers_account_id_then_email_then_none() {
+        // account_id present → `acct:` wins even when an email is also present.
+        let dir = temp_dir("identity-account-id");
+        let id_token = synthesize_jwt(r#"{"email":"user@example.com"}"#);
+        let auth = format!(
+            "{{\"tokens\":{{\"account_id\":\"acct_123\",\"id_token\":{}}}}}",
+            serde_json::Value::String(id_token)
+        );
+        std::fs::write(dir.join("auth.json"), auth).unwrap();
+        assert_eq!(
+            load_account_identity_from_path(&dir.join("auth.json")).as_deref(),
+            Some("acct:acct_123")
+        );
+
+        // No account_id → fall back to the id_token email (`email:` prefix).
+        let dir2 = temp_dir("identity-email-fallback");
+        write_auth_with_id_token(&dir2, &synthesize_jwt(r#"{"email":"who@example.com"}"#));
+        assert_eq!(
+            load_account_identity_from_path(&dir2.join("auth.json")).as_deref(),
+            Some("email:who@example.com")
+        );
+
+        // apikey mode (no tokens) → no resolvable identity.
+        let dir3 = temp_dir("identity-apikey");
+        std::fs::write(dir3.join("auth.json"), r#"{"auth_mode":"apikey"}"#).unwrap();
+        assert_eq!(load_account_identity_from_path(&dir3.join("auth.json")), None);
+
+        // Placeholder account_id (`replace-me`) with no email → no identity.
+        let dir4 = temp_dir("identity-placeholder");
+        std::fs::write(
+            dir4.join("auth.json"),
+            r#"{"tokens":{"account_id":"replace-me"}}"#,
+        )
+        .unwrap();
+        assert_eq!(load_account_identity_from_path(&dir4.join("auth.json")), None);
     }
 }

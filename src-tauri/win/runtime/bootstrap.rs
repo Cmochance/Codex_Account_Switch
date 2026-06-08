@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::AppResult;
 
-use super::fs_ops::backup_root_state_to_profile;
 use super::paths::{get_backup_root, get_codex_home, get_refresh_runtime_dir};
 use super::profiles::resolve_current_profile;
 
@@ -19,15 +18,10 @@ const REFRESH_RUNTIME_DEFAULT_CONFIG: &str = concat!(
 );
 
 pub fn sync_root_state_to_current_profile(codex_home: Option<&Path>) -> AppResult<Option<String>> {
-    let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
-    let backup_root = get_backup_root(Some(&codex_home));
-    let Some(current_profile) = resolve_current_profile(&backup_root) else {
-        return Ok(None);
-    };
-
-    backup_root_state_to_profile(&current_profile, &codex_home, &backup_root)?;
-    super::profiles_index::load_profiles_index(Some(&codex_home))?;
-    Ok(Some(current_profile))
+    // Identity-checked write-back lives in the shared layer so macOS and
+    // Windows can't drift apart. See
+    // `switch_core::sync_root_state_to_current_profile_with_home`.
+    crate::shared::switch_core::sync_root_state_to_current_profile_with_home(codex_home)
 }
 
 pub fn ensure_backup_initialized(codex_home: Option<&Path>) -> AppResult<bool> {
