@@ -125,35 +125,65 @@ fn load_auth_metadata_from_path(auth_path: &Path) -> Option<AuthDerivedMetadata>
     Some(metadata)
 }
 
-/// Stable account fingerprint for an on-disk `auth.json`, used to verify
-/// *which account* a file actually belongs to before the switch / bootstrap
-/// write-back copies it into a profile slot. Prefers the OAuth-stable
-/// `tokens.account_id`; falls back to the id_token / access_token `email`
-/// claim.
+/// Stable account identity for an on-disk `auth.json`: the OAuth `account_id`
+/// and the id_token / access_token `email` claim, whichever are present.
 ///
-/// Returns `None` when no identifying field is parseable — placeholder cards
+/// Carries both (rather than a single fingerprint) because one account can
+/// present an email-only auth before a refresh adds `account_id` — matching on
+/// a single prefixed string would then treat the same account as a stranger.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccountIdentity {
+    pub account_id: Option<String>,
+    pub email: Option<String>,
+}
+
+impl AccountIdentity {
+    /// Two identities refer to the same OpenAI account when they share a
+    /// non-empty `account_id` OR a non-empty `email`. Each field is globally
+    /// unique to one account, so OR-matching can never merge two distinct
+    /// accounts; but it *does* keep a legacy email-only slot matching the same
+    /// account after a later refresh writes `account_id`.
+    pub fn same_account(&self, other: &AccountIdentity) -> bool {
+        if let (Some(left), Some(right)) = (&self.account_id, &other.account_id) {
+            if left == right {
+                return true;
+            }
+        }
+        if let (Some(left), Some(right)) = (&self.email, &other.email) {
+            if left.eq_ignore_ascii_case(right) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Human label for prompts: email preferred, else the account id.
+    pub fn label(&self) -> Option<String> {
+        self.email.clone().or_else(|| self.account_id.clone())
+    }
+}
+
+/// Load the account identity from an `auth.json`. Returns `None` only when
+/// neither `account_id` nor `email` is resolvable — placeholder cards
 /// (`replace-me`), apikey-mode auth (no `tokens`), or an unreadable / absent
 /// file. Callers MUST treat `None` as "identity unknown" (preserve legacy
 /// behavior) rather than as a mismatch, so apikey / placeholder profiles keep
 /// refreshing normally.
-///
-/// The result is type-prefixed (`acct:` / `email:`) so an account_id can never
-/// collide with an email that happens to share the same text.
-pub fn load_account_identity_from_path(auth_path: &Path) -> Option<String> {
+pub fn load_account_identity_from_path(auth_path: &Path) -> Option<AccountIdentity> {
     let raw = fs::read_to_string(auth_path).ok()?;
     let auth = serde_json::from_str::<AuthFile>(&raw).ok()?;
     let tokens = auth.tokens?;
 
-    if let Some(account_id) = normalized_value(tokens.account_id.clone()) {
-        return Some(format!("acct:{account_id}"));
-    }
-
-    let claims = tokens
+    let account_id = normalized_value(tokens.account_id.clone());
+    let email = tokens
         .id_token
         .as_deref()
         .and_then(decode_token_claims)
-        .or_else(|| tokens.access_token.as_deref().and_then(decode_token_claims))?;
-    normalized_value(claims.email).map(|email| format!("email:{email}"))
+        .or_else(|| tokens.access_token.as_deref().and_then(decode_token_claims))
+        .and_then(|claims| normalized_value(claims.email));
+
+    let identity = AccountIdentity { account_id, email };
+    (identity != AccountIdentity::default()).then_some(identity)
 }
 
 /// True only when `auth.json` is a genuine empty placeholder — it parses and
@@ -220,6 +250,7 @@ fn load_auth_metadata(
     load_auth_metadata_from_path(&auth_path)
 }
 
+#[allow(dead_code)]
 pub fn load_root_auth_metadata(codex_home: Option<&Path>) -> Option<AuthDerivedMetadata> {
     let auth_path = codex_home
         .map(Path::to_path_buf)
@@ -785,8 +816,8 @@ mod tests {
     }
 
     #[test]
-    fn account_identity_prefers_account_id_then_email_then_none() {
-        // account_id present → `acct:` wins even when an email is also present.
+    fn account_identity_captures_account_id_and_email() {
+        // Both account_id and the id_token email are captured.
         let dir = temp_dir("identity-account-id");
         let id_token = synthesize_jwt(r#"{"email":"user@example.com"}"#);
         let auth = format!(
@@ -794,18 +825,16 @@ mod tests {
             serde_json::Value::String(id_token)
         );
         std::fs::write(dir.join("auth.json"), auth).unwrap();
-        assert_eq!(
-            load_account_identity_from_path(&dir.join("auth.json")).as_deref(),
-            Some("acct:acct_123")
-        );
+        let id = load_account_identity_from_path(&dir.join("auth.json")).unwrap();
+        assert_eq!(id.account_id.as_deref(), Some("acct_123"));
+        assert_eq!(id.email.as_deref(), Some("user@example.com"));
 
-        // No account_id → fall back to the id_token email (`email:` prefix).
+        // No account_id → email-only identity.
         let dir2 = temp_dir("identity-email-fallback");
         write_auth_with_id_token(&dir2, &synthesize_jwt(r#"{"email":"who@example.com"}"#));
-        assert_eq!(
-            load_account_identity_from_path(&dir2.join("auth.json")).as_deref(),
-            Some("email:who@example.com")
-        );
+        let id2 = load_account_identity_from_path(&dir2.join("auth.json")).unwrap();
+        assert_eq!(id2.account_id, None);
+        assert_eq!(id2.email.as_deref(), Some("who@example.com"));
 
         // apikey mode (no tokens) → no resolvable identity.
         let dir3 = temp_dir("identity-apikey");
@@ -820,6 +849,50 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load_account_identity_from_path(&dir4.join("auth.json")), None);
+    }
+
+    #[test]
+    fn account_identity_same_account_matches_on_either_field() {
+        // Email-only identity vs. account_id+email for the same account → same.
+        let email_only = AccountIdentity {
+            account_id: None,
+            email: Some("user@example.com".to_string()),
+        };
+        let with_account_id = AccountIdentity {
+            account_id: Some("acct_1".to_string()),
+            email: Some("user@example.com".to_string()),
+        };
+        assert!(email_only.same_account(&with_account_id));
+        assert!(with_account_id.same_account(&email_only));
+
+        // Same account_id, different/absent email → still same.
+        let id_a = AccountIdentity {
+            account_id: Some("acct_1".to_string()),
+            email: None,
+        };
+        let id_b = AccountIdentity {
+            account_id: Some("acct_1".to_string()),
+            email: Some("x@y.com".to_string()),
+        };
+        assert!(id_a.same_account(&id_b));
+
+        // Different account_id and different email → distinct accounts.
+        let other = AccountIdentity {
+            account_id: Some("acct_2".to_string()),
+            email: Some("other@example.com".to_string()),
+        };
+        assert!(!with_account_id.same_account(&other));
+
+        // No shared identifiable field → cannot prove same; treat as distinct.
+        let acct_only = AccountIdentity {
+            account_id: Some("acct_3".to_string()),
+            email: None,
+        };
+        let mail_only = AccountIdentity {
+            account_id: None,
+            email: Some("z@z.com".to_string()),
+        };
+        assert!(!acct_only.same_account(&mail_only));
     }
 
     #[test]

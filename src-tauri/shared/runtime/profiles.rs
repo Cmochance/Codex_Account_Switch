@@ -3,9 +3,7 @@ use std::path::Path;
 use chrono::{DateTime, Local, NaiveDate};
 
 use super::fs_ops::read_text_stripped;
-use super::metadata::{
-    auth_is_empty_placeholder, load_account_identity_from_path, load_root_auth_metadata,
-};
+use super::metadata::{auth_is_empty_placeholder, load_account_identity_from_path, AccountIdentity};
 use super::paths::{get_current_profile_file, list_profile_dirs, ACTIVE_MARKER_FILE};
 
 pub fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
@@ -88,7 +86,7 @@ pub fn resolve_backup_target(backup_root: &Path, codex_home: &Path) -> Option<St
 
     // (2) Marker already points at the live account → keep it.
     if let Some(marked_profile) = marked.as_deref() {
-        if slot_identity(marked_profile).as_deref() == Some(root_identity.as_str()) {
+        if slot_identity(marked_profile).is_some_and(|slot| slot.same_account(&root_identity)) {
             return marked;
         }
     }
@@ -116,16 +114,15 @@ pub fn resolve_backup_target(backup_root: &Path, codex_home: &Path) -> Option<St
     None
 }
 
-/// First managed profile whose stored `auth.json` resolves to `identity`, or
-/// `None` if no profile owns that account. Identity is the type-prefixed
-/// fingerprint from `load_account_identity_from_path`.
-fn find_profile_owning_identity(backup_root: &Path, identity: &str) -> Option<String> {
+/// First managed profile whose stored `auth.json` is the *same account* as
+/// `identity` (shared account_id or email), or `None` if no profile owns it.
+fn find_profile_owning_identity(backup_root: &Path, identity: &AccountIdentity) -> Option<String> {
     for profile_dir in list_profile_dirs(backup_root) {
         let Some(name) = profile_dir.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
-        if load_account_identity_from_path(&profile_dir.join("auth.json")).as_deref()
-            == Some(identity)
+        if load_account_identity_from_path(&profile_dir.join("auth.json"))
+            .is_some_and(|slot| slot.same_account(identity))
         {
             return Some(name.to_string());
         }
@@ -135,7 +132,7 @@ fn find_profile_owning_identity(backup_root: &Path, identity: &str) -> Option<St
 
 /// Detect the "drifted to an unmanaged account" condition: the live `~/.codex`
 /// account has a resolvable identity, but no managed profile owns it. Returns a
-/// human-facing label (email when available, else the bare id) for the
+/// human-facing label (email when available, else the account id) for the
 /// dashboard prompt, or `None` when the live account is unidentifiable
 /// (apikey / placeholder / missing) or already owned by a profile.
 pub fn detect_unmanaged_live_account(backup_root: &Path, codex_home: &Path) -> Option<String> {
@@ -143,17 +140,7 @@ pub fn detect_unmanaged_live_account(backup_root: &Path, codex_home: &Path) -> O
     if find_profile_owning_identity(backup_root, &root_identity).is_some() {
         return None;
     }
-
-    let label = load_root_auth_metadata(Some(codex_home))
-        .and_then(|metadata| metadata.account_label)
-        .unwrap_or_else(|| {
-            // Strip the `acct:` / `email:` type prefix for display.
-            root_identity
-                .split_once(':')
-                .map(|(_, value)| value.to_string())
-                .unwrap_or_else(|| root_identity.clone())
-        });
-    Some(label)
+    root_identity.label()
 }
 
 #[cfg(test)]
@@ -294,6 +281,47 @@ mod tests {
             fs::read_to_string(backup_root.join("a").join("auth.json")).unwrap(),
             apikey
         );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // A legacy email-only slot must still match the same account after a later
+    // refresh adds account_id — matched via the shared email, not refused.
+    #[test]
+    fn matches_email_only_slot_against_account_id_identity() {
+        use base64::{engine::general_purpose, Engine as _};
+        let id_token = |email: &str| {
+            let payload =
+                general_purpose::URL_SAFE_NO_PAD.encode(format!("{{\"email\":\"{email}\"}}"));
+            format!("h.{payload}.s")
+        };
+        let (codex_home, backup_root) = setup("email-then-account-id");
+        // Card "a" was created from an email-only auth (no account_id).
+        write_profile(
+            &backup_root,
+            "a",
+            &format!(
+                "{{\"tokens\":{{\"id_token\":\"{}\"}}}}",
+                id_token("user@example.com")
+            ),
+        );
+        set_marker(&backup_root, "a");
+        // Live root for the same account now also carries account_id.
+        fs::write(
+            codex_home.join("auth.json"),
+            format!(
+                "{{\"tokens\":{{\"account_id\":\"acct_new\",\"id_token\":\"{}\"}}}}",
+                id_token("user@example.com")
+            ),
+        )
+        .unwrap();
+
+        // Same account (matched by email) → write back to "a", not refused…
+        assert_eq!(
+            resolve_backup_target(&backup_root, &codex_home).as_deref(),
+            Some("a")
+        );
+        // …and not flagged unmanaged.
+        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
         let _ = fs::remove_dir_all(&codex_home);
     }
 
