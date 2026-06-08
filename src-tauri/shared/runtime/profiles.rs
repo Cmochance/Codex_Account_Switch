@@ -3,7 +3,9 @@ use std::path::Path;
 use chrono::{DateTime, Local, NaiveDate};
 
 use super::fs_ops::read_text_stripped;
-use super::metadata::{load_account_identity_from_path, load_root_auth_metadata};
+use super::metadata::{
+    auth_is_empty_placeholder, load_account_identity_from_path, load_root_auth_metadata,
+};
 use super::paths::{get_current_profile_file, list_profile_dirs, ACTIVE_MARKER_FILE};
 
 pub fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
@@ -97,10 +99,14 @@ pub fn resolve_backup_target(backup_root: &Path, codex_home: &Path) -> Option<St
         return Some(owner);
     }
 
-    // (4) Marker slot is an empty placeholder and the live account belongs to
-    //     no profile yet → seat the fresh login into the marked card.
+    // (4) Marker slot is a *genuine* empty placeholder (no creds of any kind)
+    //     and the live account belongs to no profile yet → seat the fresh login
+    //     into the marked card. An API-key / malformed / unreadable slot is NOT
+    //     a placeholder (its `None` identity means "no OAuth identity", not
+    //     "empty") and must never be overwritten, or an API-key card would lose
+    //     its credentials.
     if let Some(marked_profile) = marked.as_deref() {
-        if slot_identity(marked_profile).is_none() {
+        if auth_is_empty_placeholder(&backup_root.join(marked_profile).join("auth.json")) {
             return marked;
         }
     }
@@ -266,6 +272,27 @@ mod tests {
         assert_eq!(
             resolve_backup_target(&backup_root, &codex_home).as_deref(),
             Some("a")
+        );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // (4 guard) Marker points at an API-key card (no OAuth identity, but real
+    // credentials). A drifted OAuth root must NOT be seated on top of it.
+    #[test]
+    fn does_not_seat_drifted_oauth_account_onto_apikey_marker_slot() {
+        let (codex_home, backup_root) = setup("apikey-not-seatable");
+        let apikey = r#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-real-key"}"#;
+        write_profile(&backup_root, "a", apikey);
+        set_marker(&backup_root, "a");
+        // Live root drifted to an OAuth account owned by no card.
+        fs::write(codex_home.join("auth.json"), auth_with_account("acct_OAUTH")).unwrap();
+
+        // Must refuse (case 5), not seat into the API-key card (case 4)…
+        assert_eq!(resolve_backup_target(&backup_root, &codex_home), None);
+        // …and the API-key card's credentials stay intact.
+        assert_eq!(
+            fs::read_to_string(backup_root.join("a").join("auth.json")).unwrap(),
+            apikey
         );
         let _ = fs::remove_dir_all(&codex_home);
     }

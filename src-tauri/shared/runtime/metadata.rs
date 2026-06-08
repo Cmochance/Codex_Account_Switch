@@ -156,6 +156,60 @@ pub fn load_account_identity_from_path(auth_path: &Path) -> Option<String> {
     normalized_value(claims.email).map(|email| format!("email:{email}"))
 }
 
+/// True only when `auth.json` is a genuine empty placeholder — it parses and
+/// carries no usable credentials of any kind (no OAuth tokens, no API key). The
+/// switch / bootstrap write-back uses this to decide whether a marked slot may
+/// receive a drifted login.
+///
+/// Conservative by design: a missing / unreadable / malformed file, an API-key
+/// card (`auth_mode = "apikey"` or a non-empty `OPENAI_API_KEY`), or any real
+/// OAuth auth all return `false`. This is what keeps a drifted OAuth account
+/// from being seated on top of an API-key card's real credentials — `None`
+/// identity means "no OAuth identity," which is NOT the same as "empty slot".
+pub fn auth_is_empty_placeholder(auth_path: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(auth_path) else {
+        return false;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return false;
+    };
+
+    // API-key card → real, non-OAuth credentials. Never seatable.
+    if value.get("auth_mode").and_then(serde_json::Value::as_str) == Some("apikey") {
+        return false;
+    }
+    if value
+        .get("OPENAI_API_KEY")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty())
+    {
+        return false;
+    }
+
+    // Any usable OAuth token material → real card. Placeholder seeds use the
+    // `replace-me` sentinel, which doesn't count.
+    if let Some(tokens) = value.get("tokens") {
+        let has_real_token = ["access_token", "id_token", "refresh_token", "account_id"]
+            .iter()
+            .any(|field| {
+                tokens
+                    .get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty() && !value.eq_ignore_ascii_case("replace-me"))
+            });
+        if has_real_token {
+            return false;
+        }
+    }
+
+    true
+}
+
 fn load_auth_metadata(
     profile_name: &str,
     codex_home: Option<&Path>,
@@ -766,5 +820,42 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load_account_identity_from_path(&dir4.join("auth.json")), None);
+    }
+
+    #[test]
+    fn auth_is_empty_placeholder_only_for_credential_free_slots() {
+        let dir = temp_dir("placeholder-detect");
+        let path = dir.join("auth.json");
+
+        // Genuine placeholder: `replace-me` tokens only.
+        std::fs::write(
+            &path,
+            r#"{"tokens":{"access_token":"replace-me","account_id":"replace-me"}}"#,
+        )
+        .unwrap();
+        assert!(auth_is_empty_placeholder(&path), "replace-me seed is seatable");
+
+        // Empty file → seatable.
+        std::fs::write(&path, "  \n").unwrap();
+        assert!(auth_is_empty_placeholder(&path), "empty file is seatable");
+
+        // API-key card (auth_mode) → NOT a placeholder.
+        std::fs::write(&path, r#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}"#).unwrap();
+        assert!(!auth_is_empty_placeholder(&path), "apikey card is not seatable");
+
+        // Bare OPENAI_API_KEY without auth_mode → NOT a placeholder.
+        std::fs::write(&path, r#"{"OPENAI_API_KEY":"sk-y"}"#).unwrap();
+        assert!(!auth_is_empty_placeholder(&path), "raw api key is not seatable");
+
+        // Real OAuth token material → NOT a placeholder.
+        std::fs::write(&path, r#"{"tokens":{"account_id":"acct_real"}}"#).unwrap();
+        assert!(!auth_is_empty_placeholder(&path), "real oauth is not seatable");
+
+        // Malformed JSON → conservative false (don't overwrite the unknown).
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(!auth_is_empty_placeholder(&path), "malformed is not seatable");
+
+        // Missing file → false.
+        assert!(!auth_is_empty_placeholder(&dir.join("nope.json")));
     }
 }
