@@ -5,11 +5,14 @@ use crate::models::SwitchResponse;
 use crate::platform::hooks::PlatformHooks;
 
 use super::fs_ops::{
-    autosave_auth, backup_root_state_to_profile, overlay_directory_contents, set_active_marker,
+    autosave_auth, backup_root_state_to_profile, clear_active_markers, overlay_directory_contents,
+    set_active_marker,
 };
 use super::paths::{get_backup_root, get_codex_home, validate_profile_name};
 use super::process_lock::{acquire_process_lock, ProcessLockGuard};
-use super::profiles::{resolve_backup_target, resolve_current_profile};
+use super::profiles::{
+    detect_unmanaged_live_account, resolve_backup_target, resolve_current_profile,
+};
 use super::profiles_index::load_profiles_index;
 
 fn acquire_switch_lock(codex_home: Option<&Path>) -> AppResult<ProcessLockGuard> {
@@ -97,6 +100,14 @@ pub fn sync_root_state_to_current_profile_with_home(
     let backup_root = get_backup_root(Some(&codex_home));
 
     let Some(target) = resolve_backup_target(&backup_root, &codex_home) else {
+        // No identity-verified target. If the live account is a real account
+        // that no profile owns (drift to an unmanaged account), clear the stale
+        // marker so the dashboard stops showing a wrong "current" card and
+        // surfaces the unmanaged-account prompt instead. Otherwise (no /
+        // unparseable auth) leave the markers untouched.
+        if detect_unmanaged_live_account(&backup_root, &codex_home).is_some() {
+            clear_active_markers(&backup_root)?;
+        }
         load_profiles_index(Some(&codex_home))?;
         return Ok(None);
     };
@@ -331,15 +342,17 @@ mod tests {
     }
 
     // Launch-time bootstrap: live account belongs to no managed profile. Sync
-    // must skip the write-back (no contamination) and leave the marker as-is.
+    // must skip the write-back (no contamination) AND clear the stale marker so
+    // the dashboard stops showing a wrong "current" card.
     #[test]
-    fn bootstrap_sync_skips_and_preserves_slots_when_live_account_unmanaged() {
-        let codex_home = temp_codex_home("bootstrap-skip-unmanaged");
+    fn bootstrap_sync_clears_marker_and_preserves_slots_when_live_account_unmanaged() {
+        let codex_home = temp_codex_home("bootstrap-clear-unmanaged");
         let backup_root = codex_home.join("account_backup");
         let profile_a_dir = backup_root.join("a");
         fs::create_dir_all(&profile_a_dir).unwrap();
         fs::write(profile_a_dir.join("auth.json"), auth_with_account("acct_X")).unwrap();
         fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
+        fs::write(profile_a_dir.join(".active_profile"), "x\n").unwrap();
         // Live root drifted to a brand-new, unmanaged account Z.
         fs::write(codex_home.join("auth.json"), auth_with_account("acct_Z")).unwrap();
 
@@ -351,10 +364,14 @@ mod tests {
             fs::read_to_string(profile_a_dir.join("auth.json")).unwrap(),
             auth_with_account("acct_X")
         );
-        // Marker left as-is (no managed profile to heal it to).
-        assert_eq!(
-            fs::read_to_string(get_current_profile_file(Some(&codex_home))).unwrap(),
-            "a\n"
+        // Stale marker cleared (no managed profile owns the live account).
+        assert!(
+            !get_current_profile_file(Some(&codex_home)).exists(),
+            ".current_profile must be cleared on unmanaged drift"
+        );
+        assert!(
+            !profile_a_dir.join(".active_profile").exists(),
+            ".active_profile markers must be cleared on unmanaged drift"
         );
 
         let _ = fs::remove_dir_all(&codex_home);

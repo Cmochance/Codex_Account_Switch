@@ -199,6 +199,23 @@ async function refreshActiveQuotaSilently(): Promise<void> {
   }
 }
 
+// Tracks the last unmanaged account we prompted about so a single drift event
+// shows the toast once, not on every dashboard refresh. Resets to null when the
+// live account is managed again, so a later drift re-prompts.
+let lastUnmanagedAccountPrompt: string | null = null;
+
+function maybePromptUnmanagedAccount(account: string | null): void {
+  if (!account) {
+    lastUnmanagedAccountPrompt = null;
+    return;
+  }
+  if (account === lastUnmanagedAccountPrompt) {
+    return;
+  }
+  lastUnmanagedAccountPrompt = account;
+  showToast(t(state.locale, "unmanagedAccountToast", { account }), true);
+}
+
 async function refreshAllData(showError = true): Promise<void> {
   try {
     const [snapshot, currentQuota] = await Promise.all([
@@ -209,6 +226,7 @@ async function refreshAllData(showError = true): Promise<void> {
     applySnapshot(snapshot);
     applyCurrentQuota(currentQuota);
     rerenderDashboard();
+    maybePromptUnmanagedAccount(snapshot.unmanaged_live_account);
   } catch (error) {
     if (showError) {
       showToast(error instanceof Error ? error.message : "Failed to load dashboard.", true);

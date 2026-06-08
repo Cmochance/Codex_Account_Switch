@@ -233,6 +233,8 @@ const enMessages = {
   codexCliPathSaveFailed: "Failed to save codex CLI path.",
   codexCliNotFoundToast:
     "Codex CLI not found. Pick the binary location to continue.",
+  unmanagedAccountToast:
+    "The account currently signed in ({account}) isn't saved to any card. Switch to a card, or add it as a new one.",
   codexCliRetryLogin: "Save & retry login",
   profileLoginCancelHint: "Login in progress — click to cancel",
   profileLoginCancelAria: "Cancel login for {profile}",
@@ -490,6 +492,8 @@ const messages: Record<Locale, Messages> = {
     codexCliPathRejected: "这个路径是 Codex Switch 自身的 shim，请选择真正的 codex 二进制。",
     codexCliPathSaveFailed: "保存 Codex CLI 路径失败。",
     codexCliNotFoundToast: "找不到 codex CLI，请先指定它的位置。",
+    unmanagedAccountToast:
+      "当前登录的账号（{account}）不在任何卡片中。请切换到某张卡片，或将它新建为一张卡片。",
     codexCliRetryLogin: "保存并重试登录",
     profileLoginCancelHint: "登录进行中，点击取消",
     profileLoginCancelAria: "取消 {profile} 的登录",

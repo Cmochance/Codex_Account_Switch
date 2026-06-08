@@ -15,7 +15,8 @@ use super::paths::{
     DEFAULT_PAGE_SIZE,
 };
 use super::profiles::{
-    build_display_title, compute_subscription_days_left, resolve_current_profile,
+    build_display_title, compute_subscription_days_left, detect_unmanaged_live_account,
+    resolve_current_profile,
 };
 use super::session_usage::{load_latest_local_quota_snapshot, normalize_quota_summary};
 
@@ -377,6 +378,12 @@ pub fn load_profiles_snapshot(codex_home: Option<&Path>) -> AppResult<ProfilesSn
             .find(|entry| entry.folder_name == profile_name)
     });
 
+    // Surface "the live ~/.codex account isn't saved to any card" so the
+    // dashboard can prompt the user. Recomputed every snapshot so it reflects
+    // reality even between launches (e.g. an external `codex login` mid-session).
+    let unmanaged_live_account =
+        detect_unmanaged_live_account(&get_backup_root(Some(&codex_home)), &codex_home);
+
     Ok(ProfilesSnapshotResponse {
         page_size: DEFAULT_PAGE_SIZE,
         profiles: index
@@ -392,6 +399,7 @@ pub fn load_profiles_snapshot(codex_home: Option<&Path>) -> AppResult<ProfilesSn
                 entry.has_account_identity,
             )
         }),
+        unmanaged_live_account,
     })
 }
 

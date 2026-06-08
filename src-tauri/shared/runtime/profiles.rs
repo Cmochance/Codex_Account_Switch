@@ -3,7 +3,7 @@ use std::path::Path;
 use chrono::{DateTime, Local, NaiveDate};
 
 use super::fs_ops::read_text_stripped;
-use super::metadata::load_account_identity_from_path;
+use super::metadata::{load_account_identity_from_path, load_root_auth_metadata};
 use super::paths::{get_current_profile_file, list_profile_dirs, ACTIVE_MARKER_FILE};
 
 pub fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
@@ -93,13 +93,8 @@ pub fn resolve_backup_target(backup_root: &Path, codex_home: &Path) -> Option<St
 
     // (3) Live account drifted to a different *managed* profile → route there.
     //     The marker wins ties (handled by the early return in (2)).
-    for profile_dir in list_profile_dirs(backup_root) {
-        let Some(name) = profile_dir.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        if slot_identity(name).as_deref() == Some(root_identity.as_str()) {
-            return Some(name.to_string());
-        }
+    if let Some(owner) = find_profile_owning_identity(backup_root, &root_identity) {
+        return Some(owner);
     }
 
     // (4) Marker slot is an empty placeholder and the live account belongs to
@@ -115,9 +110,49 @@ pub fn resolve_backup_target(backup_root: &Path, codex_home: &Path) -> Option<St
     None
 }
 
+/// First managed profile whose stored `auth.json` resolves to `identity`, or
+/// `None` if no profile owns that account. Identity is the type-prefixed
+/// fingerprint from `load_account_identity_from_path`.
+fn find_profile_owning_identity(backup_root: &Path, identity: &str) -> Option<String> {
+    for profile_dir in list_profile_dirs(backup_root) {
+        let Some(name) = profile_dir.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if load_account_identity_from_path(&profile_dir.join("auth.json")).as_deref()
+            == Some(identity)
+        {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Detect the "drifted to an unmanaged account" condition: the live `~/.codex`
+/// account has a resolvable identity, but no managed profile owns it. Returns a
+/// human-facing label (email when available, else the bare id) for the
+/// dashboard prompt, or `None` when the live account is unidentifiable
+/// (apikey / placeholder / missing) or already owned by a profile.
+pub fn detect_unmanaged_live_account(backup_root: &Path, codex_home: &Path) -> Option<String> {
+    let root_identity = load_account_identity_from_path(&codex_home.join("auth.json"))?;
+    if find_profile_owning_identity(backup_root, &root_identity).is_some() {
+        return None;
+    }
+
+    let label = load_root_auth_metadata(Some(codex_home))
+        .and_then(|metadata| metadata.account_label)
+        .unwrap_or_else(|| {
+            // Strip the `acct:` / `email:` type prefix for display.
+            root_identity
+                .split_once(':')
+                .map(|(_, value)| value.to_string())
+                .unwrap_or_else(|| root_identity.clone())
+        });
+    Some(label)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve_backup_target;
+    use super::{detect_unmanaged_live_account, resolve_backup_target};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -232,6 +267,43 @@ mod tests {
             resolve_backup_target(&backup_root, &codex_home).as_deref(),
             Some("a")
         );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // detect_unmanaged_live_account: live account owned by no profile → Some(label).
+    #[test]
+    fn detect_flags_unmanaged_live_account_with_label() {
+        let (codex_home, backup_root) = setup("detect-unmanaged");
+        write_profile(&backup_root, "a", &auth_with_account("acct_X"));
+        fs::write(codex_home.join("auth.json"), auth_with_account("acct_Z")).unwrap();
+
+        assert_eq!(
+            detect_unmanaged_live_account(&backup_root, &codex_home).as_deref(),
+            Some("acct_Z"),
+            "an identified live account owned by no profile must be flagged"
+        );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // detect_unmanaged_live_account: live account owned by a profile → None.
+    #[test]
+    fn detect_returns_none_when_live_account_is_managed() {
+        let (codex_home, backup_root) = setup("detect-managed");
+        write_profile(&backup_root, "a", &auth_with_account("acct_X"));
+        fs::write(codex_home.join("auth.json"), auth_with_account("acct_X")).unwrap();
+
+        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // detect_unmanaged_live_account: unidentifiable live auth (apikey) → None.
+    #[test]
+    fn detect_returns_none_when_live_account_unidentifiable() {
+        let (codex_home, backup_root) = setup("detect-apikey");
+        write_profile(&backup_root, "a", &auth_with_account("acct_X"));
+        fs::write(codex_home.join("auth.json"), r#"{"auth_mode":"apikey"}"#).unwrap();
+
+        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
         let _ = fs::remove_dir_all(&codex_home);
     }
 }
