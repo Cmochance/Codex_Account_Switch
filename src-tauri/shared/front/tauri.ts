@@ -150,6 +150,7 @@ let previewSnapshot: ProfilesSnapshotResponse = {
   profiles: clone(previewProfiles),
   current_card: clone(previewCurrentCard),
   current_quota_card: clone(previewCurrentQuota),
+  unmanaged_live_account: null,
 };
 
 function mockAction(message: string, path: string | null = null): Promise<ActionResponse> {
@@ -166,6 +167,7 @@ function refreshPreviewSnapshot(): void {
     profiles: clone(previewSnapshot.profiles),
     current_card: clone(previewCurrentCard),
     current_quota_card: clone(previewCurrentQuota),
+    unmanaged_live_account: null,
   };
 }
 

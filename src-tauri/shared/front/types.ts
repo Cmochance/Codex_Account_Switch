@@ -55,6 +55,9 @@ export interface ProfilesSnapshotResponse {
   profiles: ProfileCard[];
   current_card: CurrentCard | null;
   current_quota_card: QuotaSummary | null;
+  /** Label of the live `~/.codex` account when it belongs to no saved card
+   *  (drift to an unmanaged account); `null` in the normal case. */
+  unmanaged_live_account: string | null;
 }
 
 export interface CurrentQuotaResponse {

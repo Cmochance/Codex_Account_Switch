@@ -131,6 +131,10 @@ pub struct ProfilesSnapshotResponse {
     pub profiles: Vec<ProfileCard>,
     pub current_card: Option<CurrentCard>,
     pub current_quota_card: Option<QuotaSummary>,
+    /// Set when the live `~/.codex` account has a resolvable identity that no
+    /// managed profile owns (drift to an unmanaged account) — carries a label
+    /// for the dashboard prompt. `None` in the normal case.
+    pub unmanaged_live_account: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

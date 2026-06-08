@@ -239,3 +239,15 @@ pub fn set_active_marker(profile: &str, backup_root: &Path) -> AppResult<()> {
         )
     })
 }
+
+/// Clear every active-profile marker and the `.current_profile` pointer,
+/// leaving no profile flagged as current. Used when the live `~/.codex`
+/// account has drifted to an account no managed profile owns: keeping a stale
+/// marker would make the dashboard show a wrong "current" card, so we drop the
+/// pointer entirely and let the UI surface the unmanaged-account prompt.
+pub fn clear_active_markers(backup_root: &Path) -> AppResult<()> {
+    for profile_dir in list_profile_dirs(backup_root) {
+        remove_path(&profile_dir.join(ACTIVE_MARKER_FILE))?;
+    }
+    remove_path(&get_current_profile_file(backup_root.parent()))
+}

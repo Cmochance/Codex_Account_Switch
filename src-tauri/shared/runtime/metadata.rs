@@ -125,6 +125,121 @@ fn load_auth_metadata_from_path(auth_path: &Path) -> Option<AuthDerivedMetadata>
     Some(metadata)
 }
 
+/// Stable account identity for an on-disk `auth.json`: the OAuth `account_id`
+/// and the id_token / access_token `email` claim, whichever are present.
+///
+/// Carries both (rather than a single fingerprint) because one account can
+/// present an email-only auth before a refresh adds `account_id` — matching on
+/// a single prefixed string would then treat the same account as a stranger.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccountIdentity {
+    pub account_id: Option<String>,
+    pub email: Option<String>,
+}
+
+impl AccountIdentity {
+    /// Two identities refer to the same OpenAI account when they share a
+    /// non-empty `account_id` OR a non-empty `email`. Each field is globally
+    /// unique to one account, so OR-matching can never merge two distinct
+    /// accounts; but it *does* keep a legacy email-only slot matching the same
+    /// account after a later refresh writes `account_id`.
+    pub fn same_account(&self, other: &AccountIdentity) -> bool {
+        if let (Some(left), Some(right)) = (&self.account_id, &other.account_id) {
+            if left == right {
+                return true;
+            }
+        }
+        if let (Some(left), Some(right)) = (&self.email, &other.email) {
+            if left.eq_ignore_ascii_case(right) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Human label for prompts: email preferred, else the account id.
+    pub fn label(&self) -> Option<String> {
+        self.email.clone().or_else(|| self.account_id.clone())
+    }
+}
+
+/// Load the account identity from an `auth.json`. Returns `None` only when
+/// neither `account_id` nor `email` is resolvable — placeholder cards
+/// (`replace-me`), apikey-mode auth (no `tokens`), or an unreadable / absent
+/// file. Callers MUST treat `None` as "identity unknown" (preserve legacy
+/// behavior) rather than as a mismatch, so apikey / placeholder profiles keep
+/// refreshing normally.
+pub fn load_account_identity_from_path(auth_path: &Path) -> Option<AccountIdentity> {
+    let raw = fs::read_to_string(auth_path).ok()?;
+    let auth = serde_json::from_str::<AuthFile>(&raw).ok()?;
+    let tokens = auth.tokens?;
+
+    let account_id = normalized_value(tokens.account_id.clone());
+    let email = tokens
+        .id_token
+        .as_deref()
+        .and_then(decode_token_claims)
+        .or_else(|| tokens.access_token.as_deref().and_then(decode_token_claims))
+        .and_then(|claims| normalized_value(claims.email));
+
+    let identity = AccountIdentity { account_id, email };
+    (identity != AccountIdentity::default()).then_some(identity)
+}
+
+/// True only when `auth.json` is a genuine empty placeholder — it parses and
+/// carries no usable credentials of any kind (no OAuth tokens, no API key). The
+/// switch / bootstrap write-back uses this to decide whether a marked slot may
+/// receive a drifted login.
+///
+/// Conservative by design: a missing / unreadable / malformed file, an API-key
+/// card (`auth_mode = "apikey"` or a non-empty `OPENAI_API_KEY`), or any real
+/// OAuth auth all return `false`. This is what keeps a drifted OAuth account
+/// from being seated on top of an API-key card's real credentials — `None`
+/// identity means "no OAuth identity," which is NOT the same as "empty slot".
+pub fn auth_is_empty_placeholder(auth_path: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(auth_path) else {
+        return false;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return false;
+    };
+
+    // API-key card → real, non-OAuth credentials. Never seatable.
+    if value.get("auth_mode").and_then(serde_json::Value::as_str) == Some("apikey") {
+        return false;
+    }
+    if value
+        .get("OPENAI_API_KEY")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty())
+    {
+        return false;
+    }
+
+    // Any usable OAuth token material → real card. Placeholder seeds use the
+    // `replace-me` sentinel, which doesn't count.
+    if let Some(tokens) = value.get("tokens") {
+        let has_real_token = ["access_token", "id_token", "refresh_token", "account_id"]
+            .iter()
+            .any(|field| {
+                tokens
+                    .get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty() && !value.eq_ignore_ascii_case("replace-me"))
+            });
+        if has_real_token {
+            return false;
+        }
+    }
+
+    true
+}
+
 fn load_auth_metadata(
     profile_name: &str,
     codex_home: Option<&Path>,
@@ -698,5 +813,122 @@ mod tests {
         assert_eq!(derived.plan_name, None);
         assert_eq!(derived.subscription_expires_at, None);
         assert!(!derived.has_plan_claims);
+    }
+
+    #[test]
+    fn account_identity_captures_account_id_and_email() {
+        // Both account_id and the id_token email are captured.
+        let dir = temp_dir("identity-account-id");
+        let id_token = synthesize_jwt(r#"{"email":"user@example.com"}"#);
+        let auth = format!(
+            "{{\"tokens\":{{\"account_id\":\"acct_123\",\"id_token\":{}}}}}",
+            serde_json::Value::String(id_token)
+        );
+        std::fs::write(dir.join("auth.json"), auth).unwrap();
+        let id = load_account_identity_from_path(&dir.join("auth.json")).unwrap();
+        assert_eq!(id.account_id.as_deref(), Some("acct_123"));
+        assert_eq!(id.email.as_deref(), Some("user@example.com"));
+
+        // No account_id → email-only identity.
+        let dir2 = temp_dir("identity-email-fallback");
+        write_auth_with_id_token(&dir2, &synthesize_jwt(r#"{"email":"who@example.com"}"#));
+        let id2 = load_account_identity_from_path(&dir2.join("auth.json")).unwrap();
+        assert_eq!(id2.account_id, None);
+        assert_eq!(id2.email.as_deref(), Some("who@example.com"));
+
+        // apikey mode (no tokens) → no resolvable identity.
+        let dir3 = temp_dir("identity-apikey");
+        std::fs::write(dir3.join("auth.json"), r#"{"auth_mode":"apikey"}"#).unwrap();
+        assert_eq!(load_account_identity_from_path(&dir3.join("auth.json")), None);
+
+        // Placeholder account_id (`replace-me`) with no email → no identity.
+        let dir4 = temp_dir("identity-placeholder");
+        std::fs::write(
+            dir4.join("auth.json"),
+            r#"{"tokens":{"account_id":"replace-me"}}"#,
+        )
+        .unwrap();
+        assert_eq!(load_account_identity_from_path(&dir4.join("auth.json")), None);
+    }
+
+    #[test]
+    fn account_identity_same_account_matches_on_either_field() {
+        // Email-only identity vs. account_id+email for the same account → same.
+        let email_only = AccountIdentity {
+            account_id: None,
+            email: Some("user@example.com".to_string()),
+        };
+        let with_account_id = AccountIdentity {
+            account_id: Some("acct_1".to_string()),
+            email: Some("user@example.com".to_string()),
+        };
+        assert!(email_only.same_account(&with_account_id));
+        assert!(with_account_id.same_account(&email_only));
+
+        // Same account_id, different/absent email → still same.
+        let id_a = AccountIdentity {
+            account_id: Some("acct_1".to_string()),
+            email: None,
+        };
+        let id_b = AccountIdentity {
+            account_id: Some("acct_1".to_string()),
+            email: Some("x@y.com".to_string()),
+        };
+        assert!(id_a.same_account(&id_b));
+
+        // Different account_id and different email → distinct accounts.
+        let other = AccountIdentity {
+            account_id: Some("acct_2".to_string()),
+            email: Some("other@example.com".to_string()),
+        };
+        assert!(!with_account_id.same_account(&other));
+
+        // No shared identifiable field → cannot prove same; treat as distinct.
+        let acct_only = AccountIdentity {
+            account_id: Some("acct_3".to_string()),
+            email: None,
+        };
+        let mail_only = AccountIdentity {
+            account_id: None,
+            email: Some("z@z.com".to_string()),
+        };
+        assert!(!acct_only.same_account(&mail_only));
+    }
+
+    #[test]
+    fn auth_is_empty_placeholder_only_for_credential_free_slots() {
+        let dir = temp_dir("placeholder-detect");
+        let path = dir.join("auth.json");
+
+        // Genuine placeholder: `replace-me` tokens only.
+        std::fs::write(
+            &path,
+            r#"{"tokens":{"access_token":"replace-me","account_id":"replace-me"}}"#,
+        )
+        .unwrap();
+        assert!(auth_is_empty_placeholder(&path), "replace-me seed is seatable");
+
+        // Empty file → seatable.
+        std::fs::write(&path, "  \n").unwrap();
+        assert!(auth_is_empty_placeholder(&path), "empty file is seatable");
+
+        // API-key card (auth_mode) → NOT a placeholder.
+        std::fs::write(&path, r#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}"#).unwrap();
+        assert!(!auth_is_empty_placeholder(&path), "apikey card is not seatable");
+
+        // Bare OPENAI_API_KEY without auth_mode → NOT a placeholder.
+        std::fs::write(&path, r#"{"OPENAI_API_KEY":"sk-y"}"#).unwrap();
+        assert!(!auth_is_empty_placeholder(&path), "raw api key is not seatable");
+
+        // Real OAuth token material → NOT a placeholder.
+        std::fs::write(&path, r#"{"tokens":{"account_id":"acct_real"}}"#).unwrap();
+        assert!(!auth_is_empty_placeholder(&path), "real oauth is not seatable");
+
+        // Malformed JSON → conservative false (don't overwrite the unknown).
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(!auth_is_empty_placeholder(&path), "malformed is not seatable");
+
+        // Missing file → false.
+        assert!(!auth_is_empty_placeholder(&dir.join("nope.json")));
     }
 }
