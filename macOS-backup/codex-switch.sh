@@ -6,8 +6,22 @@ BACKUP_ROOT="$CODHOME/account_backup"
 AUTO_SAVE_ROOT="$BACKUP_ROOT/_autosave"
 CURRENT_PROFILE_FILE="$BACKUP_ROOT/.current_profile"
 ACTIVE_MARKER_FILE=".active_profile"
-APP_NAME="Codex"
-APP_PATH="/Applications/Codex.app"
+# OpenAI folded Codex into ChatGPT.app (bundle id still com.openai.codex).
+# Keep the legacy Codex.app path as a fallback for older installs.
+APP_BUNDLE_ID="com.openai.codex"
+APP_NAME_CHATGPT="ChatGPT"
+APP_NAME_CODEX="Codex"
+if [[ -d "/Applications/ChatGPT.app" ]]; then
+  APP_PATH="/Applications/ChatGPT.app"
+elif [[ -d "$HOME/Applications/ChatGPT.app" ]]; then
+  APP_PATH="$HOME/Applications/ChatGPT.app"
+elif [[ -d "/Applications/Codex.app" ]]; then
+  APP_PATH="/Applications/Codex.app"
+elif [[ -d "$HOME/Applications/Codex.app" ]]; then
+  APP_PATH="$HOME/Applications/Codex.app"
+else
+  APP_PATH=""
+fi
 
 usage() {
   cat <<'USAGE'
@@ -107,7 +121,14 @@ set_active_marker() {
 }
 
 is_codex_app_running() {
-  pgrep -x "$APP_NAME" >/dev/null 2>&1
+  # Bundle-id check is rename-proof; process-name fallback covers both the
+  # current ChatGPT host and legacy Codex.app installs.
+  if osascript -e "application id \"$APP_BUNDLE_ID\" is running" 2>/dev/null | grep -qi '^true$'; then
+    return 0
+  fi
+  pgrep -x "$APP_NAME_CHATGPT" >/dev/null 2>&1 && return 0
+  pgrep -x "$APP_NAME_CODEX" >/dev/null 2>&1 && return 0
+  return 1
 }
 
 quit_codex_app_if_running() {
@@ -117,8 +138,11 @@ quit_codex_app_if_running() {
     return 1
   fi
 
-  # Use process signals to avoid the app's interactive quit confirmation.
-  pkill -TERM -x "$APP_NAME" >/dev/null 2>&1 || true
+  # Prefer AppleScript quit so the Electron host can flush state; also TERM
+  # both known process names so a stuck renderer still dies before KILL.
+  osascript -e "tell application id \"$APP_BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+  pkill -TERM -x "$APP_NAME_CHATGPT" >/dev/null 2>&1 || true
+  pkill -TERM -x "$APP_NAME_CODEX" >/dev/null 2>&1 || true
 
   for attempt in $(seq 1 20); do
     if ! is_codex_app_running; then
@@ -127,7 +151,8 @@ quit_codex_app_if_running() {
     sleep 0.2
   done
 
-  pkill -KILL -x "$APP_NAME" >/dev/null 2>&1 || true
+  pkill -KILL -x "$APP_NAME_CHATGPT" >/dev/null 2>&1 || true
+  pkill -KILL -x "$APP_NAME_CODEX" >/dev/null 2>&1 || true
 
   for attempt in $(seq 1 10); do
     if ! is_codex_app_running; then
@@ -136,7 +161,7 @@ quit_codex_app_if_running() {
     sleep 0.2
   done
 
-  echo "Error: $APP_NAME did not exit cleanly. Close it manually and retry." >&2
+  echo "Error: Codex/ChatGPT did not exit cleanly. Close it manually and retry." >&2
   exit 1
 }
 
@@ -144,7 +169,10 @@ reopen_codex_app_if_needed() {
   local app_was_running="$1"
 
   if [[ "$app_was_running" -eq 1 ]]; then
-    open -a "$APP_PATH" >/dev/null 2>&1 || open -a "$APP_NAME" >/dev/null 2>&1
+    if [[ -n "$APP_PATH" ]]; then
+      open -a "$APP_PATH" >/dev/null 2>&1 && return 0
+    fi
+    open -b "$APP_BUNDLE_ID" >/dev/null 2>&1 || open -a "$APP_NAME_CODEX" >/dev/null 2>&1 || open -a "$APP_NAME_CHATGPT" >/dev/null 2>&1
   fi
 }
 

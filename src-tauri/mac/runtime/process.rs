@@ -16,7 +16,24 @@ use crate::shared::login_cancel::wait_for_login_or_cancel;
 
 use super::cli_shim::{get_install_state_file, managed_shim_path, real_codex_resolver_path};
 
-const APP_NAME: &str = "Codex";
+/// Historical standalone app name. Still works as a LaunchServices
+/// alternate name for the merged ChatGPT desktop bundle, and remains a
+/// process-name fallback for older installs that still ship as `Codex.app`.
+const APP_NAME_CODEX: &str = "Codex";
+/// Post-merge desktop host process name. OpenAI folded Codex into the
+/// ChatGPT macOS app (bundle display name `ChatGPT`, executable
+/// `ChatGPT`); exact-name `pgrep -x Codex` no longer sees the running UI.
+const APP_NAME_CHATGPT: &str = "ChatGPT";
+/// Stable bundle id shared by the old Codex.app and the current ChatGPT
+/// host (`CFBundleIdentifier = com.openai.codex`). Prefer this over the
+/// display name for open / activate / quit / is-running checks so a
+/// future rename of the dock label does not break switch lifecycle.
+const APP_BUNDLE_ID: &str = "com.openai.codex";
+/// App bundle basenames that may host the real `codex` CLI under
+/// `Contents/Resources/codex`. Order is preference for discovery: the
+/// current ChatGPT host first, then the legacy standalone Codex.app so
+/// older machines keep working until they upgrade.
+const APP_BUNDLE_NAMES: [&str; 2] = ["ChatGPT.app", "Codex.app"];
 static MACOS_PLATFORM_HOOKS: MacosPlatformHooks = MacosPlatformHooks;
 static MACOS_APP_PATH_CACHE: OnceLock<Option<String>> = OnceLock::new();
 
@@ -261,10 +278,11 @@ impl CodexPathResolver for MacosCodexPathResolver {
 /// Soft cap on how long the PATH walk can spend stat'ing entries
 /// before we bail and return what we have. Each `is_file` probe blocks
 /// the Tauri command thread; an NFS / SMB entry on PATH can stall for
-/// seconds. Fixed locations (Codex.app bundle, Homebrew, /usr/local,
-/// npm-global / bun / volta) are checked first because they're
-/// guaranteed-fast local stats — by the time we hit the bounded PATH
-/// walk we've usually already collected the realistic candidates.
+/// seconds. Fixed locations (ChatGPT.app / Codex.app bundle, Homebrew,
+/// /usr/local, npm-global / bun / volta) are checked first because
+/// they're guaranteed-fast local stats — by the time we hit the
+/// bounded PATH walk we've usually already collected the realistic
+/// candidates.
 const PATH_PROBE_DEADLINE: Duration = Duration::from_millis(500);
 
 pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
@@ -383,10 +401,10 @@ fn discover_codex_via_login_shell(managed_shim_path: Option<&Path>) -> Option<Pa
 
 /// Force a fresh scan for the Settings auto-detect button: gather every
 /// candidate the discovery + suggestion paths know about (login-shell
-/// resolution, managed-shim resolver, Codex.app bundle, fixed install
-/// locations, PATH), then keep only those that pass the runnable probe,
-/// capturing each one's version. Ignores the cached/override path so a
-/// wrong saved path can be corrected.
+/// resolution, managed-shim resolver, ChatGPT.app / Codex.app bundle,
+/// fixed install locations, PATH), then keep only those that pass the
+/// runnable probe, capturing each one's version. Ignores the
+/// cached/override path so a wrong saved path can be corrected.
 pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<CodexCliCandidate> {
     let managed_shim = codex_home.map(managed_shim_path);
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -397,8 +415,8 @@ pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<Codex
         push_candidate(&mut candidates, path);
     }
     // The managed-shim resolver (present when codex_switch installed its
-    // shim) and the suggestion list (Codex.app bundle, fixed locations,
-    // bounded PATH walk) fill in the rest.
+    // shim) and the suggestion list (ChatGPT.app / Codex.app bundle,
+    // fixed locations, bounded PATH walk) fill in the rest.
     if let Some(shell_path) = discover_real_codex_cli_from_shell(managed_shim.as_deref()) {
         push_candidate(&mut candidates, shell_path);
     }
@@ -419,9 +437,15 @@ pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<Codex
 }
 
 fn codex_app_candidates() -> Vec<PathBuf> {
-    let mut candidates = vec![PathBuf::from("/Applications/Codex.app")];
+    let mut candidates = Vec::with_capacity(APP_BUNDLE_NAMES.len() * 2);
+    for bundle_name in APP_BUNDLE_NAMES {
+        candidates.push(PathBuf::from("/Applications").join(bundle_name));
+    }
     if let Some(home) = env::var_os("HOME") {
-        candidates.push(PathBuf::from(home).join("Applications").join("Codex.app"));
+        let home_apps = PathBuf::from(home).join("Applications");
+        for bundle_name in APP_BUNDLE_NAMES {
+            candidates.push(home_apps.join(bundle_name));
+        }
     }
     candidates
 }
@@ -437,16 +461,62 @@ fn resolve_codex_app_path() -> Option<String> {
         .clone()
 }
 
+/// Process names that may own the Codex desktop UI after the ChatGPT
+/// merge. Prefer the current host first so force-kill hits the live
+/// process name on modern installs; keep the legacy name for older
+/// `Codex.app` builds still in the wild.
+fn desktop_app_process_names() -> &'static [&'static str] {
+    &[APP_NAME_CHATGPT, APP_NAME_CODEX]
+}
+
+/// Parse the stdout of
+/// `osascript -e 'application id "com.openai.codex" is running'`.
+/// Extracted so unit tests can cover the true/false/empty shapes without
+/// spawning AppleScript.
+fn parse_osascript_is_running(stdout: &str) -> Option<bool> {
+    match stdout.trim().to_ascii_lowercase().as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn is_codex_app_running_via_bundle_id() -> Option<bool> {
+    let output = Command::new("osascript")
+        .args(["-e", &format!("application id \"{APP_BUNDLE_ID}\" is running")])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_osascript_is_running(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn is_codex_app_running_via_process_name() -> bool {
+    desktop_app_process_names().iter().any(|name| {
+        // Null stdio: `pgrep` prints matching PIDs to stdout, which would
+        // otherwise leak into the parent console / log when we only care
+        // about the exit status.
+        Command::new("pgrep")
+            .args(["-x", name])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
+}
+
 pub fn is_codex_app_running() -> bool {
-    Command::new("pgrep")
-        .args(["-x", APP_NAME])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    // Bundle-id check is rename-proof (works for both ChatGPT and Codex
+    // dock labels). Fall back to exact process-name probes when
+    // AppleScript is unavailable (headless CI, TCC denial, etc).
+    is_codex_app_running_via_bundle_id().unwrap_or_else(is_codex_app_running_via_process_name)
 }
 
 fn activate_running_app() -> AppResult<()> {
-    let script = format!("tell application \"{APP_NAME}\" to activate");
+    let script = format!("tell application id \"{APP_BUNDLE_ID}\" to activate");
     let status = Command::new("osascript")
         .args(["-e", &script])
         .status()
@@ -469,24 +539,32 @@ fn activate_running_app() -> AppResult<()> {
 pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<String> {
     if is_codex_app_running() {
         if activate_running_app().is_ok() {
-            return Ok(APP_NAME.to_string());
+            return Ok(APP_BUNDLE_ID.to_string());
         }
     }
 
-    let mut command = Command::new("open");
+    // Prefer the concrete bundle path when we can see it on disk — this
+    // is the only way to disambiguate ChatGPT.app vs a leftover Codex.app
+    // without consulting LaunchServices. Fall back to the stable bundle
+    // id (works even when the app was moved / renamed on disk), then to
+    // the historical display name as a last resort.
     if let Some(app_path) = resolve_codex_app_path() {
-        command.args(["-a", &app_path]);
-        command.spawn().map_err(|error| {
-            AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
-        })?;
+        Command::new("open")
+            .args(["-a", &app_path])
+            .spawn()
+            .map_err(|error| {
+                AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
+            })?;
         return Ok(app_path);
     }
 
-    command.args(["-a", APP_NAME]);
-    command.spawn().map_err(|error| {
-        AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
-    })?;
-    Ok(APP_NAME.to_string())
+    Command::new("open")
+        .args(["-b", APP_BUNDLE_ID])
+        .spawn()
+        .map_err(|error| {
+            AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
+        })?;
+    Ok(APP_BUNDLE_ID.to_string())
 }
 
 pub fn forward_to_real_codex(args: &[String], codex_home: Option<&Path>) -> AppResult<i32> {
@@ -594,14 +672,36 @@ pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppR
     Err(AppError::new("LOGIN_FAILED", message))
 }
 
+fn signal_desktop_app_processes(signal: &str) {
+    // AppleScript quit is the polite path (lets the Electron host flush
+    // auth / app-server state). Signal-by-process-name is the force path
+    // used after the polite quit times out, and also covers hosts where
+    // `osascript` itself is blocked.
+    for name in desktop_app_process_names() {
+        let _ = Command::new("pkill")
+            .args([signal, "-x", name])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+fn request_desktop_app_quit() {
+    let script = format!("tell application id \"{APP_BUNDLE_ID}\" to quit");
+    let _ = Command::new("osascript").args(["-e", &script]).status();
+    // Also send TERM to both known process names so a stuck renderer
+    // that ignored AppleScript still gets a chance to die before we
+    // escalate to KILL. Harmless no-ops when the name is not running.
+    signal_desktop_app_processes("-TERM");
+}
+
 pub fn quit_codex_app_if_running() -> AppResult<bool> {
     if !is_codex_app_running() {
         return Ok(false);
     }
 
-    let _ = Command::new("pkill")
-        .args(["-TERM", "-x", APP_NAME])
-        .status();
+    request_desktop_app_quit();
     for _ in 0..20 {
         if !is_codex_app_running() {
             return Ok(true);
@@ -609,9 +709,7 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         thread::sleep(Duration::from_millis(200));
     }
 
-    let _ = Command::new("pkill")
-        .args(["-KILL", "-x", APP_NAME])
-        .status();
+    signal_desktop_app_processes("-KILL");
     for _ in 0..10 {
         if !is_codex_app_running() {
             return Ok(true);
@@ -682,14 +780,15 @@ impl PlatformHooks for MacosPlatformHooks {
 mod tests {
     use super::{
         build_app_server_command, codex_app_candidates, codex_cli_from_app_bundle,
-        discover_real_codex_cli_path, resolve_real_codex_cli_with_source,
-        set_user_codex_cli_path, validate_user_codex_cli_path, RealCodexPathSource,
+        desktop_app_process_names, discover_real_codex_cli_path, parse_osascript_is_running,
+        resolve_real_codex_cli_with_source, set_user_codex_cli_path, validate_user_codex_cli_path,
+        APP_BUNDLE_ID, APP_BUNDLE_NAMES, APP_NAME_CHATGPT, APP_NAME_CODEX, RealCodexPathSource,
     };
     use crate::macos::cli_shim::real_codex_resolver_path;
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_codex_home(name: &str) -> PathBuf {
@@ -776,7 +875,13 @@ mod tests {
         let codex_home = temp_codex_home("discover-real-cli-app-bundle");
         let managed_bin = codex_home.join("bin");
         let home_dir = codex_home.join("home");
-        let app_path = home_dir.join("Applications").join("Codex.app");
+        // Seed a HOME-local ChatGPT.app so machines without a system
+        // install still exercise the app-bundle fallback. When a real
+        // /Applications/ChatGPT.app is present (common after the Codex
+        // merge) discovery correctly prefers that earlier candidate —
+        // so the assertion compares against the first on-disk candidate
+        // rather than the synthetic HOME path alone.
+        let app_path = home_dir.join("Applications").join("ChatGPT.app");
         let app_cli_path = codex_cli_from_app_bundle(&app_path);
         fs::create_dir_all(&managed_bin).unwrap();
         fs::create_dir_all(app_cli_path.parent().unwrap()).unwrap();
@@ -806,7 +911,83 @@ mod tests {
         }
 
         assert_eq!(resolved, expected);
+        assert!(
+            resolved.is_some(),
+            "app-bundle fallback must find ChatGPT.app or Codex.app CLI when PATH only has the managed shim"
+        );
+        // The winner must itself be one of the known app-bundle CLI shapes.
+        let resolved = resolved.unwrap();
+        assert!(
+            resolved.ends_with("Contents/Resources/codex"),
+            "resolved path should be an app-bundle CLI, got {}",
+            resolved.display()
+        );
         let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn codex_cli_from_app_bundle_uses_contents_resources_layout() {
+        assert_eq!(
+            codex_cli_from_app_bundle(Path::new("/Applications/ChatGPT.app")),
+            PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex")
+        );
+        assert_eq!(
+            codex_cli_from_app_bundle(Path::new("/Applications/Codex.app")),
+            PathBuf::from("/Applications/Codex.app/Contents/Resources/codex")
+        );
+    }
+
+    #[test]
+    fn codex_app_candidates_prefer_chatgpt_host_then_legacy_codex() {
+        let _guard = crate::macos::env_guard();
+        let home_dir = temp_codex_home("app-candidates-order").join("home");
+        let original_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home_dir);
+
+        let candidates = codex_app_candidates();
+
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        assert_eq!(APP_BUNDLE_NAMES, ["ChatGPT.app", "Codex.app"]);
+        assert_eq!(
+            candidates[0],
+            PathBuf::from("/Applications").join("ChatGPT.app")
+        );
+        assert_eq!(
+            candidates[1],
+            PathBuf::from("/Applications").join("Codex.app")
+        );
+        assert_eq!(
+            candidates[2],
+            home_dir.join("Applications").join("ChatGPT.app")
+        );
+        assert_eq!(
+            candidates[3],
+            home_dir.join("Applications").join("Codex.app")
+        );
+        let _ = fs::remove_dir_all(home_dir.parent().unwrap());
+    }
+
+    #[test]
+    fn desktop_app_process_names_cover_chatgpt_host_and_legacy_codex() {
+        assert_eq!(APP_BUNDLE_ID, "com.openai.codex");
+        assert_eq!(
+            desktop_app_process_names(),
+            &[APP_NAME_CHATGPT, APP_NAME_CODEX]
+        );
+    }
+
+    #[test]
+    fn parse_osascript_is_running_accepts_true_false_only() {
+        assert_eq!(parse_osascript_is_running("true\n"), Some(true));
+        assert_eq!(parse_osascript_is_running("TRUE"), Some(true));
+        assert_eq!(parse_osascript_is_running(" false "), Some(false));
+        assert_eq!(parse_osascript_is_running(""), None);
+        assert_eq!(parse_osascript_is_running("yes"), None);
     }
 
     #[test]
