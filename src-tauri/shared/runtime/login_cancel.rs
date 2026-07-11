@@ -175,12 +175,8 @@ pub fn wait_for_login_or_cancel(mut child: Child) -> AppResult<Output> {
                         format!("`codex login` reap failed: {error}"),
                     )
                 })?;
-                let stdout = stdout_drainer
-                    .map(join_drainer)
-                    .unwrap_or_default();
-                let stderr = stderr_drainer
-                    .map(join_drainer)
-                    .unwrap_or_default();
+                let stdout = stdout_drainer.map(join_drainer).unwrap_or_default();
+                let stderr = stderr_drainer.map(join_drainer).unwrap_or_default();
                 return Ok(Output {
                     status,
                     stdout,
@@ -219,9 +215,7 @@ pub fn wait_for_login_or_cancel(mut child: Child) -> AppResult<Output> {
     }
 }
 
-fn spawn_pipe_drainer<P: Read + Send + 'static>(
-    mut pipe: P,
-) -> std::thread::JoinHandle<Vec<u8>> {
+fn spawn_pipe_drainer<P: Read + Send + 'static>(mut pipe: P) -> std::thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || {
         let mut buf = Vec::new();
         // Best-effort: an I/O error mid-read (broken pipe, EINTR storm,

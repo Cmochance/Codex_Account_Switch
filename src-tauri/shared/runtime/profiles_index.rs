@@ -16,9 +16,9 @@ use super::paths::{
 };
 use super::profiles::{
     build_display_title, compute_subscription_days_left, detect_unmanaged_live_account,
-    resolve_current_profile,
+    profile_activated_at_ms, resolve_current_profile,
 };
-use super::session_usage::{load_latest_local_quota_snapshot, normalize_quota_summary};
+use super::session_usage::{load_latest_local_quota_snapshot_since, normalize_quota_summary};
 
 const PROFILES_INDEX_SCHEMA_VERSION: u32 = 3;
 
@@ -38,8 +38,9 @@ struct CachedProfilesIndex {
 
 fn cache_slot() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, CachedProfilesIndex>>
 {
-    static SLOT: OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, CachedProfilesIndex>>> =
-        OnceLock::new();
+    static SLOT: OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, CachedProfilesIndex>>,
+    > = OnceLock::new();
     SLOT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -340,27 +341,27 @@ fn build_current_card(entry: &ProfileIndexEntry, codex_home: &Path) -> CurrentCa
     }
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn quota_summary_has_data(quota: &crate::models::QuotaSummary) -> bool {
+pub(crate) fn quota_summary_has_data(quota: &crate::models::QuotaSummary) -> bool {
     quota.five_hour.remaining_percent.is_some()
         || quota.five_hour.refresh_at.is_some()
         || quota.weekly.remaining_percent.is_some()
         || quota.weekly.refresh_at.is_some()
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn select_current_quota(
     entry: &ProfileIndexEntry,
     live_snapshot: Option<&super::session_usage::LocalQuotaSnapshot>,
 ) -> crate::models::QuotaSummary {
-    let stored_is_populated = quota_summary_has_data(&entry.stored_quota);
     let stored_updated_at_ms = entry.stored_quota_updated_at_ms.unwrap_or(0);
 
+    // Strictly newer-wins, even when the stored summary is empty: an
+    // empty stored card with a *newer* timestamp is the deliberate
+    // downgrade-to-free clear written by the API refresh paths, and an
+    // older live session must not resurrect the pre-downgrade numbers
+    // next to a Free label. A never-refreshed card has no timestamp
+    // (0), so any live session still wins there.
     match live_snapshot {
-        Some(snapshot)
-            if snapshot.source_mtime_ms.unwrap_or(0) > stored_updated_at_ms
-                || !stored_is_populated =>
-        {
+        Some(snapshot) if snapshot.source_mtime_ms.unwrap_or(0) > stored_updated_at_ms => {
             snapshot.quota.clone()
         }
         _ => entry.stored_quota.clone(),
@@ -413,15 +414,15 @@ pub fn load_profiles_snapshot(codex_home: Option<&Path>) -> AppResult<ProfilesSn
     })
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn load_current_live_quota(codex_home: Option<&Path>) -> AppResult<CurrentQuotaResponse> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
+    let backup_root = get_backup_root(Some(&codex_home));
     let index = load_profiles_index(Some(&codex_home))?;
 
     // Mirror load_profiles_snapshot: when the live account is unmanaged the
     // `.current_profile` marker is stale, so report no current quota rather than
     // the drifted-away card's numbers.
-    if detect_unmanaged_live_account(&get_backup_root(Some(&codex_home)), &codex_home).is_some() {
+    if detect_unmanaged_live_account(&backup_root, &codex_home).is_some() {
         return Ok(CurrentQuotaResponse {
             profile: None,
             quota: None,
@@ -445,7 +446,13 @@ pub fn load_current_live_quota(codex_home: Option<&Path>) -> AppResult<CurrentQu
         });
     };
 
-    let live_snapshot = load_latest_local_quota_snapshot(Some(&codex_home));
+    // Scope the live JSONL to sessions written since this profile became
+    // active: `~/.codex/sessions` is not swapped on switch, so newer
+    // entries from the previously-live account would otherwise win the
+    // freshness race and show the *previous* account's usage as this
+    // profile's quota for the first minutes after a switch.
+    let activated_at_ms = profile_activated_at_ms(&current_profile, &backup_root);
+    let live_snapshot = load_latest_local_quota_snapshot_since(Some(&codex_home), activated_at_ms);
     let quota = normalize_quota_summary(
         Some(select_current_quota(entry, live_snapshot.as_ref())),
         entry.plan_name.as_deref(),
@@ -460,10 +467,10 @@ pub fn load_current_live_quota(codex_home: Option<&Path>) -> AppResult<CurrentQu
 
 #[cfg(test)]
 mod tests {
-    use super::load_profiles_snapshot;
-    use crate::shared::paths::get_current_profile_file;
+    use super::{load_current_live_quota, load_profiles_snapshot};
+    use crate::shared::paths::{get_current_profile_file, ACTIVE_MARKER_FILE};
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_codex_home(name: &str) -> PathBuf {
@@ -500,7 +507,10 @@ mod tests {
 
         assert_eq!(snapshot.unmanaged_live_account, None);
         assert_eq!(
-            snapshot.current_card.as_ref().map(|card| card.folder_name.as_str()),
+            snapshot
+                .current_card
+                .as_ref()
+                .map(|card| card.folder_name.as_str()),
             Some("a")
         );
         let _ = fs::remove_dir_all(&codex_home);
@@ -521,9 +531,116 @@ mod tests {
         );
         assert!(snapshot.current_quota_card.is_none());
         assert!(
-            snapshot.profiles.iter().all(|card| card.status != "current"),
+            snapshot
+                .profiles
+                .iter()
+                .all(|card| card.status != "current"),
             "no card in the list should be flagged current"
         );
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    fn write_quota_session(path: &Path) {
+        let line = r#"{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":11.0,"resets_at":1730000000,"window_minutes":300},"secondary":{"used_percent":12.0,"resets_at":1730600000,"window_minutes":10080}}}}"#;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, format!("{line}\n")).unwrap();
+    }
+
+    fn write_active_marker(profile_dir: &Path, activated_at: &str) {
+        fs::write(
+            profile_dir.join(ACTIVE_MARKER_FILE),
+            format!("activated_at={activated_at}\n"),
+        )
+        .unwrap();
+    }
+
+    fn utc_string(offset_seconds: i64) -> String {
+        (chrono::Utc::now() + chrono::Duration::seconds(offset_seconds))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    }
+
+    // Session JSONL written by the previously-live account (mtime before
+    // this profile's activation) must not be attributed to the current
+    // profile — the cross-account bleed regression.
+    #[test]
+    fn current_live_quota_ignores_foreign_live_session_older_than_activation() {
+        let codex_home = temp_codex_home("live-quota-foreign-session");
+        let profile_dir = codex_home.join("account_backup").join("b");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "b\n").unwrap();
+        fs::write(profile_dir.join("auth.json"), "profile-b-auth\n").unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{"folder_name":"b","account_label":"b@example.com","quota":{"five_hour":{},"weekly":{}},"quota_updated_at_ms":1}"#,
+        )
+        .unwrap();
+        write_quota_session(&codex_home.join("sessions").join("session-001.jsonl"));
+        // Activation stamped after the session file's mtime → the session
+        // belongs to whichever account was live before the switch.
+        write_active_marker(&profile_dir, &utc_string(5));
+
+        let response = load_current_live_quota(Some(&codex_home)).unwrap();
+
+        assert_eq!(response.profile.as_deref(), Some("b"));
+        let quota = response.quota.expect("expected quota");
+        assert_eq!(quota.five_hour.remaining_percent, None);
+        assert_eq!(quota.weekly.remaining_percent, None);
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn current_live_quota_uses_live_session_written_after_activation() {
+        let codex_home = temp_codex_home("live-quota-own-session");
+        let profile_dir = codex_home.join("account_backup").join("b");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "b\n").unwrap();
+        fs::write(profile_dir.join("auth.json"), "profile-b-auth\n").unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{"folder_name":"b","account_label":"b@example.com","quota":{"five_hour":{"remaining_percent":41},"weekly":{"remaining_percent":63}},"quota_updated_at_ms":1}"#,
+        )
+        .unwrap();
+        write_active_marker(&profile_dir, "2020-01-01T00:00:00Z");
+        write_quota_session(&codex_home.join("sessions").join("session-001.jsonl"));
+
+        let response = load_current_live_quota(Some(&codex_home)).unwrap();
+
+        assert_eq!(response.profile.as_deref(), Some("b"));
+        let quota = response.quota.expect("expected quota");
+        assert_eq!(quota.five_hour.remaining_percent, Some(89));
+        assert_eq!(quota.weekly.remaining_percent, Some(88));
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // Pre-existing installs have markers without a parseable
+    // activated_at (or none at all): fall back to the unfiltered
+    // legacy freshness race.
+    #[test]
+    fn current_live_quota_falls_back_unfiltered_without_activation_marker() {
+        let codex_home = temp_codex_home("live-quota-no-marker");
+        let profile_dir = codex_home.join("account_backup").join("b");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "b\n").unwrap();
+        fs::write(profile_dir.join("auth.json"), "profile-b-auth\n").unwrap();
+        fs::write(
+            profile_dir.join("profile.json"),
+            r#"{"folder_name":"b","account_label":"b@example.com","quota":{"five_hour":{"remaining_percent":41},"weekly":{"remaining_percent":63}},"quota_updated_at_ms":1}"#,
+        )
+        .unwrap();
+        write_quota_session(&codex_home.join("sessions").join("session-001.jsonl"));
+
+        let response = load_current_live_quota(Some(&codex_home)).unwrap();
+
+        assert_eq!(response.profile.as_deref(), Some("b"));
+        let quota = response.quota.expect("expected quota");
+        assert_eq!(quota.five_hour.remaining_percent, Some(89));
+        assert_eq!(quota.weekly.remaining_percent, Some(88));
+
         let _ = fs::remove_dir_all(&codex_home);
     }
 }

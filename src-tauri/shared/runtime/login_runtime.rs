@@ -236,8 +236,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir()
-            .join(format!("codex-switch-login-runtime-{name}-{unique}"));
+        let path = std::env::temp_dir().join(format!("codex-switch-login-runtime-{name}-{unique}"));
         fs::create_dir_all(&path).unwrap();
         path
     }
@@ -319,12 +318,11 @@ mod tests {
 
     #[test]
     fn login_profile_writes_fresh_auth_to_target_profile_folder() {
-        let (codex_home, profile_dir, runtime_home) =
-            setup("writes-fresh-auth");
+        let (codex_home, profile_dir, runtime_home) = setup("writes-fresh-auth");
         let hooks = FakeLoginHooks::new(FAKE_AUTH_JSON);
 
-        let returned = login_profile_with_home(&hooks, "a", Some(&codex_home), &runtime_home)
-            .unwrap();
+        let returned =
+            login_profile_with_home(&hooks, "a", Some(&codex_home), &runtime_home).unwrap();
 
         assert_eq!(hooks.calls(), 1);
         assert_eq!(returned, profile_dir.to_string_lossy());
@@ -398,12 +396,15 @@ mod tests {
             .unwrap();
 
         let hooks = FakeLoginHooks::new(FAKE_AUTH_JSON);
-        let result =
-            login_profile_with_home(&hooks, "a", Some(&codex_home), &runtime_home);
+        let result = login_profile_with_home(&hooks, "a", Some(&codex_home), &runtime_home);
 
         let error = result.unwrap_err();
         assert_eq!(error.error_code, "LOGIN_BUSY");
-        assert_eq!(hooks.calls(), 0, "login must not be invoked under contention");
+        assert_eq!(
+            hooks.calls(),
+            0,
+            "login must not be invoked under contention"
+        );
     }
 
     #[test]
@@ -438,8 +439,7 @@ mod tests {
         }
 
         let (codex_home, _profile_dir, runtime_home) = setup("missing-auth");
-        let result =
-            login_profile_with_home(&EmptyLogin, "a", Some(&codex_home), &runtime_home);
+        let result = login_profile_with_home(&EmptyLogin, "a", Some(&codex_home), &runtime_home);
         assert_eq!(result.unwrap_err().error_code, "LOGIN_AUTH_MISSING");
     }
 }

@@ -3,7 +3,9 @@ use std::path::Path;
 use chrono::{DateTime, Local, NaiveDate};
 
 use super::fs_ops::read_text_stripped;
-use super::metadata::{auth_is_empty_placeholder, load_account_identity_from_path, AccountIdentity};
+use super::metadata::{
+    auth_is_empty_placeholder, load_account_identity_from_path, AccountIdentity,
+};
 use super::paths::{get_current_profile_file, list_profile_dirs, ACTIVE_MARKER_FILE};
 
 pub fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
@@ -45,6 +47,45 @@ pub fn resolve_current_profile(backup_root: &Path) -> Option<String> {
     }
 
     None
+}
+
+/// One-shot marker for the "marker exists but activated_at is
+/// unparseable" warning: without it a corrupt marker silently degrades
+/// activation scoping and is indistinguishable from a legitimately
+/// missing one when diagnosing cross-account quota bleed.
+static ACTIVATION_PARSE_WARNING: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Epoch-ms timestamp of when `profile` last became the active profile,
+/// parsed from the `activated_at=<utc>` line its `.active_profile`
+/// marker was stamped with (`set_active_marker`). `None` when the marker
+/// is missing or carries no parseable `activated_at` — consumers then
+/// treat the live sessions as unattributable (the display path falls
+/// back to the unfiltered freshness race; the write-back fold skips).
+///
+/// This is the boundary that scopes the live session JSONL to the
+/// current account: the app never places a `sessions/` dir inside
+/// profile folders, so `~/.codex/sessions` survives switches un-swapped
+/// and entries written before the activation belong to whichever
+/// account was live previously — they must not be attributed to
+/// `profile`.
+pub fn profile_activated_at_ms(profile: &str, backup_root: &Path) -> Option<u64> {
+    let marker_path = backup_root.join(profile).join(ACTIVE_MARKER_FILE);
+    let raw = std::fs::read_to_string(&marker_path).ok()?;
+    let parsed = raw
+        .lines()
+        .find_map(|line| line.strip_prefix("activated_at="))
+        .and_then(|value| DateTime::parse_from_rfc3339(value.trim()).ok())
+        .and_then(|value| u64::try_from(value.timestamp_millis()).ok());
+    if parsed.is_none() {
+        ACTIVATION_PARSE_WARNING.get_or_init(|| {
+            eprintln!(
+                "codex_switch: active marker {} has no parseable activated_at; \
+                 activation scoping is disabled for this profile until it is re-stamped",
+                marker_path.display()
+            );
+        });
+    }
+    parsed
 }
 
 /// Decide which profile slot the live `~/.codex` state should be written back
@@ -160,7 +201,10 @@ mod tests {
 
     /// Minimal real auth.json whose stable identity is `acct:<account_id>`.
     fn auth_with_account(account_id: &str) -> String {
-        format!("{{\"tokens\":{{\"account_id\":{}}}}}", serde_json::Value::String(account_id.to_string()))
+        format!(
+            "{{\"tokens\":{{\"account_id\":{}}}}}",
+            serde_json::Value::String(account_id.to_string())
+        )
     }
 
     fn write_profile(backup_root: &Path, profile: &str, auth_body: &str) {
@@ -235,7 +279,11 @@ mod tests {
     fn seats_new_account_into_placeholder_marker_slot() {
         let (codex_home, backup_root) = setup("placeholder-seat");
         // Placeholder card has no resolvable identity.
-        write_profile(&backup_root, "a", r#"{"tokens":{"account_id":"replace-me"}}"#);
+        write_profile(
+            &backup_root,
+            "a",
+            r#"{"tokens":{"account_id":"replace-me"}}"#,
+        );
         set_marker(&backup_root, "a");
         fs::write(codex_home.join("auth.json"), auth_with_account("acct_NEW")).unwrap();
 
@@ -272,7 +320,11 @@ mod tests {
         write_profile(&backup_root, "a", apikey);
         set_marker(&backup_root, "a");
         // Live root drifted to an OAuth account owned by no card.
-        fs::write(codex_home.join("auth.json"), auth_with_account("acct_OAUTH")).unwrap();
+        fs::write(
+            codex_home.join("auth.json"),
+            auth_with_account("acct_OAUTH"),
+        )
+        .unwrap();
 
         // Must refuse (case 5), not seat into the API-key card (case 4)…
         assert_eq!(resolve_backup_target(&backup_root, &codex_home), None);
@@ -321,7 +373,10 @@ mod tests {
             Some("a")
         );
         // …and not flagged unmanaged.
-        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
+        assert_eq!(
+            detect_unmanaged_live_account(&backup_root, &codex_home),
+            None
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 
@@ -347,7 +402,10 @@ mod tests {
         write_profile(&backup_root, "a", &auth_with_account("acct_X"));
         fs::write(codex_home.join("auth.json"), auth_with_account("acct_X")).unwrap();
 
-        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
+        assert_eq!(
+            detect_unmanaged_live_account(&backup_root, &codex_home),
+            None
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 
@@ -358,7 +416,10 @@ mod tests {
         write_profile(&backup_root, "a", &auth_with_account("acct_X"));
         fs::write(codex_home.join("auth.json"), r#"{"auth_mode":"apikey"}"#).unwrap();
 
-        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
+        assert_eq!(
+            detect_unmanaged_live_account(&backup_root, &codex_home),
+            None
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 }

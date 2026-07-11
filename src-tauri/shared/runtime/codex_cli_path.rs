@@ -68,8 +68,7 @@ impl RealCodexPathSource {
 pub trait CodexPathResolver {
     /// Resolve the real codex CLI path with provenance, or `None` if
     /// nothing is found.
-    fn resolve_with_source(&self, codex_home: &Path)
-        -> Option<(PathBuf, RealCodexPathSource)>;
+    fn resolve_with_source(&self, codex_home: &Path) -> Option<(PathBuf, RealCodexPathSource)>;
 
     /// Validate + persist a user-provided override. Returns the
     /// canonicalised path that was actually saved (Windows resolves
@@ -118,10 +117,7 @@ pub fn build_codex_cli_status(
     }
 }
 
-pub fn get_codex_cli_status(
-    resolver: &dyn CodexPathResolver,
-    codex_home: &Path,
-) -> CodexCliStatus {
+pub fn get_codex_cli_status(resolver: &dyn CodexPathResolver, codex_home: &Path) -> CodexCliStatus {
     build_codex_cli_status(resolver, codex_home)
 }
 
@@ -134,10 +130,7 @@ pub fn set_codex_cli_path(
     Ok(build_codex_cli_status(resolver, codex_home))
 }
 
-pub fn clear_codex_cli_path(
-    resolver: &dyn CodexPathResolver,
-    codex_home: &Path,
-) -> CodexCliStatus {
+pub fn clear_codex_cli_path(resolver: &dyn CodexPathResolver, codex_home: &Path) -> CodexCliStatus {
     resolver.clear_user_path(codex_home);
     build_codex_cli_status(resolver, codex_home)
 }
@@ -315,8 +308,7 @@ mod tests {
                 return Err(error);
             }
             let path = PathBuf::from(raw_input);
-            *self.state.borrow_mut() =
-                Some((path.clone(), RealCodexPathSource::UserOverride));
+            *self.state.borrow_mut() = Some((path.clone(), RealCodexPathSource::UserOverride));
             Ok(path)
         }
 
@@ -340,8 +332,7 @@ mod tests {
         let codex_home = PathBuf::from("/fake/home");
         let target = "/fake/codex/cli";
 
-        let status =
-            set_codex_cli_path(&resolver, &codex_home, target).expect("set ok");
+        let status = set_codex_cli_path(&resolver, &codex_home, target).expect("set ok");
 
         // Wrapper must report the *new* state, not the pre-set state.
         assert_eq!(status.resolved_path.as_deref(), Some(target));
@@ -357,10 +348,8 @@ mod tests {
     fn set_propagates_resolver_error_via_question_mark() {
         let resolver = FakeResolver::new();
         let codex_home = PathBuf::from("/fake/home");
-        *resolver.set_error.borrow_mut() = Some(AppError::new(
-            "CODEX_CLI_PATH_INVALID",
-            "synthetic failure",
-        ));
+        *resolver.set_error.borrow_mut() =
+            Some(AppError::new("CODEX_CLI_PATH_INVALID", "synthetic failure"));
 
         let err = set_codex_cli_path(&resolver, &codex_home, "/whatever")
             .expect_err("expected propagated error");
@@ -498,7 +487,10 @@ mod tests {
         // relies on this to reject "ran but failed" candidates.
         let mut bad = Command::new("/bin/sh");
         bad.args(["-c", "exit 3"]);
-        assert_eq!(probe_version_with_timeout(bad, Duration::from_secs(5)), None);
+        assert_eq!(
+            probe_version_with_timeout(bad, Duration::from_secs(5)),
+            None
+        );
     }
 
     #[cfg(unix)]

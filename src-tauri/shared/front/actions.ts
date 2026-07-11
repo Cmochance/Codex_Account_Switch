@@ -183,10 +183,26 @@ async function refreshCurrentQuota(showError = false): Promise<void> {
   }
 }
 
+// In-flight dedup for the silent refresh: the post-switch kick can
+// otherwise overlap a 5-min ticker fire. Two concurrent silent refreshes
+// both pass the backend's staleness gate (neither has persisted yet) and
+// can race the same refresh_token rotation — OpenAI's reuse detection
+// then invalidates the session ("refresh_token_reused").
+let activeQuotaSilentRefreshInFlight: Promise<void> | null = null;
+
 // Silent companion to refreshCurrentQuota. Backend gates on >5min staleness
 // and silently swallows non-OAuth / HTTP / parse failures, so any error here
 // just means "skip this tick".
-async function refreshActiveQuotaSilently(): Promise<void> {
+function refreshActiveQuotaSilently(): Promise<void> {
+  if (!activeQuotaSilentRefreshInFlight) {
+    activeQuotaSilentRefreshInFlight = refreshActiveQuotaSilentlyInner().finally(() => {
+      activeQuotaSilentRefreshInFlight = null;
+    });
+  }
+  return activeQuotaSilentRefreshInFlight;
+}
+
+async function refreshActiveQuotaSilentlyInner(): Promise<void> {
   if (state.loading || !state.snapshot) {
     return;
   }
@@ -275,6 +291,12 @@ async function handleSwitchProfile(profile: string): Promise<void> {
       showToast(t(state.locale, "switchedTo", { profile }));
       await refreshAllData();
     });
+    // The switched-to card's stored quota is as old as its last refresh —
+    // kick the silent API refresh now instead of waiting for the next
+    // 5-min tick. Its >5-min staleness gate makes this a no-op when the
+    // card is already fresh; it must run after runBlockingAction so the
+    // state.loading guard inside refreshActiveQuotaSilently doesn't skip it.
+    void refreshActiveQuotaSilently();
   } catch (error) {
     showToast(error instanceof Error ? error.message : t(state.locale, "failedToSwitchProfile"), true);
   }

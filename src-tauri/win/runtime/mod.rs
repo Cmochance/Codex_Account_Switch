@@ -4,13 +4,12 @@ pub mod bootstrap;
 pub mod install;
 pub mod process;
 pub mod profile_actions;
-pub mod profiles_index;
 pub mod refresh_runtime;
 pub mod switch;
 
 pub use crate::shared::{
-    config, fs_ops, login_runtime, metadata, paths, profiles, runtime_isolation, session_files,
-    session_usage,
+    config, fs_ops, login_runtime, metadata, paths, profiles, profiles_index, runtime_isolation,
+    session_files, session_usage,
 };
 
 pub mod actions {

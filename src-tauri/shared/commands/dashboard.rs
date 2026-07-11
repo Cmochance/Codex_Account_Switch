@@ -57,22 +57,19 @@ fn refresh_active_profile_quota_silent_inner() -> Result<CurrentQuotaResponse, C
     let index = crate::shared::profiles_index::load_profiles_index(Some(&codex_home))
         .map_err(CommandError::from)?;
     let Some(profile_name) = index.current_profile.clone() else {
-        return platform_runtime::profiles_index::load_current_live_quota(None)
-            .map_err(Into::into);
+        return platform_runtime::profiles_index::load_current_live_quota(None).map_err(Into::into);
     };
     let Some(entry) = index
         .profiles
         .iter()
         .find(|profile| profile.folder_name == profile_name)
     else {
-        return platform_runtime::profiles_index::load_current_live_quota(None)
-            .map_err(Into::into);
+        return platform_runtime::profiles_index::load_current_live_quota(None).map_err(Into::into);
     };
 
     let profile_dir = backup_root.join(&entry.folder_name);
     if !crate::shared::chatgpt_api::profile_supports_api_refresh(&profile_dir) {
-        return platform_runtime::profiles_index::load_current_live_quota(None)
-            .map_err(Into::into);
+        return platform_runtime::profiles_index::load_current_live_quota(None).map_err(Into::into);
     }
 
     let now_ms = SystemTime::now()
@@ -85,8 +82,7 @@ fn refresh_active_profile_quota_silent_inner() -> Result<CurrentQuotaResponse, C
         .map(|stored| now_ms.saturating_sub(stored))
         .unwrap_or(u64::MAX);
     if stored_age_ms < SILENT_REFRESH_MIN_AGE_MS {
-        return platform_runtime::profiles_index::load_current_live_quota(None)
-            .map_err(Into::into);
+        return platform_runtime::profiles_index::load_current_live_quota(None).map_err(Into::into);
     }
 
     if let Ok(snapshot) =
@@ -167,8 +163,7 @@ fn refresh_all_oauth_profile_plans_silent_inner() -> Result<u32, CommandError> {
         // cards. With it, repeat launches within a working day are
         // free.
         if let Some(last_check) = entry.last_plan_check_ms {
-            if now_ms.saturating_sub(last_check)
-                < crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
+            if now_ms.saturating_sub(last_check) < crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
             {
                 continue;
             }

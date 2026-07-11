@@ -321,13 +321,21 @@ mod tests {
             },
         );
 
-        assert!(cache.lookup(&PathBuf::from("/tmp/x.jsonl"), (100, 200)).is_some());
+        assert!(cache
+            .lookup(&PathBuf::from("/tmp/x.jsonl"), (100, 200))
+            .is_some());
         // mtime drift: cache miss
-        assert!(cache.lookup(&PathBuf::from("/tmp/x.jsonl"), (101, 200)).is_none());
+        assert!(cache
+            .lookup(&PathBuf::from("/tmp/x.jsonl"), (101, 200))
+            .is_none());
         // size drift: cache miss
-        assert!(cache.lookup(&PathBuf::from("/tmp/x.jsonl"), (100, 201)).is_none());
+        assert!(cache
+            .lookup(&PathBuf::from("/tmp/x.jsonl"), (100, 201))
+            .is_none());
         // unknown path: cache miss
-        assert!(cache.lookup(&PathBuf::from("/tmp/y.jsonl"), (100, 200)).is_none());
+        assert!(cache
+            .lookup(&PathBuf::from("/tmp/y.jsonl"), (100, 200))
+            .is_none());
     }
 
     #[test]

@@ -83,6 +83,12 @@ backup_root_state_to_profile() {
     [[ -e "$entry" ]] || continue
     name="$(basename "$entry")"
     [[ "$name" == ".DS_Store" || "$name" == "$ACTIVE_MARKER_FILE" ]] && continue
+    # Never copy the root profile.json back: it is frozen at switch-in
+    # time while the profile-side copy keeps moving via the app's quota
+    # refreshes — copying it back would revert those updates. The app
+    # refreshes the root copy before its own write-backs; this script
+    # simply leaves the profile-side copy authoritative.
+    [[ "$name" == "profile.json" ]] && continue
     if [[ "$dedup" != *"::$name::"* ]]; then
       managed_names+=("$name")
       dedup+="${name}::"

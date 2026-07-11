@@ -134,8 +134,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir()
-            .join(format!("codex-switch-process-lock-{name}-{unique}"));
+        let path = std::env::temp_dir().join(format!("codex-switch-process-lock-{name}-{unique}"));
         fs::create_dir_all(path.join("account_backup")).unwrap();
         path
     }

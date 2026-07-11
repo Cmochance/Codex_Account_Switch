@@ -291,6 +291,12 @@ pub fn load_latest_local_quota_snapshot_since(
 
     match next_last_snapshot {
         Some(snapshot) => cache.set_last_snapshot(snapshot),
+        // A filtered scan that found nothing newer than the cutoff must
+        // not erase the unfiltered winner: right after a switch every
+        // 15s display tick runs filtered and would otherwise clear the
+        // fast-path anchor on each pass until the new account writes
+        // its first session.
+        None if min_source_mtime_ms.is_some() => {}
         None => cache.clear_last_snapshot(),
     }
     cache.save(codex_home);
@@ -316,9 +322,7 @@ fn try_fast_path(
     if signature != (last.mtime_ms, last.size) {
         return None;
     }
-    if min_source_mtime_ms.is_some_and(|min_mtime| {
-        last.source_mtime_ms.unwrap_or(0) < min_mtime
-    }) {
+    if min_source_mtime_ms.is_some_and(|min_mtime| last.source_mtime_ms.unwrap_or(0) < min_mtime) {
         return None;
     }
     Some(LocalQuotaSnapshot {
@@ -463,7 +467,11 @@ mod tests {
             // Add a lex-larger file with a different quota — the fast
             // path's `newest != last.path` guard must reject the
             // cached snapshot and pick up the new file.
-            write_jsonl(&codex_home, "2026/05/10/rollout-Z.jsonl", QUOTA_LINE_DIFFERENT);
+            write_jsonl(
+                &codex_home,
+                "2026/05/10/rollout-Z.jsonl",
+                QUOTA_LINE_DIFFERENT,
+            );
 
             let second = load_latest_local_quota_snapshot(Some(&codex_home))
                 .expect("second call returns quota from the new file");
@@ -510,7 +518,11 @@ mod tests {
             let codex_home = temp_codex_home("per-file-skip");
             // Older file: no token_count event — `load_latest_quota_from_file`
             // returns `None`. Newer file: has a quota.
-            write_jsonl(&codex_home, "2026/05/10/rollout-A.jsonl", "{\"type\":\"event_msg\"}\n");
+            write_jsonl(
+                &codex_home,
+                "2026/05/10/rollout-A.jsonl",
+                "{\"type\":\"event_msg\"}\n",
+            );
             write_jsonl(&codex_home, "2026/05/10/rollout-Z.jsonl", QUOTA_LINE);
 
             let first = load_latest_local_quota_snapshot(Some(&codex_home))

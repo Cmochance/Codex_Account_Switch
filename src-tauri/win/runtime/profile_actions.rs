@@ -9,11 +9,11 @@ use crate::platform;
 
 use super::config::sync_root_openai_base_url_from_profile_metadata;
 use super::fs_ops::{backup_root_state_to_profile, remove_path};
+use super::login_runtime::login_profile_with_home;
 use super::metadata::{
     load_profile_metadata, save_profile_metadata, sync_profile_metadata_from_auth,
     sync_profile_openai_base_url,
 };
-use super::login_runtime::login_profile_with_home;
 use super::paths::{
     get_backup_root, get_codex_home, get_login_runtime_dir, validate_profile_name,
     ACTIVE_MARKER_FILE, CONTACT_URL, RELEASES_URL, XIAOHONGSHU_URL,
@@ -76,6 +76,10 @@ pub fn login_current_profile() -> AppResult<String> {
         ));
     }
 
+    // Same invariant as every other write-back: refresh the root
+    // profile.json copy first, or the frozen switch-in snapshot below
+    // reverts the quota updates recorded while this profile was active.
+    crate::shared::switch_core::sync_live_quota_and_refresh_root(&current_profile, &codex_home)?;
     backup_root_state_to_profile(&current_profile, &codex_home, &backup_root)?;
     sync_profile_metadata_from_auth(&current_profile, None, Some(&codex_home))?;
     super::profiles_index::load_profiles_index(Some(&codex_home))?;

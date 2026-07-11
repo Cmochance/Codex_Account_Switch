@@ -7,9 +7,7 @@ use crate::models::QuotaSummary;
 use crate::platform;
 
 use super::fs_ops::{copy_entry, remove_path};
-use super::metadata::{
-    load_profile_metadata, sync_profile_metadata_from_auth, sync_profile_quota,
-};
+use super::metadata::{load_profile_metadata, sync_profile_metadata_from_auth, sync_profile_quota};
 use super::paths::{
     get_backup_root, get_codex_home, get_refresh_runtime_dir, validate_profile_name,
 };
@@ -32,8 +30,7 @@ fn should_force_oauth_rotation(profile_name: &str, codex_home: &Path) -> bool {
         .and_then(|value| u64::try_from(value.as_millis()).ok());
     match now_ms {
         Some(now) => {
-            now.saturating_sub(last_check)
-                >= crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
+            now.saturating_sub(last_check) >= crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
         }
         None => true,
     }
@@ -342,8 +339,9 @@ mod tests {
                 .unwrap()
                 .as_nanos();
             let pid = std::process::id();
-            let path = std::env::temp_dir()
-                .join(format!("codex-switch-win-force-rotate-{name}-{pid}-{unique}"));
+            let path = std::env::temp_dir().join(format!(
+                "codex-switch-win-force-rotate-{name}-{pid}-{unique}"
+            ));
             fs::create_dir_all(path.join("account_backup").join("a")).unwrap();
             path
         }

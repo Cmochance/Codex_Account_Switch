@@ -208,9 +208,7 @@ impl Session {
             let parsed: Value = serde_json::from_str(trimmed).map_err(|error| {
                 AppError::new(
                     "APP_SERVER_PARSE_FAILED",
-                    format!(
-                        "Failed to parse codex app-server message ({error}): {trimmed}"
-                    ),
+                    format!("Failed to parse codex app-server message ({error}): {trimmed}"),
                 )
             })?;
             // Skip notifications or replies addressed to a different id —
@@ -379,23 +377,18 @@ fn parse_rate_limits_response(value: &Value) -> Option<QuotaSummary> {
 }
 
 fn quota_window_from_app_server(window: &Value) -> QuotaWindow {
-    let used_percent = window.get("usedPercent").and_then(|value| {
-        value
-            .as_f64()
-            .or_else(|| value.as_i64().map(|v| v as f64))
-    });
-    let remaining_percent =
-        used_percent.map(|used| (100.0 - used).round().clamp(0.0, 100.0) as u8);
+    let used_percent = window
+        .get("usedPercent")
+        .and_then(|value| value.as_f64().or_else(|| value.as_i64().map(|v| v as f64)));
+    let remaining_percent = used_percent.map(|used| (100.0 - used).round().clamp(0.0, 100.0) as u8);
     let reset_at_timestamp = window.get("resetsAt").and_then(Value::as_i64);
     let refresh_at = reset_at_timestamp.and_then(|seconds| {
-        Utc.timestamp_opt(seconds, 0)
-            .single()
-            .map(|datetime| {
-                datetime
-                    .with_timezone(&Local)
-                    .format("%Y-%m-%d %H:%M")
-                    .to_string()
-            })
+        Utc.timestamp_opt(seconds, 0).single().map(|datetime| {
+            datetime
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
     });
     QuotaWindow {
         remaining_percent,

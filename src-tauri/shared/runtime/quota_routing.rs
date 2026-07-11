@@ -71,11 +71,23 @@ mod tests {
 
     #[test]
     fn missing_or_unknown_window_minutes_falls_back_to_position() {
-        assert_eq!(slot_from_window_minutes(None, QuotaSlot::FiveHour), QuotaSlot::FiveHour);
-        assert_eq!(slot_from_window_minutes(None, QuotaSlot::Weekly), QuotaSlot::Weekly);
+        assert_eq!(
+            slot_from_window_minutes(None, QuotaSlot::FiveHour),
+            QuotaSlot::FiveHour
+        );
+        assert_eq!(
+            slot_from_window_minutes(None, QuotaSlot::Weekly),
+            QuotaSlot::Weekly
+        );
         // 60 (1h) is not one of the known windows; trust the position
         // hint rather than silently dropping the data.
-        assert_eq!(slot_from_window_minutes(Some(60), QuotaSlot::FiveHour), QuotaSlot::FiveHour);
-        assert_eq!(slot_from_window_minutes(Some(60), QuotaSlot::Weekly), QuotaSlot::Weekly);
+        assert_eq!(
+            slot_from_window_minutes(Some(60), QuotaSlot::FiveHour),
+            QuotaSlot::FiveHour
+        );
+        assert_eq!(
+            slot_from_window_minutes(Some(60), QuotaSlot::Weekly),
+            QuotaSlot::Weekly
+        );
     }
 }

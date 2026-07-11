@@ -202,9 +202,7 @@ pub fn get_codex_cli_status() -> Result<CodexCliStatus, CommandError> {
 }
 
 #[tauri::command]
-pub fn set_codex_cli_path(
-    payload: SetCodexCliPathPayload,
-) -> Result<CodexCliStatus, CommandError> {
+pub fn set_codex_cli_path(payload: SetCodexCliPathPayload) -> Result<CodexCliStatus, CommandError> {
     let codex_home = platform_runtime::paths::get_codex_home();
     Ok(crate::shared::codex_cli_path::set_codex_cli_path(
         platform_runtime::codex_cli_resolver(),
