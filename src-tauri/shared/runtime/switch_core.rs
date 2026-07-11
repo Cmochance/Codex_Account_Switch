@@ -8,12 +8,14 @@ use super::fs_ops::{
     autosave_auth, backup_root_state_to_profile, clear_active_markers, overlay_directory_contents,
     set_active_marker,
 };
+use super::metadata::{load_profile_metadata, sync_profile_quota, write_root_profile_metadata};
 use super::paths::{get_backup_root, get_codex_home, validate_profile_name};
 use super::process_lock::{acquire_process_lock, ProcessLockGuard};
 use super::profiles::{
     detect_unmanaged_live_account, resolve_backup_target, resolve_current_profile,
 };
-use super::profiles_index::load_profiles_index;
+use super::profiles_index::{load_profiles_index, quota_summary_has_data};
+use super::session_usage::load_latest_local_quota_snapshot;
 
 fn acquire_switch_lock(codex_home: Option<&Path>) -> AppResult<ProcessLockGuard> {
     acquire_process_lock(
@@ -21,6 +23,36 @@ fn acquire_switch_lock(codex_home: Option<&Path>) -> AppResult<ProcessLockGuard>
         "SWITCH_IN_PROGRESS",
         "A profile switch is already in progress.",
     )
+}
+
+/// Fold the freshest live-JSONL usage into `profile`'s stored card, then
+/// refresh the root `profile.json` copy from the merged result.
+///
+/// Must run immediately before every `backup_root_state_to_profile`
+/// write-back (switch, launch bootstrap, window close). The root copy is
+/// otherwise only written by the switch-in overlay, i.e. it is frozen at
+/// switch-in time — while the profile-side copy keeps moving via the
+/// 5-min ticker / bulk plan refresh / manual refresh. A write-back that
+/// skips this step copies that frozen snapshot over the profile copy and
+/// silently reverts every quota / plan update recorded while the profile
+/// was active (permanently so for API-key profiles, which no API refresh
+/// path ever repairs).
+fn sync_live_quota_and_refresh_root(profile: &str, codex_home: &Path) -> AppResult<()> {
+    let mut metadata = load_profile_metadata(profile, Some(codex_home));
+    if let Some(snapshot) = load_latest_local_quota_snapshot(Some(codex_home)) {
+        let live_is_newer =
+            snapshot.source_mtime_ms.unwrap_or(0) > metadata.quota_updated_at_ms.unwrap_or(0);
+        if live_is_newer || !quota_summary_has_data(&metadata.quota) {
+            metadata = sync_profile_quota(
+                profile,
+                snapshot.quota,
+                snapshot.source_mtime_ms,
+                Some(codex_home),
+            )?;
+        }
+    }
+
+    write_root_profile_metadata(codex_home, &metadata)
 }
 
 pub fn switch_profile_with_home<H: PlatformHooks + ?Sized>(
@@ -63,6 +95,11 @@ pub fn switch_profile_with_home<H: PlatformHooks + ?Sized>(
     // re-auth) the marker can be stale, and a blind copy would overwrite an
     // unrelated profile's credentials. `None` = nothing safe to save; skip it.
     if let Some(backup_target) = resolve_backup_target(&backup_root, &codex_home) {
+        // Same identity-verified target for the quota fold: the live
+        // session JSONL was written by the account sitting in ~/.codex,
+        // so its usage belongs to the profile that owns that account —
+        // not to whatever the marker names.
+        sync_live_quota_and_refresh_root(&backup_target, &codex_home)?;
         backup_root_state_to_profile(&backup_target, &codex_home, &backup_root)?;
     }
 
@@ -119,6 +156,7 @@ pub fn sync_root_state_to_current_profile_with_home(
         set_active_marker(&target, &backup_root)?;
     }
 
+    sync_live_quota_and_refresh_root(&target, &codex_home)?;
     backup_root_state_to_profile(&target, &codex_home, &backup_root)?;
     load_profiles_index(Some(&codex_home))?;
     Ok(Some(target))
@@ -319,7 +357,8 @@ mod tests {
         let b_fresh = "{\"tokens\":{\"account_id\":\"acct_B\"},\"last_refresh\":\"new\"}";
         fs::write(codex_home.join("auth.json"), b_fresh).unwrap();
 
-        let synced = super::sync_root_state_to_current_profile_with_home(Some(&codex_home)).unwrap();
+        let synced =
+            super::sync_root_state_to_current_profile_with_home(Some(&codex_home)).unwrap();
 
         assert_eq!(synced.as_deref(), Some("b"));
         // Marker healed to the real owner.
@@ -356,7 +395,8 @@ mod tests {
         // Live root drifted to a brand-new, unmanaged account Z.
         fs::write(codex_home.join("auth.json"), auth_with_account("acct_Z")).unwrap();
 
-        let synced = super::sync_root_state_to_current_profile_with_home(Some(&codex_home)).unwrap();
+        let synced =
+            super::sync_root_state_to_current_profile_with_home(Some(&codex_home)).unwrap();
 
         assert_eq!(synced, None);
         // No contamination: "a" keeps its own account.
@@ -395,7 +435,8 @@ mod tests {
         let refreshed = "{\"tokens\":{\"account_id\":\"acct_X\"},\"last_refresh\":\"now\"}";
         fs::write(codex_home.join("auth.json"), refreshed).unwrap();
 
-        let synced = super::sync_root_state_to_current_profile_with_home(Some(&codex_home)).unwrap();
+        let synced =
+            super::sync_root_state_to_current_profile_with_home(Some(&codex_home)).unwrap();
 
         assert_eq!(synced.as_deref(), Some("a"));
         assert_eq!(
@@ -407,6 +448,175 @@ mod tests {
             refreshed,
             "matched slot should receive the refreshed live auth"
         );
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    fn write_quota_session(path: &Path) {
+        let line = r#"{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":11.0,"resets_at":1730000000,"window_minutes":300},"secondary":{"used_percent":12.0,"resets_at":1730600000,"window_minutes":10080}}}}"#;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, format!("{line}\n")).unwrap();
+    }
+
+    // Moved from the Windows-only switch wrapper when the quota backfill
+    // was folded into switch_core: the outgoing profile's card must absorb
+    // the freshest live-JSONL usage before the write-back.
+    #[test]
+    fn switch_profile_syncs_current_live_quota_into_previous_profile_card() {
+        let codex_home = temp_codex_home("live-quota");
+        let backup_root = codex_home.join("account_backup");
+        let profile_a_dir = backup_root.join("a");
+        let profile_b_dir = backup_root.join("b");
+
+        fs::create_dir_all(&profile_a_dir).unwrap();
+        fs::create_dir_all(&profile_b_dir).unwrap();
+        fs::write(codex_home.join("auth.json"), "root-auth-before-switch\n").unwrap();
+        fs::write(codex_home.join("profile.json"), r#"{"folder_name":"a"}"#).unwrap();
+        fs::write(profile_a_dir.join("auth.json"), "profile-a-auth\n").unwrap();
+        fs::write(
+            profile_a_dir.join("profile.json"),
+            r#"{"folder_name":"a","quota":{"five_hour":{"remaining_percent":25},"weekly":{"remaining_percent":50}},"quota_updated_at_ms":1}"#,
+        )
+        .unwrap();
+        fs::write(profile_b_dir.join("auth.json"), "profile-b-auth\n").unwrap();
+        fs::write(profile_b_dir.join("profile.json"), r#"{"folder_name":"b"}"#).unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
+        write_quota_session(&codex_home.join("sessions").join("session-001.jsonl"));
+
+        let hooks = FakeHooks::new(false);
+        let response = switch_profile_with_home(&hooks, "b", Some(&codex_home)).unwrap();
+
+        assert!(response.ok);
+        let stored = fs::read_to_string(profile_a_dir.join("profile.json")).unwrap();
+        assert!(stored.contains(r#""remaining_percent": 89"#));
+        assert!(stored.contains(r#""remaining_percent": 88"#));
+        assert_eq!(
+            fs::read_to_string(get_current_profile_file(Some(&codex_home))).unwrap(),
+            "b\n"
+        );
+        assert!(get_profiles_index_path(Some(&codex_home)).is_file());
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // Moved from the Windows-only switch wrapper (see above): a live
+    // snapshot older than the stored card must not clobber it.
+    #[test]
+    fn switch_profile_preserves_existing_stored_quota_when_live_snapshot_is_older() {
+        let codex_home = temp_codex_home("older-live-quota");
+        let backup_root = codex_home.join("account_backup");
+        let profile_a_dir = backup_root.join("a");
+        let profile_b_dir = backup_root.join("b");
+
+        fs::create_dir_all(&profile_a_dir).unwrap();
+        fs::create_dir_all(&profile_b_dir).unwrap();
+        fs::write(codex_home.join("auth.json"), "root-auth-before-switch\n").unwrap();
+        fs::write(profile_a_dir.join("auth.json"), "profile-a-auth\n").unwrap();
+        fs::write(
+            profile_a_dir.join("profile.json"),
+            r#"{"folder_name":"a","quota":{"five_hour":{"remaining_percent":77},"weekly":{"remaining_percent":66}},"quota_updated_at_ms":9999999999999}"#,
+        )
+        .unwrap();
+        fs::write(profile_b_dir.join("auth.json"), "profile-b-auth\n").unwrap();
+        fs::write(profile_b_dir.join("profile.json"), r#"{"folder_name":"b"}"#).unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
+        write_quota_session(&codex_home.join("sessions").join("session-001.jsonl"));
+
+        let hooks = FakeHooks::new(false);
+        let response = switch_profile_with_home(&hooks, "b", Some(&codex_home)).unwrap();
+
+        assert!(response.ok);
+        let stored = fs::read_to_string(profile_a_dir.join("profile.json")).unwrap();
+        assert!(stored.contains(r#""remaining_percent": 77"#));
+        assert!(stored.contains(r#""remaining_percent": 66"#));
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // Regression for the stale-root clobber: the root profile.json is
+    // frozen at switch-in time, while the profile copy keeps moving via
+    // the API refresh paths. The write-back must refresh the root copy
+    // first — copying the frozen snapshot over the profile copy would
+    // revert every quota update recorded while the profile was active.
+    #[test]
+    fn switch_write_back_does_not_revert_profile_copy_with_stale_root_metadata() {
+        let codex_home = temp_codex_home("stale-root-switch");
+        let backup_root = codex_home.join("account_backup");
+        let profile_a_dir = backup_root.join("a");
+        let profile_b_dir = backup_root.join("b");
+
+        fs::create_dir_all(&profile_a_dir).unwrap();
+        fs::create_dir_all(&profile_b_dir).unwrap();
+        fs::write(codex_home.join("auth.json"), "root-auth-before-switch\n").unwrap();
+        // Root copy frozen at switch-in: old numbers, old timestamp.
+        fs::write(
+            codex_home.join("profile.json"),
+            r#"{"folder_name":"a","quota":{"five_hour":{"remaining_percent":10},"weekly":{"remaining_percent":20}},"quota_updated_at_ms":1000}"#,
+        )
+        .unwrap();
+        fs::write(profile_a_dir.join("auth.json"), "profile-a-auth\n").unwrap();
+        // Profile copy refreshed while active (e.g. by the 5-min ticker).
+        fs::write(
+            profile_a_dir.join("profile.json"),
+            r#"{"folder_name":"a","quota":{"five_hour":{"remaining_percent":73},"weekly":{"remaining_percent":64}},"quota_updated_at_ms":9999999999999}"#,
+        )
+        .unwrap();
+        fs::write(profile_b_dir.join("auth.json"), "profile-b-auth\n").unwrap();
+        fs::write(profile_b_dir.join("profile.json"), r#"{"folder_name":"b"}"#).unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
+
+        let hooks = FakeHooks::new(false);
+        let response = switch_profile_with_home(&hooks, "b", Some(&codex_home)).unwrap();
+
+        assert!(response.ok);
+        let stored = fs::read_to_string(profile_a_dir.join("profile.json")).unwrap();
+        assert!(
+            stored.contains(r#""remaining_percent": 73"#)
+                && stored.contains(r#""remaining_percent": 64"#),
+            "write-back must not revert the refreshed profile copy, got: {stored}"
+        );
+
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    // Same regression for the launch / window-close path, which shares
+    // the write-back with switch but runs far more often.
+    #[test]
+    fn bootstrap_sync_does_not_revert_profile_copy_with_stale_root_metadata() {
+        let codex_home = temp_codex_home("stale-root-bootstrap");
+        let backup_root = codex_home.join("account_backup");
+        let profile_a_dir = backup_root.join("a");
+
+        fs::create_dir_all(&profile_a_dir).unwrap();
+        fs::write(codex_home.join("auth.json"), auth_with_account("acct_X")).unwrap();
+        fs::write(
+            codex_home.join("profile.json"),
+            r#"{"folder_name":"a","quota":{"five_hour":{"remaining_percent":10},"weekly":{"remaining_percent":20}},"quota_updated_at_ms":1000}"#,
+        )
+        .unwrap();
+        fs::write(profile_a_dir.join("auth.json"), auth_with_account("acct_X")).unwrap();
+        fs::write(
+            profile_a_dir.join("profile.json"),
+            r#"{"folder_name":"a","quota":{"five_hour":{"remaining_percent":73},"weekly":{"remaining_percent":64}},"quota_updated_at_ms":9999999999999}"#,
+        )
+        .unwrap();
+        fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
+
+        let synced =
+            super::sync_root_state_to_current_profile_with_home(Some(&codex_home)).unwrap();
+
+        assert_eq!(synced.as_deref(), Some("a"));
+        let stored = fs::read_to_string(profile_a_dir.join("profile.json")).unwrap();
+        assert!(
+            stored.contains(r#""remaining_percent": 73"#)
+                && stored.contains(r#""remaining_percent": 64"#),
+            "launch sync must not revert the refreshed profile copy, got: {stored}"
+        );
+        // The root copy itself must now carry the fresh numbers too.
+        let root = fs::read_to_string(codex_home.join("profile.json")).unwrap();
+        assert!(root.contains(r#""remaining_percent": 73"#));
 
         let _ = fs::remove_dir_all(&codex_home);
     }

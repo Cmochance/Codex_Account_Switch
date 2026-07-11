@@ -1,74 +1,19 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::errors::{AppError, AppResult};
-use crate::models::{ProfileMetadata, QuotaSummary, SwitchResponse};
+use crate::errors::AppResult;
+use crate::models::SwitchResponse;
 use crate::platform::hooks::PlatformHooks;
 
 use crate::{platform, shared::switch_core};
 
 use super::metadata::{load_profile_metadata, sync_profile_quota};
-use super::paths::{
-    get_backup_root, get_codex_home, validate_profile_name, PROFILE_METADATA_FILENAME,
-};
-use super::profiles::resolve_current_profile;
-use super::session_usage::load_latest_local_quota_snapshot;
+use super::paths::{get_codex_home, validate_profile_name};
 
 fn current_time_ms() -> Option<u64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|value| u64::try_from(value.as_millis()).ok())
-}
-
-fn quota_summary_has_data(quota: &QuotaSummary) -> bool {
-    quota.five_hour.remaining_percent.is_some()
-        || quota.five_hour.refresh_at.is_some()
-        || quota.weekly.remaining_percent.is_some()
-        || quota.weekly.refresh_at.is_some()
-}
-
-fn write_root_profile_metadata(codex_home: &Path, metadata: &ProfileMetadata) -> AppResult<()> {
-    let metadata_path = codex_home.join(PROFILE_METADATA_FILENAME);
-    let serialized = serde_json::to_string_pretty(metadata).map_err(|error| {
-        AppError::new(
-            "PROFILE_METADATA_INVALID",
-            format!("Failed to serialize metadata: {error}"),
-        )
-    })?;
-
-    fs::write(&metadata_path, format!("{serialized}\n")).map_err(|error| {
-        AppError::new(
-            "PROFILE_METADATA_WRITE_FAILED",
-            format!(
-                "Failed to write root profile metadata {}: {error}",
-                metadata_path.display()
-            ),
-        )
-    })
-}
-
-fn sync_current_profile_quota_before_switch(codex_home: &Path) -> AppResult<()> {
-    let backup_root = get_backup_root(Some(codex_home));
-    let Some(current_profile) = resolve_current_profile(&backup_root) else {
-        return Ok(());
-    };
-
-    let mut metadata = load_profile_metadata(&current_profile, Some(codex_home));
-    if let Some(snapshot) = load_latest_local_quota_snapshot(Some(codex_home)) {
-        let live_is_newer =
-            snapshot.source_mtime_ms.unwrap_or(0) > metadata.quota_updated_at_ms.unwrap_or(0);
-        if live_is_newer || !quota_summary_has_data(&metadata.quota) {
-            metadata = sync_profile_quota(
-                &current_profile,
-                snapshot.quota,
-                snapshot.source_mtime_ms,
-                Some(codex_home),
-            )?;
-        }
-    }
-
-    write_root_profile_metadata(codex_home, &metadata)
 }
 
 fn prime_target_profile_quota_before_switch(
@@ -92,7 +37,6 @@ fn switch_profile_with_home_and_hooks<H: PlatformHooks + ?Sized>(
 ) -> AppResult<SwitchResponse> {
     let codex_home = codex_home.map(PathBuf::from).unwrap_or_else(get_codex_home);
     let profile_name = validate_profile_name(profile_name)?;
-    sync_current_profile_quota_before_switch(&codex_home)?;
     prime_target_profile_quota_before_switch(&profile_name, &codex_home)?;
     switch_core::switch_profile_with_home(hooks, &profile_name, Some(&codex_home))
 }
@@ -190,76 +134,9 @@ mod tests {
         fs::write(path, format!("{line}\n")).unwrap();
     }
 
-    #[test]
-    fn switch_profile_syncs_current_live_quota_into_previous_profile_card() {
-        let codex_home = temp_codex_home("live-quota");
-        let backup_root = codex_home.join("account_backup");
-        let profile_a_dir = backup_root.join("a");
-        let profile_b_dir = backup_root.join("b");
-
-        fs::create_dir_all(&profile_a_dir).unwrap();
-        fs::create_dir_all(&profile_b_dir).unwrap();
-        fs::write(codex_home.join("auth.json"), "root-auth-before-switch\n").unwrap();
-        fs::write(codex_home.join("profile.json"), r#"{"folder_name":"a"}"#).unwrap();
-        fs::write(profile_a_dir.join("auth.json"), "profile-a-auth\n").unwrap();
-        fs::write(
-            profile_a_dir.join("profile.json"),
-            r#"{"folder_name":"a","quota":{"five_hour":{"remaining_percent":25},"weekly":{"remaining_percent":50}},"quota_updated_at_ms":1}"#,
-        )
-        .unwrap();
-        fs::write(profile_b_dir.join("auth.json"), "profile-b-auth\n").unwrap();
-        fs::write(profile_b_dir.join("profile.json"), r#"{"folder_name":"b"}"#).unwrap();
-        fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
-        write_quota_session(&codex_home.join("sessions").join("session-001.jsonl"));
-
-        let hooks = FakeHooks::new(false);
-        let response = switch_profile_with_home_and_hooks(&hooks, "b", Some(&codex_home)).unwrap();
-
-        assert!(response.ok);
-        let stored = fs::read_to_string(profile_a_dir.join("profile.json")).unwrap();
-        assert!(stored.contains(r#""remaining_percent": 89"#));
-        assert!(stored.contains(r#""remaining_percent": 88"#));
-        assert_eq!(
-            fs::read_to_string(get_current_profile_file(Some(&codex_home))).unwrap(),
-            "b\n"
-        );
-        assert!(get_profiles_index_path(Some(&codex_home)).is_file());
-
-        let _ = fs::remove_dir_all(&codex_home);
-    }
-
-    #[test]
-    fn switch_profile_preserves_existing_stored_quota_when_live_snapshot_is_older() {
-        let codex_home = temp_codex_home("older-live-quota");
-        let backup_root = codex_home.join("account_backup");
-        let profile_a_dir = backup_root.join("a");
-        let profile_b_dir = backup_root.join("b");
-
-        fs::create_dir_all(&profile_a_dir).unwrap();
-        fs::create_dir_all(&profile_b_dir).unwrap();
-        fs::write(codex_home.join("auth.json"), "root-auth-before-switch\n").unwrap();
-        fs::write(profile_a_dir.join("auth.json"), "profile-a-auth\n").unwrap();
-        fs::write(
-            profile_a_dir.join("profile.json"),
-            r#"{"folder_name":"a","quota":{"five_hour":{"remaining_percent":77},"weekly":{"remaining_percent":66}},"quota_updated_at_ms":9999999999999}"#,
-        )
-        .unwrap();
-        fs::write(profile_b_dir.join("auth.json"), "profile-b-auth\n").unwrap();
-        fs::write(profile_b_dir.join("profile.json"), r#"{"folder_name":"b"}"#).unwrap();
-        fs::write(get_current_profile_file(Some(&codex_home)), "a\n").unwrap();
-        write_quota_session(&codex_home.join("sessions").join("session-001.jsonl"));
-
-        let hooks = FakeHooks::new(false);
-        let response = switch_profile_with_home_and_hooks(&hooks, "b", Some(&codex_home)).unwrap();
-
-        assert!(response.ok);
-        let stored = fs::read_to_string(profile_a_dir.join("profile.json")).unwrap();
-        assert!(stored.contains(r#""remaining_percent": 77"#));
-        assert!(stored.contains(r#""remaining_percent": 66"#));
-
-        let _ = fs::remove_dir_all(&codex_home);
-    }
-
+    // The live-quota fold and stale-root regression tests moved to
+    // shared switch_core when the backfill was folded in there; only the
+    // Windows-specific prime step is covered here.
     #[test]
     fn switch_profile_primes_target_profile_quota_timestamp_before_switch() {
         let codex_home = temp_codex_home("prime-target-quota");

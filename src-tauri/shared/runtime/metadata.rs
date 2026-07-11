@@ -230,7 +230,9 @@ pub fn auth_is_empty_placeholder(auth_path: &Path) -> bool {
                     .get(field)
                     .and_then(serde_json::Value::as_str)
                     .map(str::trim)
-                    .is_some_and(|value| !value.is_empty() && !value.eq_ignore_ascii_case("replace-me"))
+                    .is_some_and(|value| {
+                        !value.is_empty() && !value.eq_ignore_ascii_case("replace-me")
+                    })
             });
         if has_real_token {
             return false;
@@ -495,6 +497,36 @@ pub fn sync_profile_openai_base_url(
     })
 }
 
+/// Write the root copy of the profile metadata (`~/.codex/profile.json`).
+///
+/// The root copy is otherwise only written by the switch-time overlay, so
+/// it goes stale the moment any refresh path updates the profile-side
+/// copy. Every `backup_root_state_to_profile` write-back must refresh it
+/// first (see `switch_core::sync_live_quota_and_refresh_root`) or the
+/// stale root snapshot would clobber the profile copy it is written over.
+pub fn write_root_profile_metadata(
+    codex_home: &Path,
+    metadata: &ProfileMetadata,
+) -> Result<(), crate::errors::AppError> {
+    let metadata_path = codex_home.join(crate::shared::paths::PROFILE_METADATA_FILENAME);
+    let serialized = serde_json::to_string_pretty(metadata).map_err(|error| {
+        crate::errors::AppError::new(
+            "PROFILE_METADATA_INVALID",
+            format!("Failed to serialize metadata: {error}"),
+        )
+    })?;
+
+    fs::write(&metadata_path, format!("{serialized}\n")).map_err(|error| {
+        crate::errors::AppError::new(
+            "PROFILE_METADATA_WRITE_FAILED",
+            format!(
+                "Failed to write root profile metadata {}: {error}",
+                metadata_path.display()
+            ),
+        )
+    })
+}
+
 pub fn save_profile_metadata(
     profile_name: &str,
     metadata: &ProfileMetadata,
@@ -720,8 +752,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir()
-            .join(format!("codex-switch-metadata-{name}-{unique}"));
+        let path = std::env::temp_dir().join(format!("codex-switch-metadata-{name}-{unique}"));
         std::fs::create_dir_all(&path).unwrap();
         path
     }
@@ -839,7 +870,10 @@ mod tests {
         // apikey mode (no tokens) → no resolvable identity.
         let dir3 = temp_dir("identity-apikey");
         std::fs::write(dir3.join("auth.json"), r#"{"auth_mode":"apikey"}"#).unwrap();
-        assert_eq!(load_account_identity_from_path(&dir3.join("auth.json")), None);
+        assert_eq!(
+            load_account_identity_from_path(&dir3.join("auth.json")),
+            None
+        );
 
         // Placeholder account_id (`replace-me`) with no email → no identity.
         let dir4 = temp_dir("identity-placeholder");
@@ -848,7 +882,10 @@ mod tests {
             r#"{"tokens":{"account_id":"replace-me"}}"#,
         )
         .unwrap();
-        assert_eq!(load_account_identity_from_path(&dir4.join("auth.json")), None);
+        assert_eq!(
+            load_account_identity_from_path(&dir4.join("auth.json")),
+            None
+        );
     }
 
     #[test]
@@ -906,7 +943,10 @@ mod tests {
             r#"{"tokens":{"access_token":"replace-me","account_id":"replace-me"}}"#,
         )
         .unwrap();
-        assert!(auth_is_empty_placeholder(&path), "replace-me seed is seatable");
+        assert!(
+            auth_is_empty_placeholder(&path),
+            "replace-me seed is seatable"
+        );
 
         // Empty file → seatable.
         std::fs::write(&path, "  \n").unwrap();
@@ -914,19 +954,31 @@ mod tests {
 
         // API-key card (auth_mode) → NOT a placeholder.
         std::fs::write(&path, r#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}"#).unwrap();
-        assert!(!auth_is_empty_placeholder(&path), "apikey card is not seatable");
+        assert!(
+            !auth_is_empty_placeholder(&path),
+            "apikey card is not seatable"
+        );
 
         // Bare OPENAI_API_KEY without auth_mode → NOT a placeholder.
         std::fs::write(&path, r#"{"OPENAI_API_KEY":"sk-y"}"#).unwrap();
-        assert!(!auth_is_empty_placeholder(&path), "raw api key is not seatable");
+        assert!(
+            !auth_is_empty_placeholder(&path),
+            "raw api key is not seatable"
+        );
 
         // Real OAuth token material → NOT a placeholder.
         std::fs::write(&path, r#"{"tokens":{"account_id":"acct_real"}}"#).unwrap();
-        assert!(!auth_is_empty_placeholder(&path), "real oauth is not seatable");
+        assert!(
+            !auth_is_empty_placeholder(&path),
+            "real oauth is not seatable"
+        );
 
         // Malformed JSON → conservative false (don't overwrite the unknown).
         std::fs::write(&path, "{not json").unwrap();
-        assert!(!auth_is_empty_placeholder(&path), "malformed is not seatable");
+        assert!(
+            !auth_is_empty_placeholder(&path),
+            "malformed is not seatable"
+        );
 
         // Missing file → false.
         assert!(!auth_is_empty_placeholder(&dir.join("nope.json")));

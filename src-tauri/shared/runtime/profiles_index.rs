@@ -38,8 +38,9 @@ struct CachedProfilesIndex {
 
 fn cache_slot() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, CachedProfilesIndex>>
 {
-    static SLOT: OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, CachedProfilesIndex>>> =
-        OnceLock::new();
+    static SLOT: OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, CachedProfilesIndex>>,
+    > = OnceLock::new();
     SLOT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -340,8 +341,7 @@ fn build_current_card(entry: &ProfileIndexEntry, codex_home: &Path) -> CurrentCa
     }
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn quota_summary_has_data(quota: &crate::models::QuotaSummary) -> bool {
+pub(crate) fn quota_summary_has_data(quota: &crate::models::QuotaSummary) -> bool {
     quota.five_hour.remaining_percent.is_some()
         || quota.five_hour.refresh_at.is_some()
         || quota.weekly.remaining_percent.is_some()
@@ -500,7 +500,10 @@ mod tests {
 
         assert_eq!(snapshot.unmanaged_live_account, None);
         assert_eq!(
-            snapshot.current_card.as_ref().map(|card| card.folder_name.as_str()),
+            snapshot
+                .current_card
+                .as_ref()
+                .map(|card| card.folder_name.as_str()),
             Some("a")
         );
         let _ = fs::remove_dir_all(&codex_home);
@@ -521,7 +524,10 @@ mod tests {
         );
         assert!(snapshot.current_quota_card.is_none());
         assert!(
-            snapshot.profiles.iter().all(|card| card.status != "current"),
+            snapshot
+                .profiles
+                .iter()
+                .all(|card| card.status != "current"),
             "no card in the list should be flagged current"
         );
         let _ = fs::remove_dir_all(&codex_home);
