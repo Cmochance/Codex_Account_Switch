@@ -1108,6 +1108,55 @@ mod tests {
     }
 
     #[test]
+    fn discover_real_codex_cli_path_prefers_path_walk_over_app_bundle() {
+        let _guard = crate::macos::env_guard();
+        let codex_home = temp_codex_home("discover-real-cli-path-vs-bundle");
+        let managed_bin = codex_home.join("bin");
+        let path_dir = codex_home.join("path-bin");
+        let home_dir = codex_home.join("home");
+        // Seed BOTH a real PATH hit and a HOME-local ChatGPT.app CLI.
+        // Unlike the fallback test above — whose `expected` is recomputed
+        // through codex_app_candidates() and therefore mirrors the
+        // implementation — the expected value here is a concrete fixture
+        // path, so a block-ordering regression in
+        // discover_real_codex_cli_path (app-bundle scan moving ahead of
+        // the PATH walk) turns this test red on any machine, including
+        // ones with a real /Applications/ChatGPT.app install.
+        let app_cli_path =
+            codex_cli_from_app_bundle(&home_dir.join("Applications").join("ChatGPT.app"));
+        fs::create_dir_all(&managed_bin).unwrap();
+        fs::create_dir_all(&path_dir).unwrap();
+        fs::create_dir_all(app_cli_path.parent().unwrap()).unwrap();
+        fs::write(managed_bin.join("codex"), "#!/bin/sh\n").unwrap();
+        fs::write(path_dir.join("codex"), "#!/bin/sh\n").unwrap();
+        fs::write(&app_cli_path, "#!/bin/sh\n").unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        let original_home = std::env::var_os("HOME");
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths([managed_bin.clone(), path_dir.clone()]).unwrap(),
+        );
+        std::env::set_var("HOME", &home_dir);
+
+        let resolved = discover_real_codex_cli_path(Some(&managed_bin.join("codex")));
+
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        assert_eq!(resolved, Some(path_dir.join("codex")));
+        let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
     fn codex_cli_from_app_bundle_uses_contents_resources_layout() {
         assert_eq!(
             codex_cli_from_app_bundle(Path::new("/Applications/ChatGPT.app")),

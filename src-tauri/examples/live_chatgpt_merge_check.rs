@@ -32,38 +32,46 @@ fn main() {
     #[cfg(target_os = "macos")]
     {
         let mut failures = 0usize;
+        let mut skipped = 0usize;
         let codex_home = get_codex_home();
         println!("== live ChatGPT merge e2e ==");
         println!("codex_home: {}", codex_home.display());
 
         // 1) Desktop host process detection (ChatGPT host, not Codex process name).
+        // Keep spawn failures distinct from "not running": collapsing them
+        // into `false` would silently disarm the cross-check below and let
+        // the probe report green while it verified nothing.
+        let probe_pgrep = |name: &str| -> Result<bool, String> {
+            Command::new("pgrep")
+                .args(["-x", name])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .map_err(|error| error.to_string())
+        };
         let running = is_codex_app_running();
-        let pgrep_chatgpt = Command::new("pgrep")
-            .args(["-x", "ChatGPT"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        let pgrep_codex = Command::new("pgrep")
-            .args(["-x", "Codex"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let pgrep_chatgpt = probe_pgrep("ChatGPT");
+        let pgrep_codex = probe_pgrep("Codex");
         println!(
-            "\n[1] is_codex_app_running={running} (pgrep ChatGPT={pgrep_chatgpt}, pgrep Codex={pgrep_codex})"
+            "\n[1] is_codex_app_running={running} (pgrep ChatGPT={pgrep_chatgpt:?}, pgrep Codex={pgrep_codex:?})"
         );
-        if pgrep_chatgpt && !running {
-            eprintln!("FAIL: ChatGPT process is up but is_codex_app_running returned false");
-            failures += 1;
-        } else if running {
-            println!("PASS: desktop host detected");
-        } else {
-            println!("WARN: ChatGPT not running — detection path not fully exercised");
+        match (&pgrep_chatgpt, running) {
+            (Err(error), _) => {
+                eprintln!(
+                    "SKIP: pgrep unavailable ({error}) — process-table cross-check is blind this run"
+                );
+                skipped += 1;
+            }
+            (Ok(true), false) => {
+                eprintln!("FAIL: ChatGPT process is up but is_codex_app_running returned false");
+                failures += 1;
+            }
+            (Ok(_), true) => println!("PASS: desktop host detected"),
+            (Ok(false), false) => {
+                println!("WARN: ChatGPT not running — detection path not fully exercised");
+            }
         }
 
         // 2) Suggested paths must include the ChatGPT-bundled CLI when present.
@@ -213,9 +221,14 @@ fn main() {
             }
         }
 
-        let _ = fs::remove_dir_all(&probe_home);
+        if let Err(error) = fs::remove_dir_all(&probe_home) {
+            eprintln!(
+                "WARN: failed to clean probe dir {}: {error}",
+                probe_home.display()
+            );
+        }
 
-        println!("\n== summary: {failures} failure(s) ==");
+        println!("\n== summary: {failures} failure(s), {skipped} skipped check(s) ==");
         if failures > 0 {
             std::process::exit(1);
         }
