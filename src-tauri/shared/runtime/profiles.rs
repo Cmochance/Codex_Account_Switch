@@ -49,6 +49,26 @@ pub fn resolve_current_profile(backup_root: &Path) -> Option<String> {
     None
 }
 
+/// Epoch-ms timestamp of when `profile` last became the active profile,
+/// parsed from the `activated_at=<utc>` line its `.active_profile`
+/// marker was stamped with (`set_active_marker`). `None` when the marker
+/// is missing or predates the `activated_at` format — callers fall back
+/// to their unfiltered legacy behavior.
+///
+/// This is the boundary that scopes the live session JSONL to the
+/// current account: `~/.codex/sessions` is not part of the managed
+/// profile set, so entries written before the activation belong to
+/// whichever account was live previously and must not be attributed to
+/// `profile`.
+pub fn profile_activated_at_ms(profile: &str, backup_root: &Path) -> Option<u64> {
+    let raw = std::fs::read_to_string(backup_root.join(profile).join(ACTIVE_MARKER_FILE)).ok()?;
+    let value = raw
+        .lines()
+        .find_map(|line| line.strip_prefix("activated_at="))?;
+    let parsed = DateTime::parse_from_rfc3339(value.trim()).ok()?;
+    u64::try_from(parsed.timestamp_millis()).ok()
+}
+
 /// Decide which profile slot the live `~/.codex` state should be written back
 /// into, verified against the *actual account identity* in `auth.json` rather
 /// than blindly trusting the `.current_profile` marker.
