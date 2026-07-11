@@ -183,10 +183,26 @@ async function refreshCurrentQuota(showError = false): Promise<void> {
   }
 }
 
+// In-flight dedup for the silent refresh: the post-switch kick can
+// otherwise overlap a 5-min ticker fire. Two concurrent silent refreshes
+// both pass the backend's staleness gate (neither has persisted yet) and
+// can race the same refresh_token rotation — OpenAI's reuse detection
+// then invalidates the session ("refresh_token_reused").
+let activeQuotaSilentRefreshInFlight: Promise<void> | null = null;
+
 // Silent companion to refreshCurrentQuota. Backend gates on >5min staleness
 // and silently swallows non-OAuth / HTTP / parse failures, so any error here
 // just means "skip this tick".
-async function refreshActiveQuotaSilently(): Promise<void> {
+function refreshActiveQuotaSilently(): Promise<void> {
+  if (!activeQuotaSilentRefreshInFlight) {
+    activeQuotaSilentRefreshInFlight = refreshActiveQuotaSilentlyInner().finally(() => {
+      activeQuotaSilentRefreshInFlight = null;
+    });
+  }
+  return activeQuotaSilentRefreshInFlight;
+}
+
+async function refreshActiveQuotaSilentlyInner(): Promise<void> {
   if (state.loading || !state.snapshot) {
     return;
   }

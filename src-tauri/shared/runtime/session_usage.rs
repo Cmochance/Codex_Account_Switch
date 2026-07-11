@@ -291,6 +291,12 @@ pub fn load_latest_local_quota_snapshot_since(
 
     match next_last_snapshot {
         Some(snapshot) => cache.set_last_snapshot(snapshot),
+        // A filtered scan that found nothing newer than the cutoff must
+        // not erase the unfiltered winner: right after a switch every
+        // 15s display tick runs filtered and would otherwise clear the
+        // fast-path anchor on each pass until the new account writes
+        // its first session.
+        None if min_source_mtime_ms.is_some() => {}
         None => cache.clear_last_snapshot(),
     }
     cache.save(codex_home);

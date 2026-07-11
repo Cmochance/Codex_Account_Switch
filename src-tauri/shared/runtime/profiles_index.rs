@@ -352,14 +352,16 @@ fn select_current_quota(
     entry: &ProfileIndexEntry,
     live_snapshot: Option<&super::session_usage::LocalQuotaSnapshot>,
 ) -> crate::models::QuotaSummary {
-    let stored_is_populated = quota_summary_has_data(&entry.stored_quota);
     let stored_updated_at_ms = entry.stored_quota_updated_at_ms.unwrap_or(0);
 
+    // Strictly newer-wins, even when the stored summary is empty: an
+    // empty stored card with a *newer* timestamp is the deliberate
+    // downgrade-to-free clear written by the API refresh paths, and an
+    // older live session must not resurrect the pre-downgrade numbers
+    // next to a Free label. A never-refreshed card has no timestamp
+    // (0), so any live session still wins there.
     match live_snapshot {
-        Some(snapshot)
-            if snapshot.source_mtime_ms.unwrap_or(0) > stored_updated_at_ms
-                || !stored_is_populated =>
-        {
+        Some(snapshot) if snapshot.source_mtime_ms.unwrap_or(0) > stored_updated_at_ms => {
             snapshot.quota.clone()
         }
         _ => entry.stored_quota.clone(),

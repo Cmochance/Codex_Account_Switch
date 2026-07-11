@@ -277,6 +277,45 @@ fn load_or_init_profile_metadata(profile_name: &str, codex_home: Option<&Path>) 
         .unwrap_or_else(|| ProfileMetadata::with_folder_name(profile_name))
 }
 
+/// Strict counterpart of `load_profile_metadata` for callers about to
+/// OVERWRITE metadata copies (the write-back root refresh): a missing
+/// file is a legitimate fresh profile and loads as the default card,
+/// but a *present* file that fails to read / parse / validate surfaces
+/// as an error instead. Falling back to the default there would launder
+/// a transient read failure (AV lock, truncated write, schema drift)
+/// into permanently blanked quota / plan data the moment the write-back
+/// copies that default over the stored card.
+pub(crate) fn load_profile_metadata_strict(
+    profile_name: &str,
+    codex_home: Option<&Path>,
+) -> Result<ProfileMetadata, crate::errors::AppError> {
+    let profile_name = validate_profile_name(profile_name)?;
+    let metadata_path = get_profile_metadata_path(&profile_name, codex_home);
+    let stored = if metadata_path.is_file() {
+        let raw = fs::read_to_string(&metadata_path).map_err(|error| {
+            crate::errors::AppError::new(
+                "PROFILE_METADATA_READ_FAILED",
+                format!("Failed to read {}: {error}", metadata_path.display()),
+            )
+        })?;
+        serde_json::from_str::<ProfileMetadata>(&raw)
+            .ok()
+            .and_then(ProfileMetadata::validate)
+            .ok_or_else(|| {
+                crate::errors::AppError::new(
+                    "PROFILE_METADATA_INVALID",
+                    format!(
+                        "Refusing to overwrite {}: the existing metadata does not parse/validate",
+                        metadata_path.display()
+                    ),
+                )
+            })?
+    } else {
+        ProfileMetadata::with_folder_name(&profile_name)
+    };
+    Ok(hydrate_profile_metadata(stored, &profile_name, codex_home))
+}
+
 fn is_free_plan(plan_name: Option<&str>) -> bool {
     plan_name
         .map(str::trim)

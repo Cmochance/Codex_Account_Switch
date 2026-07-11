@@ -76,6 +76,10 @@ pub fn login_current_profile() -> AppResult<String> {
         ));
     }
 
+    // Same invariant as every other write-back: refresh the root
+    // profile.json copy first, or the frozen switch-in snapshot below
+    // reverts the quota updates recorded while this profile was active.
+    crate::shared::switch_core::sync_live_quota_and_refresh_root(&current_profile, &codex_home)?;
     backup_root_state_to_profile(&current_profile, &codex_home, &backup_root)?;
     sync_profile_metadata_from_auth(&current_profile, None, Some(&codex_home))?;
     super::profiles_index::load_profiles_index(Some(&codex_home))?;

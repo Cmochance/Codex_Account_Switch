@@ -49,24 +49,43 @@ pub fn resolve_current_profile(backup_root: &Path) -> Option<String> {
     None
 }
 
+/// One-shot marker for the "marker exists but activated_at is
+/// unparseable" warning: without it a corrupt marker silently degrades
+/// activation scoping and is indistinguishable from a legitimately
+/// missing one when diagnosing cross-account quota bleed.
+static ACTIVATION_PARSE_WARNING: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
 /// Epoch-ms timestamp of when `profile` last became the active profile,
 /// parsed from the `activated_at=<utc>` line its `.active_profile`
 /// marker was stamped with (`set_active_marker`). `None` when the marker
-/// is missing or predates the `activated_at` format — callers fall back
-/// to their unfiltered legacy behavior.
+/// is missing or carries no parseable `activated_at` — consumers then
+/// treat the live sessions as unattributable (the display path falls
+/// back to the unfiltered freshness race; the write-back fold skips).
 ///
 /// This is the boundary that scopes the live session JSONL to the
-/// current account: `~/.codex/sessions` is not part of the managed
-/// profile set, so entries written before the activation belong to
-/// whichever account was live previously and must not be attributed to
+/// current account: the app never places a `sessions/` dir inside
+/// profile folders, so `~/.codex/sessions` survives switches un-swapped
+/// and entries written before the activation belong to whichever
+/// account was live previously — they must not be attributed to
 /// `profile`.
 pub fn profile_activated_at_ms(profile: &str, backup_root: &Path) -> Option<u64> {
-    let raw = std::fs::read_to_string(backup_root.join(profile).join(ACTIVE_MARKER_FILE)).ok()?;
-    let value = raw
+    let marker_path = backup_root.join(profile).join(ACTIVE_MARKER_FILE);
+    let raw = std::fs::read_to_string(&marker_path).ok()?;
+    let parsed = raw
         .lines()
-        .find_map(|line| line.strip_prefix("activated_at="))?;
-    let parsed = DateTime::parse_from_rfc3339(value.trim()).ok()?;
-    u64::try_from(parsed.timestamp_millis()).ok()
+        .find_map(|line| line.strip_prefix("activated_at="))
+        .and_then(|value| DateTime::parse_from_rfc3339(value.trim()).ok())
+        .and_then(|value| u64::try_from(value.timestamp_millis()).ok());
+    if parsed.is_none() {
+        ACTIVATION_PARSE_WARNING.get_or_init(|| {
+            eprintln!(
+                "codex_switch: active marker {} has no parseable activated_at; \
+                 activation scoping is disabled for this profile until it is re-stamped",
+                marker_path.display()
+            );
+        });
+    }
+    parsed
 }
 
 /// Decide which profile slot the live `~/.codex` state should be written back
