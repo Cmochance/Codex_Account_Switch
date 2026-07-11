@@ -6,8 +6,26 @@ BACKUP_ROOT="$CODHOME/account_backup"
 AUTO_SAVE_ROOT="$BACKUP_ROOT/_autosave"
 CURRENT_PROFILE_FILE="$BACKUP_ROOT/.current_profile"
 ACTIVE_MARKER_FILE=".active_profile"
-APP_NAME="Codex"
-APP_PATH="/Applications/Codex.app"
+# OpenAI folded Codex into ChatGPT.app (bundle id still com.openai.codex).
+# Keep the legacy Codex.app path as a fallback for older installs. A
+# candidate only qualifies if it embeds the codex CLI: a directory check
+# alone would match a chat-only ChatGPT.app (bundle id com.openai.chat)
+# and we would open the consumer chat client instead of the codex host.
+APP_BUNDLE_ID="com.openai.codex"
+APP_NAME_CHATGPT="ChatGPT"
+APP_NAME_CODEX="Codex"
+APP_PATH=""
+for app_candidate in \
+  "/Applications/ChatGPT.app" \
+  "$HOME/Applications/ChatGPT.app" \
+  "/Applications/Codex.app" \
+  "$HOME/Applications/Codex.app"; do
+  if [[ -f "$app_candidate/Contents/Resources/codex" ]]; then
+    APP_PATH="$app_candidate"
+    break
+  fi
+done
+unset app_candidate
 
 usage() {
   cat <<'USAGE'
@@ -106,37 +124,115 @@ set_active_marker() {
   echo "$profile" > "$CURRENT_PROFILE_FILE"
 }
 
+# Echo "pid class" lines for processes matching the known host names.
+# class = ours    — executable sits in a bundle whose CFBundleIdentifier
+#                   is com.openai.codex (the only class we may signal)
+#         other   — Info.plist positively names a different bundle id
+#                   (e.g. the consumer ChatGPT chat client com.openai.chat,
+#                   whose executable is also named "ChatGPT")
+#         unknown — identity could not be established (bare/truncated ps
+#                   comm, non-bundle binary, defaults failure). Unknown
+#                   COUNTS for is-running (proceeding with a possibly-live
+#                   host risks account cross-contamination, so the switch
+#                   must abort instead) but is NEVER signalled.
+codex_desktop_pid_classes() {
+  local name pid exe bundle_root bundle_id
+  for name in "$APP_NAME_CHATGPT" "$APP_NAME_CODEX"; do
+    for pid in $(pgrep -x "$name" 2>/dev/null || true); do
+      # macOS ps prints the full executable path for LaunchServices-launched
+      # apps, but POSIX only guarantees a command *name* — treat bare values
+      # as unknown, not as "not ours".
+      exe="$(ps -o comm= -p "$pid" 2>/dev/null || true)"
+      if [[ "$exe" != *.app/* ]]; then
+        echo "$pid unknown"
+        continue
+      fi
+      bundle_root="${exe%.app/*}.app"
+      bundle_id="$(defaults read "$bundle_root/Contents/Info" CFBundleIdentifier 2>/dev/null || true)"
+      if [[ "$bundle_id" == "$APP_BUNDLE_ID" ]]; then
+        echo "$pid ours"
+      elif [[ -n "$bundle_id" ]]; then
+        echo "$pid other"
+      else
+        echo "$pid unknown"
+      fi
+    done
+  done
+  return 0
+}
+
+codex_desktop_pids() {
+  codex_desktop_pid_classes | awk '$2 == "ours" { print $1 }'
+  return 0
+}
+
+signal_codex_desktop() {
+  local signal="$1" pid
+  for pid in $(codex_desktop_pids); do
+    kill "$signal" "$pid" >/dev/null 2>&1 || true
+  done
+}
+
 is_codex_app_running() {
-  pgrep -x "$APP_NAME" >/dev/null 2>&1
+  # Bundle-id check is rename-proof, and a definitive "false" from
+  # osascript is trusted as-is: com.openai.codex is shared by every
+  # known host bundle, so "not running" is authoritative and probing
+  # process names after it would only add false positives (a bare name
+  # match could be the consumer ChatGPT chat client). Identity-verified
+  # process probes are consulted solely when osascript itself is
+  # unavailable. Same semantics as the Rust implementation in
+  # src-tauri/mac/runtime/process.rs.
+  local answer
+  answer="$(osascript -e "application id \"$APP_BUNDLE_ID\" is running" 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+  case "$answer" in
+    true) return 0 ;;
+    false) return 1 ;;
+  esac
+  # Anything not positively identified as another bundle counts as running:
+  # missing a live host would let the switch replace auth.json under it.
+  [[ -n "$(codex_desktop_pid_classes | awk '$2 != "other"')" ]]
 }
 
 quit_codex_app_if_running() {
-  local attempt
+  local attempt quit_osa_pid
 
   if ! is_codex_app_running; then
     return 1
   fi
 
-  # Use process signals to avoid the app's interactive quit confirmation.
-  pkill -TERM -x "$APP_NAME" >/dev/null 2>&1 || true
+  # Polite AppleScript quit lets the host flush state, but must NOT be
+  # waited on: the host can pop an interactive quit-confirmation dialog,
+  # and the first Apple event may hang on the macOS Automation (TCC)
+  # consent prompt — either would block the switch for minutes. Run it
+  # in the background and TERM immediately (by verified PID), as the
+  # pre-merge script did; the wait loop below provides the grace period.
+  # Keep the osascript PID: a quit event still queued behind the TCC
+  # prompt must be cancelled before we relaunch, or it would be
+  # delivered to — and close — the fresh instance once consent is given.
+  osascript -e "tell application id \"$APP_BUNDLE_ID\" to quit" >/dev/null 2>&1 &
+  quit_osa_pid=$!
+  signal_codex_desktop -TERM
 
   for attempt in $(seq 1 20); do
     if ! is_codex_app_running; then
+      kill -KILL "$quit_osa_pid" >/dev/null 2>&1 || true
       return 0
     fi
     sleep 0.2
   done
 
-  pkill -KILL -x "$APP_NAME" >/dev/null 2>&1 || true
+  signal_codex_desktop -KILL
 
   for attempt in $(seq 1 10); do
     if ! is_codex_app_running; then
+      kill -KILL "$quit_osa_pid" >/dev/null 2>&1 || true
       return 0
     fi
     sleep 0.2
   done
 
-  echo "Error: $APP_NAME did not exit cleanly. Close it manually and retry." >&2
+  kill -KILL "$quit_osa_pid" >/dev/null 2>&1 || true
+  echo "Error: Codex/ChatGPT did not exit cleanly. Close it manually and retry." >&2
   exit 1
 }
 
@@ -144,7 +240,19 @@ reopen_codex_app_if_needed() {
   local app_was_running="$1"
 
   if [[ "$app_was_running" -eq 1 ]]; then
-    open -a "$APP_PATH" >/dev/null 2>&1 || open -a "$APP_NAME" >/dev/null 2>&1
+    if [[ -n "$APP_PATH" ]]; then
+      open -a "$APP_PATH" >/dev/null 2>&1 && return 0
+    fi
+    # "ChatGPT" by display name is deliberately NOT tried: LaunchServices
+    # could resolve it to the consumer chat client (com.openai.chat);
+    # "Codex" only resolves to codex-host bundles (alternate name).
+    # The trailing warning also keeps the chain's overall status zero —
+    # under `set -e` a fully failed open chain would otherwise abort the
+    # script here, AFTER the switch already happened but BEFORE the
+    # success output, making a completed switch look like a failure.
+    open -b "$APP_BUNDLE_ID" >/dev/null 2>&1 \
+      || open -a "$APP_NAME_CODEX" >/dev/null 2>&1 \
+      || echo "Warning: profile switch completed, but Codex/ChatGPT could not be relaunched — open it manually." >&2
   fi
 }
 
