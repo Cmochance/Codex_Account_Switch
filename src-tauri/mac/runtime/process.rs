@@ -476,18 +476,27 @@ fn desktop_app_process_names() -> &'static [&'static str] {
     &[APP_NAME_CHATGPT, APP_NAME_CODEX]
 }
 
-/// PIDs of processes that both match one of the known desktop host
-/// process names AND live inside an app bundle whose CFBundleIdentifier
-/// is `com.openai.codex`. The name match alone is not enough: the
-/// consumer ChatGPT chat client (`com.openai.chat`) also ships an
-/// executable named `ChatGPT`, and matching by bare name would count —
-/// and later kill — it as collateral. PIDs whose bundle identity cannot
-/// be established (non-bundle binary, `ps`/`defaults` probe failure)
-/// are skipped: for the quit path that fails safe — the wait loop times
-/// out and the switch aborts with an error instead of signalling a
-/// process we could not identify.
-fn codex_desktop_pids() -> Vec<u32> {
-    let mut pids = Vec::new();
+/// Bundle identity of a name-matched PID. `Other` is the only verdict
+/// that positively rules a process out (its Info.plist names a
+/// different bundle id). `Unknown` — bare/truncated `ps` comm,
+/// non-bundle binary, `defaults` failure — is treated asymmetrically:
+/// it COUNTS for is-running (proceeding with a possibly-live host risks
+/// account cross-contamination, so the switch must abort instead), but
+/// it is NEVER signalled (we do not kill what we cannot identify).
+#[derive(PartialEq)]
+enum PidBundleIdentity {
+    Ours,
+    Other,
+    Unknown,
+}
+
+/// Name-matched desktop host PIDs with their bundle classification.
+/// The name match alone is not enough: the consumer ChatGPT chat
+/// client (`com.openai.chat`) also ships an executable named
+/// `ChatGPT`, and trusting bare names would count — and later kill —
+/// it as collateral.
+fn desktop_app_pid_classifications() -> Vec<(u32, PidBundleIdentity)> {
+    let mut classified: Vec<(u32, PidBundleIdentity)> = Vec::new();
     for name in desktop_app_process_names() {
         let output = match Command::new("pgrep")
             .args(["-x", name])
@@ -504,17 +513,29 @@ fn codex_desktop_pids() -> Vec<u32> {
             let Ok(pid) = line.trim().parse::<u32>() else {
                 continue;
             };
-            if !pids.contains(&pid) && pid_belongs_to_codex_desktop(pid) {
-                pids.push(pid);
+            if !classified.iter().any(|(existing, _)| *existing == pid) {
+                classified.push((pid, classify_pid_bundle(pid)));
             }
         }
     }
-    pids
+    classified
 }
 
-fn pid_belongs_to_codex_desktop(pid: u32) -> bool {
-    // On macOS `ps -o comm=` prints the full executable path
-    // (e.g. /Applications/ChatGPT.app/Contents/MacOS/ChatGPT).
+/// PIDs verified to belong to a `com.openai.codex` bundle — the only
+/// ones the signal path may touch.
+fn codex_desktop_pids() -> Vec<u32> {
+    desktop_app_pid_classifications()
+        .into_iter()
+        .filter(|(_, identity)| *identity == PidBundleIdentity::Ours)
+        .map(|(pid, _)| pid)
+        .collect()
+}
+
+fn classify_pid_bundle(pid: u32) -> PidBundleIdentity {
+    // On macOS `ps -o comm=` prints the full executable path for
+    // LaunchServices-launched apps (verified live), but POSIX only
+    // guarantees a command *name* — a bare/truncated value must map to
+    // Unknown, not Other, or a running host would be silently missed.
     let output = match Command::new("ps")
         .args(["-o", "comm=", "-p", &pid.to_string()])
         .stdin(Stdio::null())
@@ -522,13 +543,17 @@ fn pid_belongs_to_codex_desktop(pid: u32) -> bool {
         .output()
     {
         Ok(output) if output.status.success() => output,
-        _ => return false,
+        _ => return PidBundleIdentity::Unknown,
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let Some(bundle_root) = bundle_root_from_executable_path(Path::new(stdout.trim())) else {
-        return false;
+        return PidBundleIdentity::Unknown;
     };
-    bundle_identifier(&bundle_root).as_deref() == Some(APP_BUNDLE_ID)
+    match bundle_identifier(&bundle_root) {
+        Some(id) if id == APP_BUNDLE_ID => PidBundleIdentity::Ours,
+        Some(_) => PidBundleIdentity::Other,
+        None => PidBundleIdentity::Unknown,
+    }
 }
 
 /// Walk up from an executable path to the nearest enclosing `.app`
@@ -616,7 +641,14 @@ fn is_codex_app_running_via_bundle_id() -> Option<bool> {
 }
 
 fn is_codex_app_running_via_process_name() -> bool {
-    !codex_desktop_pids().is_empty()
+    // Anything not POSITIVELY identified as another bundle counts as
+    // running: missing a live host here would let the switch overwrite
+    // auth.json under a host whose in-memory app-server still holds the
+    // old account. Unknown PIDs therefore abort the switch (via the
+    // quit timeout) rather than being ignored — or killed.
+    desktop_app_pid_classifications()
+        .iter()
+        .any(|(_, identity)| *identity != PidBundleIdentity::Other)
 }
 
 pub fn is_codex_app_running() -> bool {
@@ -663,12 +695,16 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
     // is the only way to disambiguate ChatGPT.app vs a leftover Codex.app
     // without consulting LaunchServices. Fall back to the stable bundle
     // id (works even when the app was moved / renamed on disk), then to
-    // the display names as a last resort — the same chain as the shell
-    // twin in macOS-backup/codex-switch.sh. Each `open` is checked for
-    // its exit status: `open` reports "application not found" *after* a
-    // successful spawn, so fire-and-forget would tell the caller (and
-    // the post-switch reopen warning channel) that the app launched
-    // when nothing did.
+    // the legacy `Codex` display name as a last resort — same chain as
+    // the shell twin in macOS-backup/codex-switch.sh. `ChatGPT` by name
+    // is deliberately NOT tried: LaunchServices could resolve it to the
+    // consumer chat client (com.openai.chat) and we would report
+    // "opened Codex" while launching an unrelated app; `Codex` only
+    // resolves to codex-host bundles (their CFBundleAlternateNames).
+    // Each `open` is checked for its exit status: `open` reports
+    // "application not found" *after* a successful spawn, so
+    // fire-and-forget would tell the caller (and the post-switch reopen
+    // warning channel) that the app launched when nothing did.
     let mut attempts: Vec<(String, Vec<String>)> = Vec::new();
     if let Some(app_path) = resolve_codex_app_path() {
         attempts.push((app_path.clone(), vec!["-a".to_string(), app_path]));
@@ -676,10 +712,6 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
     attempts.push((
         APP_BUNDLE_ID.to_string(),
         vec!["-b".to_string(), APP_BUNDLE_ID.to_string()],
-    ));
-    attempts.push((
-        APP_NAME_CHATGPT.to_string(),
-        vec!["-a".to_string(), APP_NAME_CHATGPT.to_string()],
     ));
     attempts.push((
         APP_NAME_CODEX.to_string(),
@@ -841,34 +873,34 @@ fn signal_desktop_app_processes(signal: &str) -> usize {
     signalled
 }
 
-fn request_desktop_app_quit() -> usize {
+fn request_desktop_app_quit() -> (usize, Option<std::process::Child>) {
     // Polite path first: AppleScript quit lets the desktop host flush
     // auth / app-server state. It must NOT be waited on — the host can
     // pop an interactive quit-confirmation dialog, and the very first
     // Apple event may hang on the macOS Automation (TCC) consent
-    // prompt; either would block the switch thread for minutes. Spawn
-    // osascript detached and reap it on a background thread.
+    // prompt; either would block the switch thread for minutes. The
+    // child handle is returned so the caller can CANCEL it once the old
+    // host is gone: a quit event still queued behind the TCC prompt
+    // would otherwise be delivered to the instance we relaunch next,
+    // closing it the moment the user grants consent.
     let script = format!("tell application id \"{APP_BUNDLE_ID}\" to quit");
-    match Command::new("osascript")
+    let quit_child = match Command::new("osascript")
         .args(["-e", &script])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
     {
-        Ok(mut child) => {
-            thread::spawn(move || {
-                let _ = child.wait();
-            });
-        }
+        Ok(child) => Some(child),
         Err(error) => {
             eprintln!("codex_switch: failed to spawn osascript quit: {error}");
+            None
         }
-    }
+    };
     // TERM immediately, as the pre-merge code did — the wait loop in
     // quit_codex_app_if_running provides the grace period, and this
     // path is the only quit channel when osascript is blocked.
-    signal_desktop_app_processes("-TERM")
+    (signal_desktop_app_processes("-TERM"), quit_child)
 }
 
 pub fn quit_codex_app_if_running() -> AppResult<bool> {
@@ -876,20 +908,40 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         return Ok(false);
     }
 
-    let mut signalled = request_desktop_app_quit();
+    let (mut signalled, quit_child) = request_desktop_app_quit();
+    let mut exited = false;
     for _ in 0..20 {
         if !is_codex_app_running() {
-            return Ok(true);
+            exited = true;
+            break;
         }
         thread::sleep(Duration::from_millis(200));
     }
 
-    signalled += signal_desktop_app_processes("-KILL");
-    for _ in 0..10 {
-        if !is_codex_app_running() {
-            return Ok(true);
+    if !exited {
+        signalled += signal_desktop_app_processes("-KILL");
+        for _ in 0..10 {
+            if !is_codex_app_running() {
+                exited = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(200));
         }
-        thread::sleep(Duration::from_millis(200));
+    }
+
+    // The polite quit may still be pending behind the TCC consent
+    // prompt. Kill it on every exit path — delivered late, its quit
+    // event would target (and close) the freshly relaunched host. A
+    // normally-finished osascript is already gone; kill is a no-op then.
+    if let Some(mut child) = quit_child {
+        let _ = child.kill();
+        thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+
+    if exited {
+        return Ok(true);
     }
 
     // Distinguish "we signalled it and it would not die" from "we never
