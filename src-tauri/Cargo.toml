@@ -22,6 +22,14 @@ semver = "1.0.28"
 tauri = { version = "=2.10.1", features = [] }
 tauri-plugin-opener = "2.5.3"
 
+# False positives, not dead deps: the crate's module tree lives outside
+# src/ (shared/, mac/, win/ are mounted via #[path] in src/lib.rs), and
+# cargo-machete's file discovery only scans the conventional src/ layout,
+# so it never sees the real `use` sites (verified: every entry below has
+# active call sites under shared/ / mac/ / win/).
+[package.metadata.cargo-machete]
+ignored = ["base64", "chrono", "reqwest", "semver", "serde", "serde_json"]
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 
