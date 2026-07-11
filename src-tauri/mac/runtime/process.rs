@@ -437,13 +437,15 @@ pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<Codex
 }
 
 fn codex_app_candidates() -> Vec<PathBuf> {
+    // Name-major order: the current ChatGPT host wins over a legacy
+    // Codex.app regardless of which Applications folder each lives in
+    // (a stale system-level Codex.app must not shadow a user-level
+    // ChatGPT.app). Matches the shell twin in macOS-backup/codex-switch.sh.
+    let home_apps = env::var_os("HOME").map(|home| PathBuf::from(home).join("Applications"));
     let mut candidates = Vec::with_capacity(APP_BUNDLE_NAMES.len() * 2);
     for bundle_name in APP_BUNDLE_NAMES {
         candidates.push(PathBuf::from("/Applications").join(bundle_name));
-    }
-    if let Some(home) = env::var_os("HOME") {
-        let home_apps = PathBuf::from(home).join("Applications");
-        for bundle_name in APP_BUNDLE_NAMES {
+        if let Some(home_apps) = &home_apps {
             candidates.push(home_apps.join(bundle_name));
         }
     }
@@ -451,22 +453,115 @@ fn codex_app_candidates() -> Vec<PathBuf> {
 }
 
 fn resolve_codex_app_path() -> Option<String> {
+    // A bundle only qualifies if it embeds the codex CLI: `is_dir()`
+    // alone would match a chat-only ChatGPT.app (bundle id
+    // com.openai.chat), and open/reopen would then launch the consumer
+    // chat client instead of the codex host — cached for the whole
+    // process lifetime by the OnceLock below.
     MACOS_APP_PATH_CACHE
         .get_or_init(|| {
             codex_app_candidates()
                 .into_iter()
-                .find(|path| path.is_dir())
+                .find(|path| codex_cli_from_app_bundle(path).is_file())
                 .map(|path| path.to_string_lossy().into_owned())
         })
         .clone()
 }
 
 /// Process names that may own the Codex desktop UI after the ChatGPT
-/// merge. Prefer the current host first so force-kill hits the live
-/// process name on modern installs; keep the legacy name for older
-/// `Codex.app` builds still in the wild.
+/// merge. Order only matters for probe latency (the current host name
+/// is listed first so modern installs match on the first `pgrep`);
+/// signalling resolves concrete PIDs and treats every name equally.
 fn desktop_app_process_names() -> &'static [&'static str] {
     &[APP_NAME_CHATGPT, APP_NAME_CODEX]
+}
+
+/// PIDs of processes that both match one of the known desktop host
+/// process names AND live inside an app bundle whose CFBundleIdentifier
+/// is `com.openai.codex`. The name match alone is not enough: the
+/// consumer ChatGPT chat client (`com.openai.chat`) also ships an
+/// executable named `ChatGPT`, and matching by bare name would count —
+/// and later kill — it as collateral. PIDs whose bundle identity cannot
+/// be established (non-bundle binary, `ps`/`defaults` probe failure)
+/// are skipped: for the quit path that fails safe — the wait loop times
+/// out and the switch aborts with an error instead of signalling a
+/// process we could not identify.
+fn codex_desktop_pids() -> Vec<u32> {
+    let mut pids = Vec::new();
+    for name in desktop_app_process_names() {
+        let output = match Command::new("pgrep")
+            .args(["-x", name])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(output) if output.status.success() => output,
+            // Non-zero exit: no process by that name. Spawn error: pgrep
+            // unavailable — nothing to enumerate either way.
+            _ => continue,
+        };
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let Ok(pid) = line.trim().parse::<u32>() else {
+                continue;
+            };
+            if !pids.contains(&pid) && pid_belongs_to_codex_desktop(pid) {
+                pids.push(pid);
+            }
+        }
+    }
+    pids
+}
+
+fn pid_belongs_to_codex_desktop(pid: u32) -> bool {
+    // On macOS `ps -o comm=` prints the full executable path
+    // (e.g. /Applications/ChatGPT.app/Contents/MacOS/ChatGPT).
+    let output = match Command::new("ps")
+        .args(["-o", "comm=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return false,
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(bundle_root) = bundle_root_from_executable_path(Path::new(stdout.trim())) else {
+        return false;
+    };
+    bundle_identifier(&bundle_root).as_deref() == Some(APP_BUNDLE_ID)
+}
+
+/// Walk up from an executable path to the nearest enclosing `.app`
+/// bundle root (`/Applications/ChatGPT.app/Contents/MacOS/ChatGPT` →
+/// `/Applications/ChatGPT.app`). Returns `None` for non-bundle binaries.
+fn bundle_root_from_executable_path(executable: &Path) -> Option<PathBuf> {
+    executable
+        .ancestors()
+        .skip(1)
+        .find(|ancestor| {
+            ancestor
+                .extension()
+                .map(|extension| extension.eq_ignore_ascii_case("app"))
+                .unwrap_or(false)
+        })
+        .map(Path::to_path_buf)
+}
+
+fn bundle_identifier(bundle_root: &Path) -> Option<String> {
+    // `defaults read` handles both XML and binary Info.plist shapes.
+    let output = Command::new("defaults")
+        .arg("read")
+        .arg(bundle_root.join("Contents").join("Info"))
+        .arg("CFBundleIdentifier")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!id.is_empty()).then_some(id)
 }
 
 /// Parse the stdout of
@@ -481,37 +576,58 @@ fn parse_osascript_is_running(stdout: &str) -> Option<bool> {
     }
 }
 
+/// One-shot marker so a persistent osascript failure (TCC denial, MDM
+/// policy, headless session) is recorded once instead of spamming every
+/// is-running poll — without it the degradation to process-name probes
+/// is invisible when diagnosing quit/switch misbehaviour.
+static OSASCRIPT_PROBE_DEGRADED_WARNING: OnceLock<()> = OnceLock::new();
+
+fn warn_osascript_probe_degraded(detail: &str) {
+    OSASCRIPT_PROBE_DEGRADED_WARNING.get_or_init(|| {
+        eprintln!(
+            "codex_switch: bundle-id is-running probe unavailable, \
+             falling back to process-name checks: {detail}"
+        );
+    });
+}
+
 fn is_codex_app_running_via_bundle_id() -> Option<bool> {
-    let output = Command::new("osascript")
+    let output = match Command::new("osascript")
         .args(["-e", &format!("application id \"{APP_BUNDLE_ID}\" is running")])
+        .stdin(Stdio::null())
         .output()
-        .ok()?;
+    {
+        Ok(output) => output,
+        Err(error) => {
+            warn_osascript_probe_degraded(&format!("failed to spawn osascript: {error}"));
+            return None;
+        }
+    };
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn_osascript_probe_degraded(&format!(
+            "osascript exited {:?}: {}",
+            output.status.code(),
+            stderr.trim().chars().take(200).collect::<String>()
+        ));
         return None;
     }
     parse_osascript_is_running(&String::from_utf8_lossy(&output.stdout))
 }
 
 fn is_codex_app_running_via_process_name() -> bool {
-    desktop_app_process_names().iter().any(|name| {
-        // Null stdio: `pgrep` prints matching PIDs to stdout, which would
-        // otherwise leak into the parent console / log when we only care
-        // about the exit status.
-        Command::new("pgrep")
-            .args(["-x", name])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    })
+    !codex_desktop_pids().is_empty()
 }
 
 pub fn is_codex_app_running() -> bool {
     // Bundle-id check is rename-proof (works for both ChatGPT and Codex
-    // dock labels). Fall back to exact process-name probes when
-    // AppleScript is unavailable (headless CI, TCC denial, etc).
+    // dock labels). A definitive `false` from osascript is trusted as-is:
+    // com.openai.codex is shared by every known host bundle, so "not
+    // running" is authoritative and falling through to process names
+    // would only add false positives. Identity-verified process probes
+    // are consulted solely when the AppleScript answer is unavailable
+    // (spawn failure, TCC denial, headless CI). The shell twin in
+    // macOS-backup/codex-switch.sh follows the same semantics.
     is_codex_app_running_via_bundle_id().unwrap_or_else(is_codex_app_running_via_process_name)
 }
 
@@ -547,24 +663,50 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
     // is the only way to disambiguate ChatGPT.app vs a leftover Codex.app
     // without consulting LaunchServices. Fall back to the stable bundle
     // id (works even when the app was moved / renamed on disk), then to
-    // the historical display name as a last resort.
+    // the display names as a last resort — the same chain as the shell
+    // twin in macOS-backup/codex-switch.sh. Each `open` is checked for
+    // its exit status: `open` reports "application not found" *after* a
+    // successful spawn, so fire-and-forget would tell the caller (and
+    // the post-switch reopen warning channel) that the app launched
+    // when nothing did.
+    let mut attempts: Vec<(String, Vec<String>)> = Vec::new();
     if let Some(app_path) = resolve_codex_app_path() {
-        Command::new("open")
-            .args(["-a", &app_path])
-            .spawn()
-            .map_err(|error| {
-                AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
-            })?;
-        return Ok(app_path);
+        attempts.push((app_path.clone(), vec!["-a".to_string(), app_path]));
     }
+    attempts.push((
+        APP_BUNDLE_ID.to_string(),
+        vec!["-b".to_string(), APP_BUNDLE_ID.to_string()],
+    ));
+    attempts.push((
+        APP_NAME_CHATGPT.to_string(),
+        vec!["-a".to_string(), APP_NAME_CHATGPT.to_string()],
+    ));
+    attempts.push((
+        APP_NAME_CODEX.to_string(),
+        vec!["-a".to_string(), APP_NAME_CODEX.to_string()],
+    ));
 
-    Command::new("open")
-        .args(["-b", APP_BUNDLE_ID])
-        .spawn()
-        .map_err(|error| {
-            AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
-        })?;
-    Ok(APP_BUNDLE_ID.to_string())
+    let mut last_error = String::from("no open strategy available");
+    for (label, args) in attempts {
+        match Command::new("open").args(&args).stdin(Stdio::null()).output() {
+            Ok(output) if output.status.success() => return Ok(label),
+            Ok(output) => {
+                last_error = format!(
+                    "`open {}` exited {:?}: {}",
+                    args.join(" "),
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+            }
+            Err(error) => {
+                last_error = format!("failed to spawn `open {}`: {error}", args.join(" "));
+            }
+        }
+    }
+    Err(AppError::new(
+        "APP_OPEN_FAILED",
+        format!("Failed to open Codex: {last_error}"),
+    ))
 }
 
 pub fn forward_to_real_codex(args: &[String], codex_home: Option<&Path>) -> AppResult<i32> {
@@ -672,28 +814,61 @@ pub fn run_codex_login(cli_codex_home: &Path, runtime_codex_home: &Path) -> AppR
     Err(AppError::new("LOGIN_FAILED", message))
 }
 
-fn signal_desktop_app_processes(signal: &str) {
-    // AppleScript quit is the polite path (lets the Electron host flush
-    // auth / app-server state). Signal-by-process-name is the force path
-    // used after the polite quit times out, and also covers hosts where
-    // `osascript` itself is blocked.
-    for name in desktop_app_process_names() {
-        let _ = Command::new("pkill")
-            .args([signal, "-x", name])
+/// Send `signal` to every identity-verified desktop host PID (see
+/// [`codex_desktop_pids`]) and return how many processes were
+/// signalled. `-TERM` is sent immediately alongside the AppleScript
+/// quit (it covers hosts where `osascript` itself is blocked); `-KILL`
+/// is the escalation after the polite quit times out.
+fn signal_desktop_app_processes(signal: &str) -> usize {
+    let mut signalled = 0;
+    for pid in codex_desktop_pids() {
+        match Command::new("kill")
+            .args([signal, &pid.to_string()])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status();
+            .status()
+        {
+            Ok(status) if status.success() => signalled += 1,
+            // Non-zero exit: the process exited between enumeration and
+            // signalling — the wait loop below re-checks, nothing to do.
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("codex_switch: failed to spawn kill for pid {pid}: {error}");
+            }
+        }
     }
+    signalled
 }
 
-fn request_desktop_app_quit() {
+fn request_desktop_app_quit() -> usize {
+    // Polite path first: AppleScript quit lets the desktop host flush
+    // auth / app-server state. It must NOT be waited on — the host can
+    // pop an interactive quit-confirmation dialog, and the very first
+    // Apple event may hang on the macOS Automation (TCC) consent
+    // prompt; either would block the switch thread for minutes. Spawn
+    // osascript detached and reap it on a background thread.
     let script = format!("tell application id \"{APP_BUNDLE_ID}\" to quit");
-    let _ = Command::new("osascript").args(["-e", &script]).status();
-    // Also send TERM to both known process names so a stuck renderer
-    // that ignored AppleScript still gets a chance to die before we
-    // escalate to KILL. Harmless no-ops when the name is not running.
-    signal_desktop_app_processes("-TERM");
+    match Command::new("osascript")
+        .args(["-e", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => {
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(error) => {
+            eprintln!("codex_switch: failed to spawn osascript quit: {error}");
+        }
+    }
+    // TERM immediately, as the pre-merge code did — the wait loop in
+    // quit_codex_app_if_running provides the grace period, and this
+    // path is the only quit channel when osascript is blocked.
+    signal_desktop_app_processes("-TERM")
 }
 
 pub fn quit_codex_app_if_running() -> AppResult<bool> {
@@ -701,7 +876,7 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         return Ok(false);
     }
 
-    request_desktop_app_quit();
+    let mut signalled = request_desktop_app_quit();
     for _ in 0..20 {
         if !is_codex_app_running() {
             return Ok(true);
@@ -709,7 +884,7 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         thread::sleep(Duration::from_millis(200));
     }
 
-    signal_desktop_app_processes("-KILL");
+    signalled += signal_desktop_app_processes("-KILL");
     for _ in 0..10 {
         if !is_codex_app_running() {
             return Ok(true);
@@ -717,10 +892,16 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         thread::sleep(Duration::from_millis(200));
     }
 
-    Err(AppError::new(
-        "APP_EXIT_FAILED",
-        "Codex did not exit cleanly. Close it manually and retry.",
-    ))
+    // Distinguish "we signalled it and it would not die" from "we never
+    // managed to signal anything" — the latter means the failure is on
+    // our side (no identifiable PID / kill unavailable), not the app's.
+    let message = if signalled == 0 {
+        "Codex/ChatGPT still appears to be running, but no matching process could be \
+         identified and signalled. Close it manually and retry."
+    } else {
+        "Codex/ChatGPT did not exit cleanly. Close it manually and retry."
+    };
+    Err(AppError::new("APP_EXIT_FAILED", message))
 }
 
 pub fn reopen_codex_app_if_needed(app_was_running: bool, codex_home: Option<&Path>) -> Vec<String> {
@@ -779,10 +960,11 @@ impl PlatformHooks for MacosPlatformHooks {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_app_server_command, codex_app_candidates, codex_cli_from_app_bundle,
-        desktop_app_process_names, discover_real_codex_cli_path, parse_osascript_is_running,
-        resolve_real_codex_cli_with_source, set_user_codex_cli_path, validate_user_codex_cli_path,
-        APP_BUNDLE_ID, APP_BUNDLE_NAMES, APP_NAME_CHATGPT, APP_NAME_CODEX, RealCodexPathSource,
+        build_app_server_command, bundle_root_from_executable_path, codex_app_candidates,
+        codex_cli_from_app_bundle, desktop_app_process_names, discover_real_codex_cli_path,
+        parse_osascript_is_running, resolve_real_codex_cli_with_source, set_user_codex_cli_path,
+        validate_user_codex_cli_path, APP_BUNDLE_ID, APP_BUNDLE_NAMES, APP_NAME_CHATGPT,
+        APP_NAME_CODEX, RealCodexPathSource,
     };
     use crate::macos::cli_shim::real_codex_resolver_path;
     use std::fs;
@@ -952,6 +1134,10 @@ mod tests {
             std::env::remove_var("HOME");
         }
 
+        // Name-major: the ChatGPT host wins over legacy Codex.app in
+        // BOTH Applications folders before Codex.app is considered at
+        // all — a stale system-level Codex.app must not shadow a
+        // user-level ChatGPT.app.
         assert_eq!(APP_BUNDLE_NAMES, ["ChatGPT.app", "Codex.app"]);
         assert_eq!(
             candidates[0],
@@ -959,11 +1145,11 @@ mod tests {
         );
         assert_eq!(
             candidates[1],
-            PathBuf::from("/Applications").join("Codex.app")
+            home_dir.join("Applications").join("ChatGPT.app")
         );
         assert_eq!(
             candidates[2],
-            home_dir.join("Applications").join("ChatGPT.app")
+            PathBuf::from("/Applications").join("Codex.app")
         );
         assert_eq!(
             candidates[3],
@@ -978,6 +1164,36 @@ mod tests {
         assert_eq!(
             desktop_app_process_names(),
             &[APP_NAME_CHATGPT, APP_NAME_CODEX]
+        );
+    }
+
+    #[test]
+    fn bundle_root_from_executable_path_finds_nearest_app_ancestor() {
+        assert_eq!(
+            bundle_root_from_executable_path(Path::new(
+                "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+            )),
+            Some(PathBuf::from("/Applications/ChatGPT.app"))
+        );
+        assert_eq!(
+            bundle_root_from_executable_path(Path::new(
+                "/Applications/Codex.app/Contents/MacOS/Codex"
+            )),
+            Some(PathBuf::from("/Applications/Codex.app"))
+        );
+        // Nested bundles resolve to the nearest (deepest) .app root.
+        assert_eq!(
+            bundle_root_from_executable_path(Path::new(
+                "/Applications/Outer.app/Contents/Helpers/Inner.app/Contents/MacOS/Inner"
+            )),
+            Some(PathBuf::from(
+                "/Applications/Outer.app/Contents/Helpers/Inner.app"
+            ))
+        );
+        // Non-bundle binaries have no .app ancestor.
+        assert_eq!(
+            bundle_root_from_executable_path(Path::new("/usr/local/bin/ChatGPT")),
+            None
         );
     }
 
