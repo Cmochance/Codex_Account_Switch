@@ -9,11 +9,11 @@ use crate::platform;
 
 use super::config::sync_root_openai_base_url_from_profile_metadata;
 use super::fs_ops::{backup_root_state_to_profile, remove_path};
+use super::login_runtime::login_profile_with_home;
 use super::metadata::{
     load_profile_metadata, save_profile_metadata, sync_profile_metadata_from_auth,
     sync_profile_openai_base_url,
 };
-use super::login_runtime::login_profile_with_home;
 use super::paths::{
     get_backup_root, get_codex_home, get_login_runtime_dir, validate_profile_name,
     ACTIVE_MARKER_FILE, CONTACT_URL, RELEASES_URL, XIAOHONGSHU_URL,

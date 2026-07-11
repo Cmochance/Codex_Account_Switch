@@ -232,11 +232,7 @@ pub fn refresh_profile_via_api(
     profile_name: &str,
     codex_home: &Path,
 ) -> AppResult<ChatGptApiSnapshot> {
-    refresh_profile_via_api_with_options(
-        profile_name,
-        codex_home,
-        RefreshOptions::default(),
-    )
+    refresh_profile_via_api_with_options(profile_name, codex_home, RefreshOptions::default())
 }
 
 /// Knobs for `refresh_profile_via_api_with_options`. Today the only knob
@@ -325,9 +321,9 @@ fn read_auth_file(profile_dir: &Path) -> AppResult<ProfileAuthFile> {
         .and_then(Value::as_str)
         .map(str::to_ascii_lowercase);
 
-    let tokens = parsed
-        .get("tokens")
-        .ok_or_else(|| AppError::new("PROFILE_AUTH_INVALID", "auth.json missing `tokens` field."))?;
+    let tokens = parsed.get("tokens").ok_or_else(|| {
+        AppError::new("PROFILE_AUTH_INVALID", "auth.json missing `tokens` field.")
+    })?;
     let take = |key: &str| -> String {
         tokens
             .get(key)
@@ -488,7 +484,10 @@ fn refresh_oauth_tokens(
 
     let response = client
         .post(format!("{ISSUER}/oauth/token"))
-        .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}",
             url_encode(&auth.refresh_token),
@@ -557,8 +556,14 @@ fn persist_refreshed_auth(profile_dir: &Path, auth: &ProfileAuthFile) -> AppResu
                 "auth.json missing tokens object during refresh persist.",
             )
         })?;
-    tokens.insert("access_token".to_string(), Value::String(auth.access_token.clone()));
-    tokens.insert("refresh_token".to_string(), Value::String(auth.refresh_token.clone()));
+    tokens.insert(
+        "access_token".to_string(),
+        Value::String(auth.access_token.clone()),
+    );
+    tokens.insert(
+        "refresh_token".to_string(),
+        Value::String(auth.refresh_token.clone()),
+    );
     if !auth.id_token.is_empty() {
         tokens.insert("id_token".to_string(), Value::String(auth.id_token.clone()));
     }
@@ -619,9 +624,12 @@ fn quota_window_from_rate_limit(window: &RateLimitWindow) -> QuotaWindow {
         .used_percent
         .map(|used| (100.0 - used).round().clamp(0.0, 100.0) as u8);
     let refresh_at = window.reset_at.and_then(|seconds| {
-        Utc.timestamp_opt(seconds, 0)
-            .single()
-            .map(|datetime| datetime.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+        Utc.timestamp_opt(seconds, 0).single().map(|datetime| {
+            datetime
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
     });
     QuotaWindow {
         remaining_percent,
@@ -768,8 +776,7 @@ mod tests {
         let quota = quota_summary_from_payload(&payload).unwrap();
 
         assert!(
-            quota.five_hour.remaining_percent.is_none()
-                && quota.five_hour.refresh_at.is_none(),
+            quota.five_hour.remaining_percent.is_none() && quota.five_hour.refresh_at.is_none(),
             "5h slot must stay empty when only the weekly window is present"
         );
         // 100 - 12 = 88

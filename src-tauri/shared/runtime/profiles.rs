@@ -3,7 +3,9 @@ use std::path::Path;
 use chrono::{DateTime, Local, NaiveDate};
 
 use super::fs_ops::read_text_stripped;
-use super::metadata::{auth_is_empty_placeholder, load_account_identity_from_path, AccountIdentity};
+use super::metadata::{
+    auth_is_empty_placeholder, load_account_identity_from_path, AccountIdentity,
+};
 use super::paths::{get_current_profile_file, list_profile_dirs, ACTIVE_MARKER_FILE};
 
 pub fn build_display_title(profile_name: &str, account_label: Option<&str>) -> String {
@@ -160,7 +162,10 @@ mod tests {
 
     /// Minimal real auth.json whose stable identity is `acct:<account_id>`.
     fn auth_with_account(account_id: &str) -> String {
-        format!("{{\"tokens\":{{\"account_id\":{}}}}}", serde_json::Value::String(account_id.to_string()))
+        format!(
+            "{{\"tokens\":{{\"account_id\":{}}}}}",
+            serde_json::Value::String(account_id.to_string())
+        )
     }
 
     fn write_profile(backup_root: &Path, profile: &str, auth_body: &str) {
@@ -235,7 +240,11 @@ mod tests {
     fn seats_new_account_into_placeholder_marker_slot() {
         let (codex_home, backup_root) = setup("placeholder-seat");
         // Placeholder card has no resolvable identity.
-        write_profile(&backup_root, "a", r#"{"tokens":{"account_id":"replace-me"}}"#);
+        write_profile(
+            &backup_root,
+            "a",
+            r#"{"tokens":{"account_id":"replace-me"}}"#,
+        );
         set_marker(&backup_root, "a");
         fs::write(codex_home.join("auth.json"), auth_with_account("acct_NEW")).unwrap();
 
@@ -272,7 +281,11 @@ mod tests {
         write_profile(&backup_root, "a", apikey);
         set_marker(&backup_root, "a");
         // Live root drifted to an OAuth account owned by no card.
-        fs::write(codex_home.join("auth.json"), auth_with_account("acct_OAUTH")).unwrap();
+        fs::write(
+            codex_home.join("auth.json"),
+            auth_with_account("acct_OAUTH"),
+        )
+        .unwrap();
 
         // Must refuse (case 5), not seat into the API-key card (case 4)…
         assert_eq!(resolve_backup_target(&backup_root, &codex_home), None);
@@ -321,7 +334,10 @@ mod tests {
             Some("a")
         );
         // …and not flagged unmanaged.
-        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
+        assert_eq!(
+            detect_unmanaged_live_account(&backup_root, &codex_home),
+            None
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 
@@ -347,7 +363,10 @@ mod tests {
         write_profile(&backup_root, "a", &auth_with_account("acct_X"));
         fs::write(codex_home.join("auth.json"), auth_with_account("acct_X")).unwrap();
 
-        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
+        assert_eq!(
+            detect_unmanaged_live_account(&backup_root, &codex_home),
+            None
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 
@@ -358,7 +377,10 @@ mod tests {
         write_profile(&backup_root, "a", &auth_with_account("acct_X"));
         fs::write(codex_home.join("auth.json"), r#"{"auth_mode":"apikey"}"#).unwrap();
 
-        assert_eq!(detect_unmanaged_live_account(&backup_root, &codex_home), None);
+        assert_eq!(
+            detect_unmanaged_live_account(&backup_root, &codex_home),
+            None
+        );
         let _ = fs::remove_dir_all(&codex_home);
     }
 }

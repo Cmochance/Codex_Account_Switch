@@ -32,8 +32,7 @@ fn should_force_oauth_rotation(profile_name: &str, codex_home: &Path) -> bool {
         .and_then(|value| u64::try_from(value.as_millis()).ok());
     match now_ms {
         Some(now) => {
-            now.saturating_sub(last_check)
-                >= crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
+            now.saturating_sub(last_check) >= crate::shared::chatgpt_api::PLAN_FRESHNESS_TTL_MS
         }
         // Clock unreadable: be conservative and rotate.
         None => true,
@@ -208,7 +207,9 @@ pub fn refresh_profile(profile_name: &str) -> AppResult<String> {
     // of paying for an LLM round-trip. Falls through to the app-server
     // RPC path on any failure so existing behavior is preserved.
     if crate::shared::chatgpt_api::profile_supports_api_refresh(&profile_dir) {
-        if let Some(profile_path) = try_refresh_via_chatgpt_api(&profile_name, &codex_home, &profile_dir)? {
+        if let Some(profile_path) =
+            try_refresh_via_chatgpt_api(&profile_name, &codex_home, &profile_dir)?
+        {
             return Ok(profile_path);
         }
     }

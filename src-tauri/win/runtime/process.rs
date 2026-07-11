@@ -9,9 +9,9 @@ use std::thread;
 use std::time::Duration;
 
 use crate::errors::{AppError, AppResult};
+use crate::models::CodexCliCandidate;
 use crate::platform::hooks::PlatformHooks;
 use crate::shared::codex_app_server::{fetch_account_snapshot, AppServerSnapshot};
-use crate::models::CodexCliCandidate;
 use crate::shared::codex_cli_path::CodexPathResolver;
 pub use crate::shared::codex_cli_path::{InstallState, RealCodexPathSource};
 use crate::shared::login_cancel::wait_for_login_or_cancel;
@@ -463,10 +463,7 @@ pub(super) fn validate_user_codex_cli_path(
 
 /// Persist a user override for the real codex CLI path. Returns the
 /// canonicalized path that was saved.
-pub fn set_user_codex_cli_path(
-    codex_home: Option<&Path>,
-    raw_input: &str,
-) -> AppResult<PathBuf> {
+pub fn set_user_codex_cli_path(codex_home: Option<&Path>, raw_input: &str) -> AppResult<PathBuf> {
     let resolved = validate_user_codex_cli_path(codex_home, raw_input)?;
     let mut state = load_install_state(codex_home);
     let next = Some(resolved.to_string_lossy().into_owned());
@@ -494,10 +491,7 @@ pub struct WindowsCodexPathResolver;
 pub static WINDOWS_CODEX_PATH_RESOLVER: WindowsCodexPathResolver = WindowsCodexPathResolver;
 
 impl CodexPathResolver for WindowsCodexPathResolver {
-    fn resolve_with_source(
-        &self,
-        codex_home: &Path,
-    ) -> Option<(PathBuf, RealCodexPathSource)> {
+    fn resolve_with_source(&self, codex_home: &Path) -> Option<(PathBuf, RealCodexPathSource)> {
         resolve_real_codex_cli_with_source(Some(codex_home))
     }
 
@@ -538,7 +532,12 @@ pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
         let base = PathBuf::from(local_app_data);
         push(base.join("Programs").join("codex").join("codex.exe"));
         push(base.join("Programs").join("codex").join("codex.cmd"));
-        push(base.join("Programs").join("codex").join("bin").join("codex.cmd"));
+        push(
+            base.join("Programs")
+                .join("codex")
+                .join("bin")
+                .join("codex.cmd"),
+        );
     }
     if let Some(app_data) = env::var_os("APPDATA") {
         let npm_base = PathBuf::from(app_data).join("npm");
@@ -702,11 +701,7 @@ impl PlatformHooks for WindowsPlatformHooks {
         reopen_codex_app_if_needed(app_was_running, codex_home)
     }
 
-    fn run_codex_login(
-        &self,
-        cli_codex_home: &Path,
-        runtime_codex_home: &Path,
-    ) -> AppResult<()> {
+    fn run_codex_login(&self, cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
         run_codex_login(cli_codex_home, runtime_codex_home)
     }
 
@@ -771,7 +766,10 @@ mod tests {
         fs::create_dir_all(&codex_home).unwrap();
 
         // (a) non-file path → None, never spawned.
-        assert_eq!(probe_codex_version(&codex_home.join("does-not-exist")), None);
+        assert_eq!(
+            probe_codex_version(&codex_home.join("does-not-exist")),
+            None
+        );
 
         let set_exec = |path: &std::path::Path| {
             let mut perm = fs::metadata(path).unwrap().permissions();

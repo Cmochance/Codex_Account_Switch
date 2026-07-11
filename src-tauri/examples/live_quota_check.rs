@@ -73,9 +73,7 @@ fn main() {
     }
 
     if let Some(profile) = target_profile {
-        println!(
-            "\n--- chatgpt_api::profile_supports_api_refresh({profile}) ---"
-        );
+        println!("\n--- chatgpt_api::profile_supports_api_refresh({profile}) ---");
         let backup_root = codex_home.join("account_backup").join(&profile);
         let supports = chatgpt_api::profile_supports_api_refresh(&backup_root);
         println!("supports api refresh: {supports}");
@@ -107,8 +105,6 @@ fn main() {
             }
         }
     } else {
-        println!(
-            "\n(skip chatgpt_api refresh: pass a profile folder name as argv[1] to test)"
-        );
+        println!("\n(skip chatgpt_api refresh: pass a profile folder name as argv[1] to test)");
     }
 }

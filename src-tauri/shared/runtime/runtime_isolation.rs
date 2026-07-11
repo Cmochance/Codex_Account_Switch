@@ -136,8 +136,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir()
-            .join(format!("codex-switch-runtime-isolation-{name}-{unique}"));
+        let path =
+            std::env::temp_dir().join(format!("codex-switch-runtime-isolation-{name}-{unique}"));
         fs::create_dir_all(&path).unwrap();
         path
     }

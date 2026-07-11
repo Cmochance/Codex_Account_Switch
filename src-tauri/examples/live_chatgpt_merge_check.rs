@@ -16,9 +16,7 @@ use codex_switch_lib::macos::process::{
     MACOS_CODEX_PATH_RESOLVER,
 };
 #[cfg(target_os = "macos")]
-use codex_switch_lib::shared::codex_cli_path::{
-    build_codex_cli_status, redetect_codex_cli_path,
-};
+use codex_switch_lib::shared::codex_cli_path::{build_codex_cli_status, redetect_codex_cli_path};
 #[cfg(target_os = "macos")]
 use codex_switch_lib::shared::paths::get_codex_home;
 
@@ -94,7 +92,10 @@ fn main() {
 
         // 3) Redetect must verify the ChatGPT CLI is runnable and capture a version.
         let redetect = redetect_runnable_codex_cli_paths(Some(&codex_home));
-        println!("\n[3] redetect_runnable_codex_cli_paths ({}):", redetect.len());
+        println!(
+            "\n[3] redetect_runnable_codex_cli_paths ({}):",
+            redetect.len()
+        );
         for candidate in &redetect {
             println!(
                 "  - {} ({})",
@@ -103,7 +104,10 @@ fn main() {
             );
         }
         if chatgpt_cli.is_file() {
-            match redetect.iter().find(|c| c.path == chatgpt_cli.to_string_lossy()) {
+            match redetect
+                .iter()
+                .find(|c| c.path == chatgpt_cli.to_string_lossy())
+            {
                 Some(hit) if hit.version.as_deref().unwrap_or("").contains("codex") => {
                     println!("PASS: ChatGPT CLI probed runnable: {:?}", hit.version);
                 }

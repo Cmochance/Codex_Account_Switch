@@ -17,11 +17,7 @@ pub trait PlatformHooks: Send + Sync {
     /// codex sees as `CODEX_HOME` — for the legacy "log in as the
     /// active profile" flow they are the same, but the per-card login
     /// flow points it at a sandboxed sibling.
-    fn run_codex_login(
-        &self,
-        cli_codex_home: &Path,
-        runtime_codex_home: &Path,
-    ) -> AppResult<()>;
+    fn run_codex_login(&self, cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()>;
     /// Drive `codex app-server` to fetch the live account plan + rate
     /// limits without paying for an LLM round-trip. Replaces the
     /// historical `codex exec "Reply with the single word OK."` hack

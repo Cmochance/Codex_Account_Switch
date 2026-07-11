@@ -7,9 +7,9 @@ use std::thread;
 use std::time::Duration;
 
 use crate::errors::{AppError, AppResult};
+use crate::models::CodexCliCandidate;
 use crate::platform::hooks::PlatformHooks;
 use crate::shared::codex_app_server::{fetch_account_snapshot, AppServerSnapshot};
-use crate::models::CodexCliCandidate;
 use crate::shared::codex_cli_path::CodexPathResolver;
 pub use crate::shared::codex_cli_path::{InstallState, RealCodexPathSource};
 use crate::shared::login_cancel::wait_for_login_or_cancel;
@@ -221,10 +221,7 @@ pub(super) fn validate_user_codex_cli_path(
     Ok(candidate)
 }
 
-pub fn set_user_codex_cli_path(
-    codex_home: Option<&Path>,
-    raw_input: &str,
-) -> AppResult<PathBuf> {
+pub fn set_user_codex_cli_path(codex_home: Option<&Path>, raw_input: &str) -> AppResult<PathBuf> {
     let resolved = validate_user_codex_cli_path(codex_home, raw_input)?;
     let mut state = load_install_state(codex_home);
     let next = Some(resolved.to_string_lossy().into_owned());
@@ -251,10 +248,7 @@ pub struct MacosCodexPathResolver;
 pub static MACOS_CODEX_PATH_RESOLVER: MacosCodexPathResolver = MacosCodexPathResolver;
 
 impl CodexPathResolver for MacosCodexPathResolver {
-    fn resolve_with_source(
-        &self,
-        codex_home: &Path,
-    ) -> Option<(PathBuf, RealCodexPathSource)> {
+    fn resolve_with_source(&self, codex_home: &Path) -> Option<(PathBuf, RealCodexPathSource)> {
         resolve_real_codex_cli_with_source(Some(codex_home))
     }
 
@@ -618,7 +612,10 @@ fn warn_osascript_probe_degraded(detail: &str) {
 
 fn is_codex_app_running_via_bundle_id() -> Option<bool> {
     let output = match Command::new("osascript")
-        .args(["-e", &format!("application id \"{APP_BUNDLE_ID}\" is running")])
+        .args([
+            "-e",
+            &format!("application id \"{APP_BUNDLE_ID}\" is running"),
+        ])
         .stdin(Stdio::null())
         .output()
     {
@@ -720,7 +717,11 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
 
     let mut last_error = String::from("no open strategy available");
     for (label, args) in attempts {
-        match Command::new("open").args(&args).stdin(Stdio::null()).output() {
+        match Command::new("open")
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+        {
             Ok(output) if output.status.success() => return Ok(label),
             Ok(output) => {
                 last_error = format!(
@@ -988,11 +989,7 @@ impl PlatformHooks for MacosPlatformHooks {
         reopen_codex_app_if_needed(app_was_running, codex_home)
     }
 
-    fn run_codex_login(
-        &self,
-        cli_codex_home: &Path,
-        runtime_codex_home: &Path,
-    ) -> AppResult<()> {
+    fn run_codex_login(&self, cli_codex_home: &Path, runtime_codex_home: &Path) -> AppResult<()> {
         run_codex_login(cli_codex_home, runtime_codex_home)
     }
 
@@ -1015,8 +1012,8 @@ mod tests {
         build_app_server_command, bundle_root_from_executable_path, codex_app_candidates,
         codex_cli_from_app_bundle, desktop_app_process_names, discover_real_codex_cli_path,
         parse_osascript_is_running, resolve_real_codex_cli_with_source, set_user_codex_cli_path,
-        validate_user_codex_cli_path, APP_BUNDLE_ID, APP_BUNDLE_NAMES, APP_NAME_CHATGPT,
-        APP_NAME_CODEX, RealCodexPathSource,
+        validate_user_codex_cli_path, RealCodexPathSource, APP_BUNDLE_ID, APP_BUNDLE_NAMES,
+        APP_NAME_CHATGPT, APP_NAME_CODEX,
     };
     use crate::macos::cli_shim::real_codex_resolver_path;
     use std::fs;
