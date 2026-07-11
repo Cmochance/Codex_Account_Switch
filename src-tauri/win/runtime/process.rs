@@ -18,19 +18,39 @@ use crate::shared::login_cancel::wait_for_login_or_cancel;
 
 use super::paths::{get_codex_home, get_install_state_file};
 
-const APP_PROCESS_NAME: &str = "Codex.exe";
+/// Post-merge desktop host process name. OpenAI folded Codex into the
+/// ChatGPT desktop app on Windows on 2026-07-09 (executable
+/// `ChatGPT.exe`, installed under `%LOCALAPPDATA%\Programs\ChatGPT\` or
+/// inside the MSIX package's `app\` dir); exact-name checks against
+/// `Codex.exe` no longer see the running UI.
+const APP_PROCESS_NAME_CHATGPT: &str = "ChatGPT.exe";
+/// Historical standalone process name, still shipped by
+/// not-yet-updated `Codex.exe` installs.
+const APP_PROCESS_NAME_CODEX: &str = "Codex.exe";
+/// Lower-cased path marker of the MSIX package family shared by the
+/// pre-merge Codex app and the merged ChatGPT host. The Store package
+/// "updates as usual" into the merged app and a package family name
+/// never changes across updates, so `OpenAI.Codex_2p2nqsd0c76g0` stays
+/// (the prefix also covers the `OpenAI.CodexBeta_…` channel).
+const WINDOWSAPPS_CODEX_MARKER: &str = r"\windowsapps\openai.codex";
+/// Lower-cased path marker of ChatGPT Classic — the pre-merge consumer
+/// chat app (`OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0`). Its executable is
+/// also named `ChatGPT.exe`, but it is NOT a codex host and must never
+/// be counted as running or killed.
+const WINDOWSAPPS_CLASSIC_CHATGPT_MARKER: &str = r"\windowsapps\openai.chatgpt-desktop_";
 const WINDOWS_INVOKABLE_SUFFIXES: [&str; 4] = ["cmd", "exe", "bat", "com"];
 const WINDOWS_APPS_PATH_SEGMENT: &str = r"\microsoft\windowsapps\";
 const WINDOWS_STORE_APP_ID: &str = "OpenAI.Codex_2p2nqsd0c76g0!App";
 const WINDOWS_STORE_SHELL_PREFIX: &str = r"shell:AppsFolder\";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-static WINDOWS_APP_TARGET_CACHE: OnceLock<String> = OnceLock::new();
+static WINDOWS_APP_TARGET_CACHE: OnceLock<Option<String>> = OnceLock::new();
 static WINDOWS_PLATFORM_HOOKS: WindowsPlatformHooks = WindowsPlatformHooks;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AppLaunchTarget {
     WindowsStore(String),
+    Executable(PathBuf),
 }
 
 pub struct WindowsPlatformHooks;
@@ -180,6 +200,13 @@ pub(super) fn discover_real_codex_cli_path(managed_shim_path: Option<&Path>) -> 
         }
     }
 
+    // Desktop-host bundled CLI as the last tier — mirrors the macOS
+    // app-bundle fallback so a machine whose only codex is the one
+    // inside the (merged) desktop app still resolves.
+    for candidate in desktop_host_bundled_cli_candidates() {
+        push_real_codex_candidate(&mut candidates, candidate, managed_shim_path);
+    }
+
     candidates.into_iter().next()
 }
 
@@ -215,36 +242,215 @@ fn detect_windows_store_app_target() -> Option<String> {
     is_valid_windows_store_app_id(&app_id).then(|| windows_store_shell_target(&app_id))
 }
 
-fn resolve_windows_store_shell_target() -> String {
+/// Detected Store shell target, cached for the process lifetime.
+/// `None` when the package is absent or PowerShell is unavailable.
+fn detected_windows_store_target() -> Option<String> {
     WINDOWS_APP_TARGET_CACHE
+        .get_or_init(detect_windows_store_app_target)
+        .clone()
+}
+
+/// InstallLocation of the (merged) codex host's MSIX package, cached
+/// for the process lifetime. `None` when the Store package is absent
+/// (non-Store install) or PowerShell is unavailable.
+static WINDOWS_STORE_INSTALL_LOCATION_CACHE: OnceLock<Option<String>> = OnceLock::new();
+
+fn windows_store_install_location() -> Option<String> {
+    WINDOWS_STORE_INSTALL_LOCATION_CACHE
         .get_or_init(|| {
-            detect_windows_store_app_target()
-                .unwrap_or_else(|| windows_store_shell_target(WINDOWS_STORE_APP_ID))
+            if !cfg!(target_os = "windows") {
+                return None;
+            }
+            let mut command = Command::new("powershell");
+            command.args([
+                "-NoProfile",
+                "-Command",
+                "Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue \
+                 | Select-Object -First 1 -ExpandProperty InstallLocation",
+            ]);
+            let output = hide_console_window(&mut command).output().ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let location = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (!location.is_empty()).then_some(location)
         })
         .clone()
 }
 
+/// Non-Store install locations of the desktop host executable, current
+/// host first. Each candidate must embed the codex CLI
+/// (`resources\codex.exe`) to qualify — a ChatGPT.exe without it could
+/// be an unrelated install and must not be launched as "Codex".
+fn non_store_host_executables() -> Vec<PathBuf> {
+    let Some(local_app_data) = env::var_os("LOCALAPPDATA") else {
+        return Vec::new();
+    };
+    let programs = PathBuf::from(local_app_data).join("Programs");
+    [
+        programs.join("ChatGPT").join(APP_PROCESS_NAME_CHATGPT),
+        programs.join("Codex").join(APP_PROCESS_NAME_CODEX),
+    ]
+    .into_iter()
+    .filter(|exe| exe.is_file() && host_dir_embeds_codex_cli(exe))
+    .collect()
+}
+
+/// Codex CLI copies bundled inside the desktop host installs — the
+/// Windows analog of the macOS `Contents/Resources/codex` fallback.
+/// Order is discovery preference: the MSIX package
+/// (`<InstallLocation>\app\resources\codex.exe`), then the non-Store
+/// ChatGPT install, then the legacy non-Store Codex install.
+fn desktop_host_bundled_cli_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(install_location) = windows_store_install_location() {
+        candidates.push(
+            PathBuf::from(install_location)
+                .join("app")
+                .join("resources")
+                .join("codex.exe"),
+        );
+    }
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        let programs = PathBuf::from(local_app_data).join("Programs");
+        candidates.push(programs.join("ChatGPT").join("resources").join("codex.exe"));
+        candidates.push(programs.join("Codex").join("resources").join("codex.exe"));
+    }
+    candidates
+}
+
 fn resolve_windows_app_target() -> AppLaunchTarget {
-    AppLaunchTarget::WindowsStore(resolve_windows_store_shell_target())
+    // Prefer the Store package when it is actually installed (the
+    // merged app keeps the OpenAI.Codex package family). Otherwise fall
+    // back to a qualified non-Store executable; the hardcoded shell
+    // target stays as the historical last resort.
+    if let Some(target) = detected_windows_store_target() {
+        return AppLaunchTarget::WindowsStore(target);
+    }
+    if let Some(executable) = non_store_host_executables().into_iter().next() {
+        return AppLaunchTarget::Executable(executable);
+    }
+    AppLaunchTarget::WindowsStore(windows_store_shell_target(WINDOWS_STORE_APP_ID))
+}
+
+/// Process names that may own the Codex desktop UI after the ChatGPT
+/// merge. Order only matters for probe latency (current host first).
+fn desktop_app_process_names() -> &'static [&'static str] {
+    &[APP_PROCESS_NAME_CHATGPT, APP_PROCESS_NAME_CODEX]
+}
+
+/// Install identity of a name-matched PID. `Other` is the only verdict
+/// that positively rules a process out (ChatGPT Classic). `Unknown`
+/// (no executable path, unrecognized location) is treated
+/// asymmetrically: it COUNTS for is-running — proceeding with a
+/// possibly-live host risks account cross-contamination, so the switch
+/// must abort instead — but it is NEVER signalled (we do not kill what
+/// we cannot identify). Mirrors the macOS classification in
+/// `mac/runtime/process.rs`.
+#[derive(Debug, PartialEq)]
+enum HostIdentity {
+    Ours,
+    Other,
+    Unknown,
+}
+
+/// Classify a host process by its executable path. The bare name match
+/// is not enough: ChatGPT Classic ships an executable that is also
+/// named `ChatGPT.exe`.
+fn classify_host_executable(executable_path: &str) -> HostIdentity {
+    let normalized = executable_path.replace('/', "\\").to_ascii_lowercase();
+    if normalized.trim().is_empty() {
+        return HostIdentity::Unknown;
+    }
+    if normalized.contains(WINDOWSAPPS_CODEX_MARKER) {
+        return HostIdentity::Ours;
+    }
+    if normalized.contains(WINDOWSAPPS_CLASSIC_CHATGPT_MARKER) {
+        return HostIdentity::Other;
+    }
+    // Non-Store installs (%LOCALAPPDATA%\Programs\ChatGPT, portable
+    // copies): the codex host embeds the codex CLI next to its
+    // executable (`resources\codex.exe` — the Windows analog of the
+    // macOS `Contents/Resources/codex` qualifier). Classic has no such
+    // file, but its absence alone cannot rule a host out (probe
+    // failures), so it stays Unknown rather than Other.
+    if host_dir_embeds_codex_cli(Path::new(executable_path)) {
+        return HostIdentity::Ours;
+    }
+    HostIdentity::Unknown
+}
+
+fn host_dir_embeds_codex_cli(executable: &Path) -> bool {
+    executable
+        .parent()
+        .map(|dir| dir.join("resources").join("codex.exe").is_file())
+        .unwrap_or(false)
+}
+
+/// Parse the `<pid>|<executable path>` lines emitted by the PowerShell
+/// CIM query in [`desktop_app_pid_classifications`]. Extracted for unit
+/// tests (the query itself needs a live Windows host).
+fn parse_pid_classification_lines(stdout: &str) -> Vec<(u32, HostIdentity)> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (pid, path) = line.trim().split_once('|')?;
+            let pid = pid.trim().parse::<u32>().ok()?;
+            Some((pid, classify_host_executable(path)))
+        })
+        .collect()
+}
+
+/// Name-matched desktop host PIDs with their install classification,
+/// via one PowerShell CIM query (~150-400ms — only paid after the cheap
+/// tasklist pre-check matched a name). Returns an empty list when
+/// PowerShell itself is unavailable; callers must treat that as
+/// "unattributable", not as "not running".
+fn desktop_app_pid_classifications() -> Vec<(u32, HostIdentity)> {
+    let script = format!(
+        "Get-CimInstance Win32_Process -Filter \"Name='{APP_PROCESS_NAME_CHATGPT}' OR Name='{APP_PROCESS_NAME_CODEX}'\" \
+         | ForEach-Object {{ \"$($_.ProcessId)|$($_.ExecutablePath)\" }}"
+    );
+    let mut command = Command::new("powershell");
+    command.args(["-NoProfile", "-Command", &script]);
+    let output = match hide_console_window(&mut command).output() {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    parse_pid_classification_lines(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Cheap pre-check: does any process with a known host name exist at
+/// all? Avoids paying the PowerShell classification cost on every
+/// 200ms quit-wait poll when nothing is running.
+fn any_host_process_name_running() -> bool {
+    desktop_app_process_names().iter().any(|name| {
+        let mut command = Command::new("tasklist");
+        command.args(["/FI", &format!("IMAGENAME eq {name}"), "/FO", "CSV", "/NH"]);
+        let output = match hide_console_window(&mut command).output() {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        String::from_utf8_lossy(&output.stdout)
+            .to_ascii_lowercase()
+            .contains(&name.to_ascii_lowercase())
+    })
 }
 
 pub fn is_codex_app_running() -> bool {
-    let mut command = Command::new("tasklist");
-    command.args([
-        "/FI",
-        &format!("IMAGENAME eq {APP_PROCESS_NAME}"),
-        "/FO",
-        "CSV",
-        "/NH",
-    ]);
-
-    let output = match hide_console_window(&mut command).output() {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-    stdout.contains(&APP_PROCESS_NAME.to_ascii_lowercase())
+    if !any_host_process_name_running() {
+        return false;
+    }
+    let classified = desktop_app_pid_classifications();
+    if classified.is_empty() {
+        // A host name is running but PowerShell could not attribute it:
+        // count as running so the switch aborts instead of proceeding
+        // over a possibly-live host (quit will refuse to signal it).
+        return true;
+    }
+    classified
+        .iter()
+        .any(|(_, identity)| *identity != HostIdentity::Other)
 }
 
 pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<String> {
@@ -259,6 +465,14 @@ pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<Strin
             })?;
 
             Ok(shell_target)
+        }
+        AppLaunchTarget::Executable(executable) => {
+            let mut command = Command::new(&executable);
+            hide_console_window(&mut command).spawn().map_err(|error| {
+                AppError::new("APP_OPEN_FAILED", format!("Failed to open Codex: {error}"))
+            })?;
+
+            Ok(executable.to_string_lossy().into_owned())
         }
     }
 }
@@ -555,6 +769,9 @@ pub fn suggested_codex_cli_paths(codex_home: Option<&Path>) -> Vec<PathBuf> {
         push(base.join("codex.exe"));
         push(base.join("codex.cmd"));
     }
+    for candidate in desktop_host_bundled_cli_candidates() {
+        push(candidate);
+    }
 
     let mut where_command = Command::new("where");
     where_command.arg("codex");
@@ -628,35 +845,78 @@ pub fn redetect_runnable_codex_cli_paths(codex_home: Option<&Path>) -> Vec<Codex
         .collect()
 }
 
+/// Signal every identity-verified host PID (`taskkill /PID`, graceful
+/// WM_CLOSE by default, `/F` when `force`) and return how many were
+/// signalled. Signalling by PID instead of `/IM <name>` keeps ChatGPT
+/// Classic (same executable name, different install) untouched, and
+/// Unknown PIDs are never signalled.
+fn signal_desktop_app_processes(force: bool) -> usize {
+    let mut signalled = 0;
+    for (pid, identity) in desktop_app_pid_classifications() {
+        if identity != HostIdentity::Ours {
+            continue;
+        }
+        let pid_text = pid.to_string();
+        let mut taskkill = Command::new("taskkill");
+        if force {
+            taskkill.args(["/F", "/PID", &pid_text]);
+        } else {
+            taskkill.args(["/PID", &pid_text]);
+        }
+        match hide_console_window(&mut taskkill).output() {
+            Ok(output) if output.status.success() => signalled += 1,
+            // Non-zero exit: the process exited between enumeration and
+            // signalling — the wait loop below re-checks, nothing to do.
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("codex_switch: failed to spawn taskkill for pid {pid}: {error}");
+            }
+        }
+    }
+    signalled
+}
+
 pub fn quit_codex_app_if_running() -> AppResult<bool> {
     if !is_codex_app_running() {
         return Ok(false);
     }
 
-    let mut taskkill = Command::new("taskkill");
-    taskkill.args(["/IM", APP_PROCESS_NAME]);
-    let _ = hide_console_window(&mut taskkill).output();
+    let mut signalled = signal_desktop_app_processes(false);
+    let mut exited = false;
     for _ in 0..20 {
         if !is_codex_app_running() {
-            return Ok(true);
+            exited = true;
+            break;
         }
         thread::sleep(Duration::from_millis(200));
     }
 
-    let mut force_taskkill = Command::new("taskkill");
-    force_taskkill.args(["/F", "/IM", APP_PROCESS_NAME]);
-    let _ = hide_console_window(&mut force_taskkill).output();
-    for _ in 0..10 {
-        if !is_codex_app_running() {
-            return Ok(true);
+    if !exited {
+        signalled += signal_desktop_app_processes(true);
+        for _ in 0..10 {
+            if !is_codex_app_running() {
+                exited = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(200));
         }
-        thread::sleep(Duration::from_millis(200));
     }
 
-    Err(AppError::new(
-        "APP_EXIT_FAILED",
-        "Codex did not exit cleanly. Close it manually and retry.",
-    ))
+    if exited {
+        return Ok(true);
+    }
+
+    // Distinguish "we signalled it and it would not die" from "we never
+    // managed to signal anything" — the latter means the failure is on
+    // our side (no identifiable PID / taskkill unavailable), not the
+    // app's. Mirrors the macOS quit path.
+    let message = if signalled == 0 {
+        "Codex/ChatGPT still appears to be running, but no matching process could be \
+         identified and signalled. Close it manually and retry."
+    } else {
+        "Codex/ChatGPT did not exit cleanly. Close it manually and retry."
+    };
+    Err(AppError::new("APP_EXIT_FAILED", message))
 }
 
 pub fn reopen_codex_app_if_needed(
@@ -990,5 +1250,76 @@ mod tests {
             AppLaunchTarget::WindowsStore(windows_store_shell_target(WINDOWS_STORE_APP_ID))
         );
         let _ = fs::remove_dir_all(&codex_home);
+    }
+
+    #[test]
+    fn classify_host_executable_identifies_msix_packages() {
+        use super::{classify_host_executable, HostIdentity};
+        // Merged host: the OpenAI.Codex package family survives the
+        // in-place Store update (display/executable renamed to ChatGPT).
+        assert_eq!(
+            classify_host_executable(
+                r"C:\Program Files\WindowsApps\OpenAI.Codex_26.707.0.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe"
+            ),
+            HostIdentity::Ours
+        );
+        // Beta channel shares the OpenAI.Codex prefix.
+        assert_eq!(
+            classify_host_executable(
+                r"C:\Program Files\WindowsApps\OpenAI.CodexBeta_26.513.4821.0_x64__2p2nqsd0c76g0\app\Codex (Beta).exe"
+            ),
+            HostIdentity::Ours
+        );
+        // ChatGPT Classic: same executable name, NOT a codex host.
+        assert_eq!(
+            classify_host_executable(
+                r"C:\Program Files\WindowsApps\OpenAI.ChatGPT-Desktop_1.2025.112.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe"
+            ),
+            HostIdentity::Other
+        );
+        assert_eq!(
+            super::classify_host_executable(""),
+            HostIdentity::Unknown,
+            "missing executable path must stay unattributable"
+        );
+        assert_eq!(
+            classify_host_executable(r"C:\Users\me\Desktop\ChatGPT.exe"),
+            HostIdentity::Unknown
+        );
+    }
+
+    #[test]
+    fn host_dir_embeds_codex_cli_detects_bundled_cli() {
+        use super::host_dir_embeds_codex_cli;
+        let root = temp_codex_home("host-embed-cli");
+        fs::create_dir_all(root.join("resources")).unwrap();
+        let exe = root.join("ChatGPT.exe");
+        fs::write(&exe, "stub").unwrap();
+        assert!(!host_dir_embeds_codex_cli(&exe));
+        fs::write(root.join("resources").join("codex.exe"), "stub").unwrap();
+        assert!(host_dir_embeds_codex_cli(&exe));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parse_pid_classification_lines_parses_and_skips_malformed() {
+        use super::{parse_pid_classification_lines, HostIdentity};
+        let stdout = "123|C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.707.0.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe\r\n\
+                      456|C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT-Desktop_1.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe\r\n\
+                      789|\r\n\
+                      not-a-line\r\n";
+        let parsed = parse_pid_classification_lines(stdout);
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0], (123, HostIdentity::Ours));
+        assert_eq!(parsed[1], (456, HostIdentity::Other));
+        assert_eq!(parsed[2], (789, HostIdentity::Unknown));
+    }
+
+    #[test]
+    fn desktop_app_process_names_cover_merged_and_legacy_hosts() {
+        assert_eq!(
+            super::desktop_app_process_names(),
+            &["ChatGPT.exe", "Codex.exe"]
+        );
     }
 }
