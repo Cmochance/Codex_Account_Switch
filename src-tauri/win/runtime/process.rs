@@ -27,6 +27,10 @@ const APP_PROCESS_NAME_CHATGPT: &str = "ChatGPT.exe";
 /// Historical standalone process name, still shipped by
 /// not-yet-updated `Codex.exe` installs.
 const APP_PROCESS_NAME_CODEX: &str = "Codex.exe";
+/// Pre-merge beta channel standalone process name (`Codex (Beta).exe`),
+/// still running on not-yet-updated beta installs. Post-merge beta
+/// updates to `ChatGPT.exe` and is covered by that name instead.
+const APP_PROCESS_NAME_CODEX_BETA: &str = "Codex (Beta).exe";
 /// Lower-cased path marker of the MSIX package family shared by the
 /// pre-merge Codex app and the merged ChatGPT host. The Store package
 /// "updates as usual" into the merged app and a package family name
@@ -216,16 +220,24 @@ fn windows_store_shell_target(app_id: &str) -> String {
 
 fn is_valid_windows_store_app_id(app_id: &str) -> bool {
     let trimmed = app_id.trim();
-    trimmed.starts_with("OpenAI.Codex_") && trimmed.ends_with("!App")
+    // Accept both `OpenAI.Codex_…!App` and the `OpenAI.CodexBeta_…!App`
+    // channel; the `OpenAI.Codex` prefix cannot reach ChatGPT Classic
+    // (`OpenAI.ChatGPT-Desktop_…`).
+    trimmed.starts_with("OpenAI.Codex") && trimmed.ends_with("!App")
 }
 
-fn detect_windows_store_app_target() -> Option<String> {
+/// Probe LaunchServices/AppX for the codex host's Store shell target.
+/// Returns `(authoritative, value)`: `authoritative` is false only when
+/// the probe itself failed (spawn error, non-zero exit) and the answer
+/// is therefore unknown — callers must not cache a non-authoritative
+/// `None` as "absent".
+fn detect_windows_store_app_target_probe() -> (bool, Option<String>) {
     if !cfg!(target_os = "windows") {
-        return None;
+        return (true, None);
     }
 
     let script = format!(
-        "$package = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue; \
+        "$package = Get-AppxPackage -Name 'OpenAI.Codex*' -ErrorAction SilentlyContinue; \
          if ($package) {{ \
            $appId = Get-StartApps | Where-Object {{ $_.AppID -like 'OpenAI.Codex*' }} | Select-Object -First 1 -ExpandProperty AppID; \
            if ($appId) {{ $appId }} else {{ '{WINDOWS_STORE_APP_ID}' }} \
@@ -233,49 +245,64 @@ fn detect_windows_store_app_target() -> Option<String> {
     );
     let mut command = Command::new("powershell");
     command.args(["-NoProfile", "-Command", &script]);
-    let output = hide_console_window(&mut command).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
+    let output = match hide_console_window(&mut command).output() {
+        Ok(output) if output.status.success() => output,
+        _ => return (false, None),
+    };
 
     let app_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    is_valid_windows_store_app_id(&app_id).then(|| windows_store_shell_target(&app_id))
+    (
+        true,
+        is_valid_windows_store_app_id(&app_id).then(|| windows_store_shell_target(&app_id)),
+    )
 }
 
-/// Detected Store shell target, cached for the process lifetime.
-/// `None` when the package is absent or PowerShell is unavailable.
+/// Detected Store shell target, cached only once a query authoritatively
+/// resolves. A transient PowerShell failure (login-storm spawn failure,
+/// non-zero exit) is NOT cached, so a later call retries instead of
+/// being pinned to "absent" for the whole process lifetime.
 fn detected_windows_store_target() -> Option<String> {
-    WINDOWS_APP_TARGET_CACHE
-        .get_or_init(detect_windows_store_app_target)
-        .clone()
+    if let Some(cached) = WINDOWS_APP_TARGET_CACHE.get() {
+        return cached.clone();
+    }
+    let (authoritative, value) = detect_windows_store_app_target_probe();
+    if authoritative {
+        let _ = WINDOWS_APP_TARGET_CACHE.set(value.clone());
+    }
+    value
 }
 
-/// InstallLocation of the (merged) codex host's MSIX package, cached
-/// for the process lifetime. `None` when the Store package is absent
-/// (non-Store install) or PowerShell is unavailable.
+/// InstallLocation of the (merged) codex host's MSIX package. Cached
+/// only on an authoritative answer (see [`detected_windows_store_target`]).
 static WINDOWS_STORE_INSTALL_LOCATION_CACHE: OnceLock<Option<String>> = OnceLock::new();
 
 fn windows_store_install_location() -> Option<String> {
-    WINDOWS_STORE_INSTALL_LOCATION_CACHE
-        .get_or_init(|| {
-            if !cfg!(target_os = "windows") {
-                return None;
-            }
-            let mut command = Command::new("powershell");
-            command.args([
-                "-NoProfile",
-                "-Command",
-                "Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue \
-                 | Select-Object -First 1 -ExpandProperty InstallLocation",
-            ]);
-            let output = hide_console_window(&mut command).output().ok()?;
-            if !output.status.success() {
-                return None;
-            }
-            let location = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            (!location.is_empty()).then_some(location)
-        })
-        .clone()
+    if let Some(cached) = WINDOWS_STORE_INSTALL_LOCATION_CACHE.get() {
+        return cached.clone();
+    }
+    if !cfg!(target_os = "windows") {
+        let _ = WINDOWS_STORE_INSTALL_LOCATION_CACHE.set(None);
+        return None;
+    }
+    // `-Name 'OpenAI.Codex*'` also matches the OpenAI.CodexBeta channel;
+    // the trailing `*` cannot reach OpenAI.ChatGPT-Desktop (Classic).
+    let mut command = Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-Command",
+        "Get-AppxPackage -Name 'OpenAI.Codex*' -ErrorAction SilentlyContinue \
+         | Select-Object -First 1 -ExpandProperty InstallLocation",
+    ]);
+    let output = match hide_console_window(&mut command).output() {
+        Ok(output) if output.status.success() => output,
+        // Transient failure: leave the cache empty so the next call
+        // retries instead of pinning "no bundled CLI" for the session.
+        _ => return None,
+    };
+    let location = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let value = (!location.is_empty()).then_some(location);
+    let _ = WINDOWS_STORE_INSTALL_LOCATION_CACHE.set(value.clone());
+    value
 }
 
 /// Non-Store install locations of the desktop host executable, current
@@ -336,7 +363,11 @@ fn resolve_windows_app_target() -> AppLaunchTarget {
 /// Process names that may own the Codex desktop UI after the ChatGPT
 /// merge. Order only matters for probe latency (current host first).
 fn desktop_app_process_names() -> &'static [&'static str] {
-    &[APP_PROCESS_NAME_CHATGPT, APP_PROCESS_NAME_CODEX]
+    &[
+        APP_PROCESS_NAME_CHATGPT,
+        APP_PROCESS_NAME_CODEX,
+        APP_PROCESS_NAME_CODEX_BETA,
+    ]
 }
 
 /// Install identity of a name-matched PID. `Other` is the only verdict
@@ -401,6 +432,23 @@ fn parse_pid_classification_lines(stdout: &str) -> Vec<(u32, HostIdentity)> {
         .collect()
 }
 
+/// One-shot markers so a persistent probe failure (stripped PATH,
+/// blocked PowerShell) is logged once instead of every poll — without
+/// them the degradation is invisible when diagnosing a switch that
+/// silently stopped quitting the host.
+static TASKLIST_PROBE_DEGRADED_WARNING: OnceLock<()> = OnceLock::new();
+static CIM_PROBE_DEGRADED_WARNING: OnceLock<()> = OnceLock::new();
+
+/// Outcome of the cheap host-name pre-check. `Absent` is authoritative
+/// (`tasklist` ran and matched nothing); `Unavailable` means the probe
+/// itself failed and the answer is unknown — the caller must fall
+/// through to classification rather than treat it as "not running".
+enum NameProbe {
+    Present,
+    Absent,
+    Unavailable,
+}
+
 /// Name-matched desktop host PIDs with their install classification,
 /// via one PowerShell CIM query (~150-400ms — only paid after the cheap
 /// tasklist pre-check matched a name). Returns an empty list when
@@ -408,49 +456,93 @@ fn parse_pid_classification_lines(stdout: &str) -> Vec<(u32, HostIdentity)> {
 /// "unattributable", not as "not running".
 fn desktop_app_pid_classifications() -> Vec<(u32, HostIdentity)> {
     let script = format!(
-        "Get-CimInstance Win32_Process -Filter \"Name='{APP_PROCESS_NAME_CHATGPT}' OR Name='{APP_PROCESS_NAME_CODEX}'\" \
+        "Get-CimInstance Win32_Process -Filter \"Name='{APP_PROCESS_NAME_CHATGPT}' OR Name='{APP_PROCESS_NAME_CODEX}' OR Name='{APP_PROCESS_NAME_CODEX_BETA}'\" \
          | ForEach-Object {{ \"$($_.ProcessId)|$($_.ExecutablePath)\" }}"
     );
     let mut command = Command::new("powershell");
     command.args(["-NoProfile", "-Command", &script]);
     let output = match hide_console_window(&mut command).output() {
         Ok(output) if output.status.success() => output,
-        _ => return Vec::new(),
+        result => {
+            CIM_PROBE_DEGRADED_WARNING.get_or_init(|| {
+                eprintln!(
+                    "codex_switch: PowerShell host classification unavailable ({}); \
+                     process attribution disabled",
+                    match &result {
+                        Ok(output) => format!("exit {:?}", output.status.code()),
+                        Err(error) => error.to_string(),
+                    }
+                );
+            });
+            return Vec::new();
+        }
     };
     parse_pid_classification_lines(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Cheap pre-check: does any process with a known host name exist at
 /// all? Avoids paying the PowerShell classification cost on every
-/// 200ms quit-wait poll when nothing is running.
-fn any_host_process_name_running() -> bool {
-    desktop_app_process_names().iter().any(|name| {
+/// 200ms quit-wait poll when nothing is running. Distinguishes
+/// "definitely absent" from "probe unavailable" so a broken `tasklist`
+/// does not masquerade as "not running".
+fn host_name_probe() -> NameProbe {
+    let mut any_unavailable = false;
+    for name in desktop_app_process_names() {
         let mut command = Command::new("tasklist");
         command.args(["/FI", &format!("IMAGENAME eq {name}"), "/FO", "CSV", "/NH"]);
-        let output = match hide_console_window(&mut command).output() {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
-        String::from_utf8_lossy(&output.stdout)
-            .to_ascii_lowercase()
-            .contains(&name.to_ascii_lowercase())
-    })
+        match hide_console_window(&mut command).output() {
+            Ok(output) if output.status.success() => {
+                if String::from_utf8_lossy(&output.stdout)
+                    .to_ascii_lowercase()
+                    .contains(&name.to_ascii_lowercase())
+                {
+                    return NameProbe::Present;
+                }
+            }
+            _ => any_unavailable = true,
+        }
+    }
+    if any_unavailable {
+        TASKLIST_PROBE_DEGRADED_WARNING.get_or_init(|| {
+            eprintln!(
+                "codex_switch: tasklist pre-check unavailable; \
+                 falling back to PowerShell classification"
+            );
+        });
+        NameProbe::Unavailable
+    } else {
+        NameProbe::Absent
+    }
 }
 
-pub fn is_codex_app_running() -> bool {
-    if !any_host_process_name_running() {
-        return false;
-    }
+/// Classification-only running check, for callers that already know a
+/// host name exists (the quit wait loops): skips the tasklist
+/// pre-check and pays a single PowerShell CIM query per poll (~150-400
+/// ms — the quit worst case is documented on the loop below).
+fn is_codex_host_running_via_classification() -> bool {
     let classified = desktop_app_pid_classifications();
     if classified.is_empty() {
-        // A host name is running but PowerShell could not attribute it:
-        // count as running so the switch aborts instead of proceeding
-        // over a possibly-live host (quit will refuse to signal it).
-        return true;
+        // PowerShell could not attribute anything: fall back to the
+        // name probe and stay conservative — a bare name match counts
+        // as running so the switch aborts instead of proceeding over a
+        // possibly-live host (quit refuses to signal it).
+        return matches!(host_name_probe(), NameProbe::Present);
     }
     classified
         .iter()
         .any(|(_, identity)| *identity != HostIdentity::Other)
+}
+
+pub fn is_codex_app_running() -> bool {
+    match host_name_probe() {
+        // Authoritatively no host process: skip the expensive query.
+        NameProbe::Absent => false,
+        // A host name is present, or the pre-check is broken and we
+        // cannot rule a host out: consult classification (which itself
+        // fails conservative — an unattributable host counts as
+        // running so the switch aborts rather than risk contamination).
+        NameProbe::Present | NameProbe::Unavailable => is_codex_host_running_via_classification(),
+    }
 }
 
 pub fn open_or_activate_codex_app(_codex_home: Option<&Path>) -> AppResult<String> {
@@ -881,10 +973,15 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
         return Ok(false);
     }
 
+    // Wait-loop cost note: each poll pays one PowerShell CIM query
+    // (~150-400ms) on top of the 200ms sleep, because classification is
+    // genuinely required — ChatGPT Classic shares the ChatGPT.exe name
+    // and a cheap name check would never observe "exited". Worst case
+    // quit latency is therefore ~7-12s graceful + ~4-6s forced.
     let mut signalled = signal_desktop_app_processes(false);
     let mut exited = false;
     for _ in 0..20 {
-        if !is_codex_app_running() {
+        if !is_codex_host_running_via_classification() {
             exited = true;
             break;
         }
@@ -894,7 +991,7 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
     if !exited {
         signalled += signal_desktop_app_processes(true);
         for _ in 0..10 {
-            if !is_codex_app_running() {
+            if !is_codex_host_running_via_classification() {
                 exited = true;
                 break;
             }
@@ -912,7 +1009,8 @@ pub fn quit_codex_app_if_running() -> AppResult<bool> {
     // app's. Mirrors the macOS quit path.
     let message = if signalled == 0 {
         "Codex/ChatGPT still appears to be running, but no matching process could be \
-         identified and signalled. Close it manually and retry."
+         identified and signalled (process attribution may be unavailable if PowerShell \
+         is blocked). Close it manually and retry."
     } else {
         "Codex/ChatGPT did not exit cleanly. Close it manually and retry."
     };
@@ -933,6 +1031,10 @@ pub fn reopen_codex_app_if_needed(
         AppLaunchTarget::WindowsStore(shell_target) => {
             let mut command = Command::new("explorer.exe");
             command.arg(shell_target);
+            hide_console_window(&mut command).spawn()
+        }
+        AppLaunchTarget::Executable(executable) => {
+            let mut command = Command::new(&executable);
             hide_console_window(&mut command).spawn()
         }
     };
@@ -1319,7 +1421,7 @@ mod tests {
     fn desktop_app_process_names_cover_merged_and_legacy_hosts() {
         assert_eq!(
             super::desktop_app_process_names(),
-            &["ChatGPT.exe", "Codex.exe"]
+            &["ChatGPT.exe", "Codex.exe", "Codex (Beta).exe"]
         );
     }
 }
