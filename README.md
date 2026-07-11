@@ -135,7 +135,7 @@ Windows 构建走 CI 的 `tauri build --target x86_64-pc-windows-msvc`；本地 
 
 ```bash
 npm run version:sync              # 把 package.json 当前 version 同步到 Cargo / lock
-npm run version:set -- 1.5.11     # 一次性 bump 到指定版本
+npm run version:set -- 1.6.0     # 一次性 bump 到指定版本
 npm run version:check             # CI 用：拒绝把 semver 字面量写回 *.html
 ```
 
