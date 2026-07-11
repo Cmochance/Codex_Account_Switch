@@ -275,6 +275,12 @@ async function handleSwitchProfile(profile: string): Promise<void> {
       showToast(t(state.locale, "switchedTo", { profile }));
       await refreshAllData();
     });
+    // The switched-to card's stored quota is as old as its last refresh —
+    // kick the silent API refresh now instead of waiting for the next
+    // 5-min tick. Its >5-min staleness gate makes this a no-op when the
+    // card is already fresh; it must run after runBlockingAction so the
+    // state.loading guard inside refreshActiveQuotaSilently doesn't skip it.
+    void refreshActiveQuotaSilently();
   } catch (error) {
     showToast(error instanceof Error ? error.message : t(state.locale, "failedToSwitchProfile"), true);
   }

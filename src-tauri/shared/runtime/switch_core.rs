@@ -12,10 +12,11 @@ use super::metadata::{load_profile_metadata, sync_profile_quota, write_root_prof
 use super::paths::{get_backup_root, get_codex_home, validate_profile_name};
 use super::process_lock::{acquire_process_lock, ProcessLockGuard};
 use super::profiles::{
-    detect_unmanaged_live_account, resolve_backup_target, resolve_current_profile,
+    detect_unmanaged_live_account, profile_activated_at_ms, resolve_backup_target,
+    resolve_current_profile,
 };
 use super::profiles_index::{load_profiles_index, quota_summary_has_data};
-use super::session_usage::load_latest_local_quota_snapshot;
+use super::session_usage::load_latest_local_quota_snapshot_since;
 
 fn acquire_switch_lock(codex_home: Option<&Path>) -> AppResult<ProcessLockGuard> {
     acquire_process_lock(
@@ -39,7 +40,16 @@ fn acquire_switch_lock(codex_home: Option<&Path>) -> AppResult<ProcessLockGuard>
 /// path ever repairs).
 fn sync_live_quota_and_refresh_root(profile: &str, codex_home: &Path) -> AppResult<()> {
     let mut metadata = load_profile_metadata(profile, Some(codex_home));
-    if let Some(snapshot) = load_latest_local_quota_snapshot(Some(codex_home)) {
+    // Scope the fold to sessions written since this profile became
+    // active: `~/.codex/sessions` is not part of the managed profile
+    // set, so older entries belong to whichever account was live before
+    // and must not be folded into this card. No parseable marker
+    // (legacy install, freshly healed drift) falls back to the
+    // unfiltered freshness race.
+    let activated_at_ms = profile_activated_at_ms(profile, &get_backup_root(Some(codex_home)));
+    if let Some(snapshot) =
+        load_latest_local_quota_snapshot_since(Some(codex_home), activated_at_ms)
+    {
         let live_is_newer =
             snapshot.source_mtime_ms.unwrap_or(0) > metadata.quota_updated_at_ms.unwrap_or(0);
         if live_is_newer || !quota_summary_has_data(&metadata.quota) {
