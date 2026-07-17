@@ -346,6 +346,7 @@ pub(crate) fn quota_summary_has_data(quota: &crate::models::QuotaSummary) -> boo
         || quota.five_hour.refresh_at.is_some()
         || quota.weekly.remaining_percent.is_some()
         || quota.weekly.refresh_at.is_some()
+        || quota.rate_limit_reset_credits.is_some()
 }
 
 fn select_current_quota(
@@ -362,7 +363,12 @@ fn select_current_quota(
     // (0), so any live session still wins there.
     match live_snapshot {
         Some(snapshot) if snapshot.source_mtime_ms.unwrap_or(0) > stored_updated_at_ms => {
-            snapshot.quota.clone()
+            let mut quota = snapshot.quota.clone();
+            if quota.rate_limit_reset_credits.is_none() {
+                quota.rate_limit_reset_credits =
+                    entry.stored_quota.rate_limit_reset_credits.clone();
+            }
+            quota
         }
         _ => entry.stored_quota.clone(),
     }
@@ -601,7 +607,7 @@ mod tests {
         fs::write(profile_dir.join("auth.json"), "profile-b-auth\n").unwrap();
         fs::write(
             profile_dir.join("profile.json"),
-            r#"{"folder_name":"b","account_label":"b@example.com","quota":{"five_hour":{"remaining_percent":41},"weekly":{"remaining_percent":63}},"quota_updated_at_ms":1}"#,
+            r#"{"folder_name":"b","account_label":"b@example.com","quota":{"five_hour":{"remaining_percent":41},"weekly":{"remaining_percent":63},"rate_limit_reset_credits":{"available_count":1,"credits":[{"granted_at":1783890765,"expires_at":1786482765}]}},"quota_updated_at_ms":1}"#,
         )
         .unwrap();
         write_active_marker(&profile_dir, "2020-01-01T00:00:00Z");
@@ -613,6 +619,11 @@ mod tests {
         let quota = response.quota.expect("expected quota");
         assert_eq!(quota.five_hour.remaining_percent, Some(89));
         assert_eq!(quota.weekly.remaining_percent, Some(88));
+        let reset_credits = quota
+            .rate_limit_reset_credits
+            .expect("stored reset credit details");
+        assert_eq!(reset_credits.available_count, Some(1));
+        assert_eq!(reset_credits.credits[0].expires_at, Some(1_786_482_765));
 
         let _ = fs::remove_dir_all(&codex_home);
     }

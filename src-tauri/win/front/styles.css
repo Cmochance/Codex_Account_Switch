@@ -242,9 +242,9 @@ button.pager-pill:hover:not(:disabled) {
 }
 
 .profile-quota-stack {
-  display: flex;
-  flex-direction: row;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
   align-items: center;
   min-width: 0;
 }
@@ -253,6 +253,48 @@ button.pager-pill:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.profile-reset-credits,
+.current-reset-credits {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.profile-reset-credits {
+  grid-column: 1 / -1;
+}
+
+.reset-credits-status {
+  color: var(--text-body);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.reset-credits-details,
+.reset-credit-card {
+  display: grid;
+  gap: 2px;
+}
+
+.reset-credits-count,
+.reset-credits-details,
+.reset-credit-card,
+.reset-credits-details-unknown {
+  white-space: nowrap;
+}
+
+.reset-credit-card + .reset-credit-card {
+  margin-top: 4px;
+}
+
+.reset-credit-card strong,
+.reset-credit-card span,
+.reset-credits-details-unknown {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 500;
 }
 
 .profile-quota-metric {
@@ -736,7 +778,7 @@ button.pager-pill:disabled {
   }
 
   .profile-quota-stack {
-    flex-direction: column;
+    grid-template-columns: 1fr;
     align-items: stretch;
     gap: 8px;
   }

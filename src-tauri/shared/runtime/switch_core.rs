@@ -67,12 +67,13 @@ pub(crate) fn sync_live_quota_and_refresh_root(profile: &str, codex_home: &Path)
             let live_is_newer =
                 snapshot.source_mtime_ms.unwrap_or(0) > metadata.quota_updated_at_ms.unwrap_or(0);
             if live_is_newer || !quota_summary_has_data(&metadata.quota) {
-                metadata = sync_profile_quota(
-                    profile,
-                    snapshot.quota,
-                    snapshot.source_mtime_ms,
-                    Some(codex_home),
-                )?;
+                let mut quota = snapshot.quota;
+                if quota.rate_limit_reset_credits.is_none() {
+                    quota.rate_limit_reset_credits =
+                        metadata.quota.rate_limit_reset_credits.clone();
+                }
+                metadata =
+                    sync_profile_quota(profile, quota, snapshot.source_mtime_ms, Some(codex_home))?;
             }
         }
     }

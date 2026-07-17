@@ -266,6 +266,7 @@ mod tests {
                 refresh_at: None,
                 ..QuotaWindow::default()
             },
+            rate_limit_reset_credits: None,
         }
     }
 
