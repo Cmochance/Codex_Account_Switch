@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 新增 reset-credit 详情显示：刷新账号时查询 `GET /wham/rate-limit-reset-credits`，展示可用重置卡数量及每张卡的授予/过期时间；只保存展示所需字段，不保存卡片 ID 或原始响应体。
+
 ## 1.6.1 - 2026-07-12
 
 - **Critical** — adapted the Windows desktop-host discovery for the Codex → ChatGPT app merge (2026-07-09; the Windows counterpart of the macOS adaptation shipped in 1.6.0). The merged host runs as `ChatGPT.exe` (MSIX package family still `OpenAI.Codex_2p2nqsd0c76g0`, non-Store installs under `%LOCALAPPDATA%\Programs\ChatGPT\`), so the old `Codex.exe`-only checks missed the running UI: switching skipped quitting the host (stale in-memory app-server on the old account) and never relaunched it. is-running / quit now enumerate both host names and classify each PID by its executable's install identity — the `OpenAI.Codex*` package family (incl. the beta channel) or a non-Store install that embeds the bundled CLI (`resources\codex.exe`, the Windows analog of the macOS `Contents/Resources/codex` qualifier) counts as ours; ChatGPT Classic (`OpenAI.ChatGPT-Desktop_…`, same `ChatGPT.exe` name) is positively excluded and never killed; unattributable PIDs still count as running (the switch aborts rather than proceeding over a possibly-live host) but are never signalled. Quit signals by PID (graceful `taskkill /PID` then `/F`) instead of `/IM <name>`. Launch prefers the detected Store package (unchanged `shell:AppsFolder` id), falling back to a qualified non-Store `ChatGPT.exe` / `Codex.exe`. CLI discovery and the Settings auto-detect suggestions gain the desktop-bundled CLI locations (MSIX `<InstallLocation>\app\resources\codex.exe` and the non-Store `Programs\{ChatGPT,Codex}\resources\codex.exe`). Facts anchored from public manifests and tooling (winget, KAPE, third-party Codex tools); not yet verified on a live Windows install.

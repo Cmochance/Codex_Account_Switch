@@ -16,6 +16,7 @@ tmp/
 __pycache__/
 node_modules/
 dist/
+.codegraph/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/binaries/

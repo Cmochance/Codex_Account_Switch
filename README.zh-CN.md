@@ -17,14 +17,14 @@
 
 **Codex 账号切换工具**（Codex Switch）是一个面向 **OpenAI Codex CLI** 的本地桌面账号管理器。它把多份 `~/.codex/{auth.json,config.toml,sessions/...}` 状态各自打包到独立账号备份目录，一键切换"当前 Codex 账号"，并把每个账号的 plan / 5 小时额度 / 周额度直接渲染在桌面端。
 
-跟纯账号切换脚本不同，本项目内置 **plan / quota 直读**：登录后通过 ChatGPT OAuth 的 `id_token` + ChatGPT Web API `account/rateLimits` / Codex app-server JSON-RPC fallback 拉取真实计划等级和 rate-limit 窗口剩余比例，不需要本地解析 Codex sessions/jsonl 日志即可看到每个账号"还能用多久"。
+跟纯账号切换脚本不同，本项目内置 **plan / quota 直读**：登录后通过 ChatGPT OAuth 的 `id_token` + ChatGPT Web API `account/rateLimits` / Codex app-server JSON-RPC fallback 拉取真实计划等级和 rate-limit 窗口剩余比例，并查询 `/wham/rate-limit-reset-credits` 显示账号可用重置卡数量及每张卡的授予/过期时间，不需要本地解析 Codex sessions/jsonl 日志即可看到每个账号"还能用多久"。
 
 当前版本 **v1.5.10**（详见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/Cmochance/Codex_Account_Switch/releases)）。
 
 ## 能做什么
 
 - 同一台机器多账号管理：每个账号一个备份目录（含独立的 `auth.json` / `config.toml` / `sessions/`），切换时把目标账号 swap 进 `~/.codex/`，旧账号自动归档到备份目录。
-- **账号页**：每页 8 个账号条目，横向单行布局展示「账号名 + 套餐」「5 小时额度 + 刷新时间」「周额度 + 刷新时间」「删除 / 重命名 / 刷新 / 登录 / Base / 切换」按钮。
+- **账号页**：每页 8 个账号条目，横向单行布局展示「账号名 + 套餐」「5 小时额度 + 刷新时间」「周额度 + 刷新时间」「重置卡数量 + 授予/过期时间」「删除 / 重命名 / 刷新 / 登录 / Base / 切换」按钮。
 - **登录可取消**：进行中的 `codex login` OAuth 流程支持点击同一按钮取消（向子进程 SIGTERM / taskkill），解决浏览器关闭后应用卡在等待回调的场景。
 - **plan / quota 智能缓存**：bulk plan refresh 在 6 小时窗口内跳过已确认账号，per-card 刷新按钮也共享同一缓存；切换 / 登录 / 刷新后直接复用 backend 写回的 snapshot，不重复发 IPC。
 - **Custom Base URL**：每个账号可独立配置 `OPENAI_BASE_URL`；配置后按钮变红警示（自定义 Base 与 ChatGPT OAuth 账号互斥）。
@@ -57,7 +57,7 @@ codex_switch_<版本>_amd64.AppImage         Linux x86_64 通用便携包（chmo
 1. 从 Releases 下载并安装 Codex Switch，启动桌面窗口。
 2. 进入「设置」页，确认 **Codex CLI 路径** 已自动填好（默认探测 PATH / `~/.codex/bin`）；缺失时手动指定，状态变绿即可。
 3. 进入「账号」页，点「添加账号」→ 输入账号别名（落地为 `~/.codex/account_backup/<别名>/`）。
-4. 在新账号条目点「登录」→ 浏览器完成 ChatGPT OAuth → 回到应用，套餐 + 额度自动加载。
+4. 在新账号条目点「登录」→ 浏览器完成 ChatGPT OAuth → 回到应用，套餐、额度和重置卡详情自动加载。
 5. 多账号场景：在目标条目点「切换」即可一键替换当前 `~/.codex/`，原账号自动归档。
 6. 需要清空 quota cache 或重新拉计划时，点对应账号的「刷新」（≥ 6h 走完整 OAuth rotation，< 6h 复用缓存）。
 
@@ -153,6 +153,8 @@ npm run version:check             # CI 用：拒绝把 semver 字面量写回 *.
 
 不会真发 ChatGPT 对话请求。Plan 数据来自 `id_token` claims；quota 走 ChatGPT Web API `account/rateLimits/read`（HTTP GET），或 Codex 0.130+ 的 `app-server` JSON-RPC fallback。没有 LLM 调用，不消耗用户额度。
 
+重置卡详情同样只读取 ChatGPT 的额度元数据；应用只保存可用数量、授予时间和过期时间，不保存卡片 ID，也不保留原始响应体。
+
 ### per-card「登录」按钮为什么有时变成「取消」
 
 当 codex 进程已经起来并打开了浏览器，但 OAuth 回调没回来（用户关浏览器 / 网络异常），点同一按钮会向 codex login 子进程发 SIGTERM / taskkill 中止它，释放 `.switch.lock` 全局锁。
@@ -178,7 +180,7 @@ App 暂未做 Apple Developer 代码签名 / notarization。第一次启动按�
 ## 技术栈
 
 - **后端 / runtime**：Rust 1.80+ · Tauri 2.x · tokio + reqwest（rustls-tls）· chrono · serde
-- **协议适配**：`shared/runtime/chatgpt_api.rs`（ChatGPT Web API `account/{read,rateLimits/read}`）+ Codex app-server JSON-RPC fallback（`codex` ≥ 0.130 时 OAuth refresh 失败兜底）
+- **协议适配**：`shared/runtime/chatgpt_api.rs`（ChatGPT Web API `account/{read,rateLimits/read}` 与 `/wham/rate-limit-reset-credits`）+ Codex app-server JSON-RPC fallback（`codex` ≥ 0.130 时 OAuth refresh 失败兜底）
 - **前端**：HTML + CSS + 原生 TypeScript（`shared/front/{render,state,actions,theme,i18n,tauri}.ts`），无前端框架；Vite 7 打包
 - **跨平台 runtime**：mac / win runtime 各自实现 spawn / process control / OS-native title bar；shared runtime 处理协议、profile lifecycle、JSON-RPC、缓存、文件锁
 - **构建 / 发布**：`tauri build` 单命令出 dmg / pkg / exe；`.github/workflows/build.yml` 出 draft release，全部 asset 由 GitHub Actions 上传
