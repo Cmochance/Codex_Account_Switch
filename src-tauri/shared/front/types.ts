@@ -126,4 +126,15 @@ export interface CodexCliRedetectResult {
   status: CodexCliStatus;
 }
 
+/** 当前生效的代理配置。`proxy_url` 为 null 表示直连。
+ *  仅 macOS 启用应用层代理；Windows / Linux 永远返回 null。 */
+export interface ProxyConfig {
+  proxy_url: string | null;
+}
+
+/** `set_proxy_config` 的请求 payload。空字符串视为清空。 */
+export interface SetProxyConfigPayload {
+  proxy_url: string;
+}
+
 export type ShellRoute = "dashboard" | "profiles" | "settings" | "guide";

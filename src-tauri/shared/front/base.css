@@ -996,6 +996,29 @@ p {
   flex: none;
 }
 
+/* Proxy row reuses .settings-cli-inline to lay out an input + Save/Clear
+   buttons. Let the input take the flexible remainder instead of its
+   default width:100% squeezing the buttons. */
+.settings-cli-inline .settings-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-hint {
+  grid-column: 1 / -1;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.settings-row--proxy {
+  min-height: auto;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0;
+}
+
 .settings-value--inline {
   flex: 1;
   min-width: 0;

@@ -8,7 +8,7 @@ use crate::models::{QuotaSummary, QuotaWindow};
 
 use super::paths::get_codex_home;
 use super::quota_cache::{file_signature, CachedEntry, CachedSnapshot, QuotaCache};
-use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
+use super::quota_routing::{slot_from_reset_at, slot_from_window_minutes, QuotaSlot};
 use super::session_files::{collect_jsonl_files, file_modified_ms};
 
 #[derive(Clone, Debug)]
@@ -134,6 +134,12 @@ fn apply_rate_limit_window(
     };
 
     let slot = slot_from_window_minutes(window.window_minutes, fallback);
+    let slot = if window.window_minutes.is_none() {
+        let now_secs = chrono::Utc::now().timestamp();
+        slot_from_reset_at(window.resets_at, now_secs).unwrap_or(slot)
+    } else {
+        slot
+    };
     let quota_window = quota_window_from_rate_limit(Some(window));
 
     match slot {

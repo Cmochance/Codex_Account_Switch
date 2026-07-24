@@ -61,6 +61,9 @@ pub fn run() {
             commands::actions::clear_codex_cli_path,
             commands::actions::redetect_codex_cli_path,
             commands::actions::cancel_codex_login,
+            commands::actions::get_proxy_config,
+            commands::actions::set_proxy_config,
+            commands::actions::clear_proxy_config,
             commands::switch::switch_profile,
         ])
         .run(tauri::generate_context!())

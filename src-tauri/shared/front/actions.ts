@@ -19,10 +19,12 @@ import {
   checkUpdate,
   clearCodexCliPath,
   clearProfileAccount,
+  clearProxyConfig,
   deleteProfile,
   getCodexCliStatus,
   getCurrentLiveQuota,
   getProfilesSnapshot,
+  getProxyConfig,
   loginCurrentProfile,
   openCodex,
   openContact,
@@ -37,10 +39,11 @@ import {
   redetectCodexCliPath,
   renameProfile,
   setCodexCliPath,
+  setProxyConfig,
   switchProfile,
   updateProfileBaseUrl,
 } from "@front-shared/tauri";
-import type { CodexCliCandidate, CodexCliRedetectResult, CodexCliStatus } from "@front-shared/types";
+import type { CodexCliCandidate, CodexCliRedetectResult, CodexCliStatus, ProxyConfig } from "@front-shared/types";
 import {
   applyLocale,
   elements,
@@ -706,6 +709,51 @@ async function refreshCodexCliSettingsDisplay(): Promise<void> {
   }
 }
 
+function applyProxySettingsDisplay(config: ProxyConfig): void {
+  if (!elements.settingsProxyInput) {
+    return;
+  }
+  elements.settingsProxyInput.value = config.proxy_url ?? "";
+}
+
+async function refreshProxySettingsDisplay(): Promise<void> {
+  // win/index.html 不渲染代理 UI，elements 为 null —— 直接 no-op。
+  if (!elements.settingsProxyInput) {
+    return;
+  }
+  try {
+    applyProxySettingsDisplay(await getProxyConfig());
+  } catch {
+    // Best-effort：保留 input 当前值，让用户仍能尝试设置。
+  }
+}
+
+async function handleSaveProxyConfig(): Promise<void> {
+  if (!elements.settingsProxyInput) {
+    return;
+  }
+  const url = elements.settingsProxyInput.value.trim();
+  try {
+    await setProxyConfig(url);
+    showToast(url ? t(state.locale, "settingsProxySaved") : t(state.locale, "settingsProxyCleared"));
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : t(state.locale, "settingsProxySaveFailed"), true);
+  }
+}
+
+async function handleClearProxyConfig(): Promise<void> {
+  if (!elements.settingsProxyInput) {
+    return;
+  }
+  try {
+    await clearProxyConfig();
+    applyProxySettingsDisplay({ proxy_url: null });
+    showToast(t(state.locale, "settingsProxyCleared"));
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : t(state.locale, "settingsProxySaveFailed"), true);
+  }
+}
+
 function codexCliSourceLabel(source: CodexCliStatus["source"]): string {
   switch (source) {
     case "user_override":
@@ -1067,6 +1115,26 @@ export function bootstrap(): void {
   elements.settingsCodexCliButton.addEventListener("click", () => {
     void openCodexCliDialog();
   });
+  // 代理配置（mac 专属 UI；win 上 elements 为 null，绑定跳过）。
+  if (elements.settingsProxySaveButton) {
+    elements.settingsProxySaveButton.addEventListener("click", () => {
+      void handleSaveProxyConfig();
+    });
+  }
+  if (elements.settingsProxyClearButton) {
+    elements.settingsProxyClearButton.addEventListener("click", () => {
+      void handleClearProxyConfig();
+    });
+  }
+  // Enter 提交：与 Update URL 行为一致，省得用户去找 Save 按钮。
+  if (elements.settingsProxyInput) {
+    elements.settingsProxyInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void handleSaveProxyConfig();
+      }
+    });
+  }
   elements.localeEnButton.addEventListener("click", () => {
     setLocale("en");
   });
@@ -1110,6 +1178,7 @@ export function bootstrap(): void {
   scheduleDailyPlanRefresh();
 
   void refreshCodexCliSettingsDisplay();
+  void refreshProxySettingsDisplay();
 
   state.loading = true;
   rerenderDashboard();

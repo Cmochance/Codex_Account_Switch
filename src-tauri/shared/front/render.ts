@@ -36,6 +36,11 @@ function requiredElement<T extends HTMLElement>(id: string): T {
 
 const hasDeleteProfileUi = document.getElementById("delete-profile-dialog") instanceof HTMLDialogElement;
 
+// macOS 专属 UI：win/index.html 不渲染代理配置行（Windows 走系统
+// 环境变量代理，无应用层 ProxyState）。按 AGENTS.md 平台隔离原则
+// 用 has* 标志让 elements 在两端都能构造，handler 侧再 null-check。
+const hasProxyConfigUi = document.getElementById("settings-proxy-input") instanceof HTMLInputElement;
+
 export const elements = {
   profilesHeading: requiredElement<HTMLHeadingElement>("profiles-heading"),
   profilesGrid: requiredElement<HTMLDivElement>("profiles-grid"),
@@ -119,6 +124,18 @@ export const elements = {
   settingsCodexCliValue: requiredElement<HTMLParagraphElement>("settings-codex-cli-value"),
   settingsCodexCliButton: requiredElement<HTMLButtonElement>("settings-codex-cli-button"),
   settingsCodexCliDetectButton: requiredElement<HTMLButtonElement>("settings-codex-cli-detect-button"),
+  settingsProxyInput: hasProxyConfigUi
+    ? requiredElement<HTMLInputElement>("settings-proxy-input")
+    : null,
+  settingsProxySaveButton: hasProxyConfigUi
+    ? requiredElement<HTMLButtonElement>("settings-proxy-save-button")
+    : null,
+  settingsProxyClearButton: hasProxyConfigUi
+    ? requiredElement<HTMLButtonElement>("settings-proxy-clear-button")
+    : null,
+  settingsProxyHint: hasProxyConfigUi
+    ? requiredElement<HTMLParagraphElement>("settings-proxy-hint")
+    : null,
   codexCliDialog: requiredElement<HTMLDialogElement>("codex-cli-dialog"),
   codexCliForm: requiredElement<HTMLFormElement>("codex-cli-form"),
   codexCliDialogTitle: requiredElement<HTMLHeadingElement>("codex-cli-dialog-title"),
@@ -158,9 +175,12 @@ function formatRefresh(entry: QuotaWindow | undefined): string {
   if (entry.reset_at_timestamp != null) {
     const diff = entry.reset_at_timestamp - Math.floor(Date.now() / 1000);
     if (diff > 0) {
-      const h = Math.floor(diff / 3600);
+      const d = Math.floor(diff / 86400);
+      const h = Math.floor((diff % 86400) / 3600);
       const m = Math.floor((diff % 3600) / 60);
-      if (h > 0) {
+      if (d > 0) {
+        return t(state.locale, "resetsIn", { value: `${d}d ${h}h ${m}m` });
+      } else if (h > 0) {
         return t(state.locale, "resetsIn", { value: `${h}h ${m}m` });
       } else if (m > 0) {
         const s = diff % 60;
