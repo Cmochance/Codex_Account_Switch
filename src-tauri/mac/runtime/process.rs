@@ -789,6 +789,10 @@ fn build_login_command(real_codex_path: &Path, runtime_codex_home: &Path) -> Com
     command.arg("login");
     command.current_dir(runtime_codex_home);
     command.env("CODEX_HOME", runtime_codex_home);
+    // codex login 的 OAuth 浏览器流程本身由浏览器走系统代理，但 codex
+    // CLI 本地起 callback server / 走 token exchange 时也可能发请求，
+    // 注入代理 env 与 app-server 路径保持一致。
+    crate::shared::proxy::apply_proxy_env(&mut command);
     command
 }
 

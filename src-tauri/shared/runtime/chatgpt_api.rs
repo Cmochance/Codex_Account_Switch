@@ -42,6 +42,11 @@ use crate::models::{QuotaSummary, QuotaWindow, RateLimitResetCredit, RateLimitRe
 
 use super::paths::get_backup_root;
 
+/// 进程内共享的 `reqwest::blocking::Client` 缓存。代理配置变更时
+/// 通过 `invalidate_http_client` 置 None，下一次 `build_http_client`
+/// 按当前 `ProxyState` 重建。
+static SHARED_CLIENT: std::sync::Mutex<Option<Client>> = std::sync::Mutex::new(None);
+
 // Lightweight atomic write — stage to a sibling temp file, fsync-free rename
 // into place. v1.5.3's `fs_ops` predates the shared `atomic_write_bytes`
 // helper; this inline version keeps `auth.json` writes from being torn while
@@ -387,29 +392,61 @@ fn build_http_client() -> AppResult<Client> {
     // Cache the successful build only — `reqwest::blocking::Client`
     // wraps an `Arc<Inner>` so `clone()` is cheap and reuses the TLS
     // pool, but caching a Build *error* would poison the cell for
-    // the entire process lifetime. Failures are deterministic per
-    // binary today (TLS provider init), but a future commit adding
-    // proxy / cert config could legitimately fail transiently — so
-    // store only `Client` and let each call retry the build until
-    // one succeeds.
-    static SHARED_CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
-    if let Some(client) = SHARED_CLIENT.get() {
+    // the entire process lifetime.
+    //
+    // 用 `Mutex<Option<Client>>` 而不是 `OnceLock`，是为了支持代理
+    // 配置变更后丢弃旧 client、按新配置重建（见
+    // `invalidate_http_client`）。`OnceLock` 一旦填充无法清空，与
+    // "改代理立即生效" 的需求冲突。
+    let mut guard = match SHARED_CLIENT.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(client) = guard.as_ref() {
         return Ok(client.clone());
     }
-    let new_client = Client::builder()
+    let mut builder = Client::builder()
         .timeout(HTTP_TIMEOUT)
-        .user_agent(CODEX_USER_AGENT)
-        .build()
-        .map_err(|error| {
-            AppError::new(
-                "HTTP_CLIENT_BUILD_FAILED",
-                format!("Failed to build HTTP client: {error}"),
-            )
-        })?;
-    // `set` may fail if another thread populated first — either
-    // way we have a valid client to return.
-    let _ = SHARED_CLIENT.set(new_client.clone());
+        .user_agent(CODEX_USER_AGENT);
+    // 仅 macOS 启用应用层代理配置（Windows / Linux 走 reqwest 默认
+    // 的环境变量读取行为）。
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(url) = crate::shared::proxy::read_proxy_state_cached().effective_url() {
+            // `reqwest::Proxy::all` 同时覆盖 http / https / ftp；
+            // socks5 / socks5h URL 需要 reqwest 的 `socks` feature，
+            // 已在 Cargo.toml 启用。
+            match reqwest::Proxy::all(url) {
+                Ok(proxy) => {
+                    builder = builder.proxy(proxy);
+                }
+                Err(error) => {
+                    return Err(AppError::new(
+                        "HTTP_CLIENT_BUILD_FAILED",
+                        format!("Failed to apply proxy {url:?}: {error}"),
+                    ));
+                }
+            }
+        }
+    }
+    let new_client = builder.build().map_err(|error| {
+        AppError::new(
+            "HTTP_CLIENT_BUILD_FAILED",
+            format!("Failed to build HTTP client: {error}"),
+        )
+    })?;
+    *guard = Some(new_client.clone());
     Ok(new_client)
+}
+
+/// 丢弃已缓存的 HTTP client，使下一次 `build_http_client` 按当前
+/// `ProxyState` 重建。`set_proxy_config` / `clear_proxy_config`
+/// command 调用，确保代理变更立即对后续 plan / quota 刷新生效，无
+/// 需重启 app。
+pub fn invalidate_http_client() {
+    if let Ok(mut guard) = SHARED_CLIENT.lock() {
+        *guard = None;
+    }
 }
 
 fn build_chatgpt_headers(access_token: &str, account_id: Option<&str>) -> AppResult<HeaderMap> {
@@ -721,11 +758,13 @@ fn persist_refreshed_auth(profile_dir: &Path, auth: &ProfileAuthFile) -> AppResu
 }
 
 fn quota_summary_from_payload(payload: &RateLimitStatusPayload) -> Option<QuotaSummary> {
-    use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
+    use super::quota_routing::{slot_from_reset_at, slot_from_window_minutes, QuotaSlot};
 
     let mut summary = QuotaSummary::default();
     summary.rate_limit_reset_credits = payload.rate_limit_reset_credits.clone();
     let mut any_data = summary.rate_limit_reset_credits.is_some();
+
+    let now_secs = Utc::now().timestamp();
 
     // Position is just a fallback; `window_minutes` is authoritative.
     // OpenAI usually puts the 5h window in primary and weekly in
@@ -733,6 +772,10 @@ fn quota_summary_from_payload(payload: &RateLimitStatusPayload) -> Option<QuotaS
     // weekly window in the primary slot and secondary null. Routing by
     // size means a Team plan whose only enforced window is weekly
     // doesn't get its data labeled as 5h on the dashboard.
+    //
+    // When `window_minutes` is missing (observed on `/wham/usage`),
+    // fall back to classifying by `reset_at` distance from now: a 5h
+    // window resets within hours, a weekly window resets in days.
     if let Some(rate_limit) = payload.rate_limit.as_ref() {
         for (window, fallback) in [
             (rate_limit.primary_window.as_ref(), QuotaSlot::FiveHour),
@@ -744,7 +787,13 @@ fn quota_summary_from_payload(payload: &RateLimitStatusPayload) -> Option<QuotaS
                 continue;
             }
             any_data = true;
-            match slot_from_window_minutes(window.window_minutes, fallback) {
+            let slot = slot_from_window_minutes(window.window_minutes, fallback);
+            let slot = if window.window_minutes.is_none() {
+                slot_from_reset_at(window.reset_at, now_secs).unwrap_or(slot)
+            } else {
+                slot
+            };
+            match slot {
                 QuotaSlot::FiveHour => summary.five_hour = mapped,
                 QuotaSlot::Weekly => summary.weekly = mapped,
             }

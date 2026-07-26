@@ -155,6 +155,32 @@
                 <button id="settings-codex-cli-button" class="settings-action-button" type="button">Change</button>
               </div>
             </div>
+            <div class="settings-row settings-row--field settings-row--proxy">
+              <strong data-i18n-key="settingsProxy">Proxy</strong>
+              <div class="settings-cli-inline">
+                <input
+                  id="settings-proxy-input"
+                  class="settings-input"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="http://127.0.0.1:7890"
+                />
+                <button
+                  id="settings-proxy-save-button"
+                  class="settings-action-button"
+                  type="button"
+                  data-i18n-key="settingsProxySave"
+                >Save</button>
+                <button
+                  id="settings-proxy-clear-button"
+                  class="settings-action-button"
+                  type="button"
+                  data-i18n-key="settingsProxyClear"
+                >Clear</button>
+              </div>
+              <p id="settings-proxy-hint" class="settings-hint" data-i18n-key="settingsProxyHint"></p>
+            </div>
             <div class="settings-row">
               <strong data-i18n-key="settingsVersion">Version</strong>
               <span id="settings-version-value" class="settings-value settings-value--strong">—</span>

@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 use crate::errors::{AppError, AppResult};
 use crate::models::{QuotaSummary, QuotaWindow};
 
-use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
+use super::quota_routing::{slot_from_reset_at, slot_from_window_minutes, QuotaSlot};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// `account/rateLimits/read` is one HTTPS GET to the same endpoint
@@ -363,7 +363,15 @@ fn parse_rate_limits_response(value: &Value) -> Option<QuotaSummary> {
         }
         any_data = true;
         let window_minutes = window.get("windowDurationMins").and_then(Value::as_i64);
-        match slot_from_window_minutes(window_minutes, fallback) {
+        let slot = slot_from_window_minutes(window_minutes, fallback);
+        let slot = if window_minutes.is_none() {
+            let reset_at = window.get("resetsAt").and_then(Value::as_i64);
+            let now_secs = chrono::Utc::now().timestamp();
+            slot_from_reset_at(reset_at, now_secs).unwrap_or(slot)
+        } else {
+            slot
+        };
+        match slot {
             QuotaSlot::FiveHour => summary.five_hour = mapped,
             QuotaSlot::Weekly => summary.weekly = mapped,
         }

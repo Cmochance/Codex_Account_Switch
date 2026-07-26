@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::{AppError, AppResult};
 use crate::shared::paths::{
-    get_backup_root, INSTALL_STATE_FILENAME, LOGIN_RUNTIME_DIRNAME, REFRESH_RUNTIME_DIRNAME,
+    get_backup_root, INSTALL_STATE_FILENAME, LOGIN_RUNTIME_DIRNAME, PROXY_STATE_FILENAME,
+    REFRESH_RUNTIME_DIRNAME,
 };
 
 pub const MACOS_RUNTIME_DIRNAME: &str = "macos";
@@ -14,6 +15,10 @@ const REAL_CODEX_RESOLVER_TEMPLATE: &str =
 
 pub fn get_runtime_dir(codex_home: &Path) -> PathBuf {
     get_backup_root(Some(codex_home)).join(MACOS_RUNTIME_DIRNAME)
+}
+
+pub fn get_proxy_state_file(codex_home: &Path) -> PathBuf {
+    get_runtime_dir(codex_home).join(PROXY_STATE_FILENAME)
 }
 
 pub fn get_refresh_runtime_dir(codex_home: &Path) -> PathBuf {

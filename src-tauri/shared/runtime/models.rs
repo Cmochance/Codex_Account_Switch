@@ -264,3 +264,19 @@ pub struct CodexCliRedetectResult {
 pub struct SetCodexCliPathPayload {
     pub path: String,
 }
+
+/// 当前生效的代理配置，回传给前端 Settings 页。`proxy_url` 为 None
+/// 表示直连。仅 macOS 启用应用层代理配置；Windows / Linux 永远
+/// 返回 None。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ProxyConfig {
+    pub proxy_url: Option<String>,
+}
+
+/// `set_proxy_config` 的请求 payload。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetProxyConfigPayload {
+    /// 空字符串视为清空（直连）。
+    pub proxy_url: String,
+}

@@ -44,6 +44,8 @@ jobs:
           cache: 'npm'
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -59,6 +61,9 @@ jobs:
 
       - name: Check for hardcoded version literals in HTML
         run: npm run version:check
+
+      - name: cargo fmt (check)
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
       - name: cargo check (lib)
         run: cargo check --manifest-path src-tauri/Cargo.toml --lib

@@ -10,6 +10,7 @@ pub const CURRENT_PROFILE_FILENAME: &str = ".current_profile";
 pub const DEFAULT_PROFILES: [&str; 4] = ["a", "b", "c", "d"];
 pub const INSTALL_STATE_FILENAME: &str = "install_state.json";
 pub const QUOTA_CACHE_FILENAME: &str = "quota_cache.json";
+pub const PROXY_STATE_FILENAME: &str = "proxy_state.json";
 pub const PROFILES_INDEX_FILENAME: &str = "profiles.json";
 pub const PROFILE_METADATA_FILENAME: &str = "profile.json";
 pub const REFRESH_RUNTIME_DIRNAME: &str = "refresh_runtime";
@@ -84,6 +85,10 @@ pub fn get_install_state_file(codex_home: Option<&Path>) -> PathBuf {
 
 pub fn get_quota_cache_path(codex_home: Option<&Path>) -> PathBuf {
     get_runtime_dir(codex_home).join(QUOTA_CACHE_FILENAME)
+}
+
+pub fn get_proxy_state_file(codex_home: Option<&Path>) -> PathBuf {
+    get_runtime_dir(codex_home).join(PROXY_STATE_FILENAME)
 }
 
 pub fn get_profile_metadata_path(profile_name: &str, codex_home: Option<&Path>) -> PathBuf {
