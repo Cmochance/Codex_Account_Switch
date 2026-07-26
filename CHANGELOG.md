@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- 新增 reset-credit 详情显示：刷新账号时查询 `GET /wham/rate-limit-reset-credits`，展示可用重置卡数量及每张卡的授予/过期时间；只保存展示所需字段，不保存卡片 ID 或原始响应体。
+- Reset-credit details on account cards: profile refresh now also queries `GET /wham/rate-limit-reset-credits` (with the same OAuth identity the usage round ultimately used) and shows the available reset-card count plus each card's grant/expiry time, rendered in Asia/Shanghai. Only display fields are persisted — never card IDs or raw response bodies. A detail-endpoint failure neither blocks the main quota refresh nor wipes previously confirmed cards (both the API write-back paths and the session-snapshot paths backfill them from the stored profile).
 
 ## 1.6.1 - 2026-07-12
 

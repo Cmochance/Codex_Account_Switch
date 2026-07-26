@@ -16,6 +16,7 @@
     "macos:artifacts:finalize:release": "node scripts/macos-artifacts.mjs --phase=finalize --mode=release",
     "macos:pkg": "node scripts/create-macos-pkg.mjs",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:front": "vitest run",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "check:rust:windows": "cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --lib",
     "test:rust:windows": "cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc",
@@ -36,6 +37,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "2.10.1",
     "typescript": "5.9.2",
-    "vite": "7.1.4"
+    "vite": "7.1.4",
+    "vitest": "^4.1.10"
   }
 }

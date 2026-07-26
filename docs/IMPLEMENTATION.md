@@ -41,11 +41,11 @@
 - The desktop app does not use a separate local backend or HTTP server at runtime
 - `windows/` remains only as a historical note directory while the Rust path is the primary runtime and regression target
 
-## Quota 与 reset-credit 详情
+## Quota and reset-credit details
 
-- `chatgpt_api` 先刷新 `/wham/usage`，再使用最终的 access token 和可选的 `chatgpt-account-id` 请求 `GET /wham/rate-limit-reset-credits`。
-- reset-credit 响应会归一化到 `QuotaSummary.rate_limit_reset_credits`；持久化内容只有可用数量、授予时间和过期时间，不保存卡片 ID 或原始响应体。
-- 详情接口失败时不影响主 plan/quota 刷新；如果更新的 session 快照没有 reset-credit 字段，已确认的存储详情会继续保留。
+- `chatgpt_api` refreshes `/wham/usage` first, then requests `GET /wham/rate-limit-reset-credits` with the access token and optional `chatgpt-account-id` that the usage round ultimately used.
+- The reset-credit response is normalized into `QuotaSummary.rate_limit_reset_credits`; only the available count, grant time, and expiry time are persisted — never card IDs or raw response bodies.
+- A detail-endpoint failure never blocks the main plan/quota refresh; previously confirmed details are preserved both when a newer session snapshot lacks reset-credit fields and when the detail fetch itself fails (backfilled from the stored profile metadata).
 
 ## Installation behavior
 
