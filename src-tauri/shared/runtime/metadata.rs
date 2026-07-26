@@ -754,6 +754,7 @@ mod tests {
                     refresh_at: Some("2026-05-15 12:00".to_string()),
                     ..QuotaWindow::default()
                 },
+                rate_limit_reset_credits: None,
             },
             ..ProfileMetadata::default()
         };

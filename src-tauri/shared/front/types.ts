@@ -4,9 +4,20 @@ export interface QuotaWindow {
   reset_at_timestamp: number | null;
 }
 
+export interface RateLimitResetCredit {
+  granted_at: number | null;
+  expires_at: number | null;
+}
+
+export interface RateLimitResetCredits {
+  available_count: number | null;
+  credits: RateLimitResetCredit[];
+}
+
 export interface QuotaSummary {
   five_hour: QuotaWindow;
   weekly: QuotaWindow;
+  rate_limit_reset_credits?: RateLimitResetCredits | null;
 }
 
 export interface ProfileCard {

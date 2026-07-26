@@ -22,6 +22,8 @@ Treat them as secrets.
 
 ## Threat model summary
 
-This project only performs local file operations. It does not transmit tokens over network by design.
+This project mainly performs local file operations. When reading plan/quota data it sends the OAuth access token over HTTPS to official ChatGPT/OpenAI endpoints and fetches quota metadata only — no prompts are sent and no models are invoked.
+
+The reset-credit lookup sends only the credentials required for the account scope; the app persists just the available count, grant time, and expiry time — never card IDs or raw response bodies.
 
 Main risk is accidental token exposure through Git, screenshots, shared terminals, insecure backups, or loose Windows ACLs.

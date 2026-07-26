@@ -10,9 +10,24 @@ pub struct QuotaWindow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
+pub struct RateLimitResetCredit {
+    pub granted_at: Option<i64>,
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct RateLimitResetCredits {
+    pub available_count: Option<u32>,
+    pub credits: Vec<RateLimitResetCredit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct QuotaSummary {
     pub five_hour: QuotaWindow,
     pub weekly: QuotaWindow,
+    pub rate_limit_reset_credits: Option<RateLimitResetCredits>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

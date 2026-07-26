@@ -54,6 +54,9 @@ jobs:
       - name: Type-check front-end
         run: npx tsc --noEmit
 
+      - name: Front-end unit tests
+        run: npm run test:front
+
       - name: Check for hardcoded version literals in HTML
         run: npm run version:check
 

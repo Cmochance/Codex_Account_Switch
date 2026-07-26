@@ -38,7 +38,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::errors::{AppError, AppResult};
-use crate::models::{QuotaSummary, QuotaWindow};
+use crate::models::{QuotaSummary, QuotaWindow, RateLimitResetCredit, RateLimitResetCredits};
 
 use super::paths::get_backup_root;
 
@@ -100,6 +100,7 @@ const ISSUER: &str = "https://auth.openai.com";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CHATGPT_BACKEND: &str = "https://chatgpt.com/backend-api";
 const USAGE_PATH: &str = "/wham/usage";
+const RESET_CREDITS_PATH: &str = "/wham/rate-limit-reset-credits";
 /// Reserved for future use: surfaces the active subscription / plan tier
 /// without relying on the id_token claims, useful when migrating between
 /// `prolite` / `plus` / `pro` / `business`.
@@ -174,6 +175,8 @@ struct RateLimitStatusPayload {
     plan_type: Option<String>,
     #[serde(default)]
     rate_limit: Option<RateLimitDetails>,
+    #[serde(default)]
+    rate_limit_reset_credits: Option<RateLimitResetCredits>,
 }
 
 #[derive(Deserialize)]
@@ -276,14 +279,44 @@ pub fn refresh_profile_via_api_with_options(
     }
 
     let client = build_http_client()?;
-    let usage_payload =
+    let usage_result =
         fetch_usage_with_retry(&client, &profile_dir, &auth, options.force_token_rotation)?;
+    let reset_credit_cards = match fetch_reset_credits(&client, &usage_result.auth) {
+        Ok(cards) => Some(cards),
+        Err(error) => {
+            eprintln!("Reset credits detail unavailable: {error}");
+            None
+        }
+    };
+    let usage_payload = usage_result.payload;
     let plan_type = usage_payload
         .plan_type
         .clone()
         .filter(|value| !value.trim().is_empty());
-    let subscription_expires_at = read_subscription_expiry_from_id_token(&auth.id_token);
-    let quota = quota_summary_from_payload(&usage_payload);
+    let subscription_expires_at =
+        read_subscription_expiry_from_id_token(&usage_result.auth.id_token);
+    let mut quota = quota_summary_from_payload(&usage_payload);
+    match reset_credit_cards {
+        Some(reset_credit_cards) => {
+            let summary = quota.get_or_insert_with(QuotaSummary::default);
+            let reset_credits = summary
+                .rate_limit_reset_credits
+                .get_or_insert_with(RateLimitResetCredits::default);
+            if reset_credits.available_count.is_none() {
+                reset_credits.available_count = u32::try_from(reset_credit_cards.len()).ok();
+            }
+            reset_credits.credits = reset_credit_cards;
+        }
+        None => {
+            // Every API write-back path persists this snapshot wholesale
+            // (`snapshot.quota.unwrap_or_default()`), so a transient detail
+            // failure would wipe previously confirmed cards without this
+            // backfill — the session-snapshot paths already preserve them
+            // the same way (see `select_current_quota`).
+            let stored = super::metadata::load_profile_metadata(profile_name, Some(codex_home));
+            backfill_reset_credits_from_stored(&mut quota, &stored.quota);
+        }
+    }
 
     Ok(ChatGptApiSnapshot {
         quota,
@@ -409,7 +442,7 @@ fn fetch_usage_with_retry(
     profile_dir: &Path,
     auth: &ProfileAuthFile,
     force_token_rotation: bool,
-) -> AppResult<RateLimitStatusPayload> {
+) -> AppResult<UsageFetchResult> {
     // 1) Refresh proactively if the JWT is already expired or about to
     //    expire. Avoids a guaranteed 401 + retry pair. When the caller
     //    forces rotation, refresh unconditionally — id_token claims
@@ -424,14 +457,25 @@ fn fetch_usage_with_retry(
     // 2) First attempt.
     let response = send_usage_request(client, &working_auth)?;
     if response.status() != StatusCode::UNAUTHORIZED {
-        return decode_usage_response(response);
+        return Ok(UsageFetchResult {
+            payload: decode_usage_response(response)?,
+            auth: working_auth,
+        });
     }
 
     // 3) On 401, refresh once and retry. If the refresh itself fails, the
     //    caller falls back to the legacy `codex exec` path.
     let refreshed = refresh_oauth_tokens(client, profile_dir, &working_auth)?;
     let retry = send_usage_request(client, &refreshed)?;
-    decode_usage_response(retry)
+    Ok(UsageFetchResult {
+        payload: decode_usage_response(retry)?,
+        auth: refreshed,
+    })
+}
+
+struct UsageFetchResult {
+    payload: RateLimitStatusPayload,
+    auth: ProfileAuthFile,
 }
 
 fn send_usage_request(
@@ -449,6 +493,99 @@ fn send_usage_request(
                 format!("ChatGPT usage request failed: {error}"),
             )
         })
+}
+
+fn fetch_reset_credits(
+    client: &Client,
+    auth: &ProfileAuthFile,
+) -> AppResult<Vec<RateLimitResetCredit>> {
+    let headers = build_chatgpt_headers(&auth.access_token, auth.account_id.as_deref())?;
+    let response = client
+        .get(format!("{CHATGPT_BACKEND}{RESET_CREDITS_PATH}"))
+        .headers(headers)
+        .send()
+        .map_err(|error| {
+            AppError::new(
+                "HTTP_REQUEST_FAILED",
+                format!("ChatGPT reset credits request failed: {error}"),
+            )
+        })?;
+    let status = response.status();
+    if let Some(error) = reset_credits_status_error(status) {
+        return Err(error);
+    }
+    let payload: Value = response.json().map_err(|error| {
+        AppError::new(
+            "RESET_CREDITS_PARSE_FAILED",
+            format!("Failed to parse reset credits response: {error}"),
+        )
+    })?;
+    reset_credits_from_payload(&payload).ok_or_else(|| {
+        AppError::new(
+            "RESET_CREDITS_PARSE_FAILED",
+            "Reset credits response is missing a `credits` array.",
+        )
+    })
+}
+
+fn reset_credits_status_error(status: StatusCode) -> Option<AppError> {
+    if status == StatusCode::UNAUTHORIZED {
+        return Some(AppError::new(
+            "RESET_CREDITS_UNAUTHORIZED",
+            "Reset credits endpoint returned 401; the access token or account scope may be stale.",
+        ));
+    }
+    (!status.is_success()).then(|| {
+        AppError::new(
+            "RESET_CREDITS_HTTP_ERROR",
+            format!("Reset credits endpoint returned HTTP {status}."),
+        )
+    })
+}
+
+fn reset_credits_from_payload(payload: &Value) -> Option<Vec<RateLimitResetCredit>> {
+    let credits = payload.get("credits")?.as_array()?;
+    Some(
+        credits
+            .iter()
+            .map(|credit| RateLimitResetCredit {
+                granted_at: credit.get("granted_at").and_then(timestamp_seconds),
+                expires_at: credit.get("expires_at").and_then(timestamp_seconds),
+            })
+            .collect(),
+    )
+}
+
+/// Carry previously confirmed reset-credit details over into a fresh
+/// snapshot whose detail fetch failed. Only fires when the new snapshot
+/// carries no reset-credit information at all: if `/wham/usage` reported a
+/// fresh `available_count`, mixing it with stale stored card timestamps
+/// could show a count that contradicts the listed cards.
+fn backfill_reset_credits_from_stored(
+    quota: &mut Option<QuotaSummary>,
+    stored_quota: &QuotaSummary,
+) {
+    if quota
+        .as_ref()
+        .is_some_and(|summary| summary.rate_limit_reset_credits.is_some())
+    {
+        return;
+    }
+    let Some(stored) = stored_quota.rate_limit_reset_credits.clone() else {
+        return;
+    };
+    quota
+        .get_or_insert_with(QuotaSummary::default)
+        .rate_limit_reset_credits = Some(stored);
+}
+
+fn timestamp_seconds(value: &Value) -> Option<i64> {
+    value.as_i64().or_else(|| {
+        value
+            .as_str()
+            .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
+            .map(|timestamp| timestamp.timestamp())
+    })
 }
 
 fn decode_usage_response(
@@ -586,9 +723,9 @@ fn persist_refreshed_auth(profile_dir: &Path, auth: &ProfileAuthFile) -> AppResu
 fn quota_summary_from_payload(payload: &RateLimitStatusPayload) -> Option<QuotaSummary> {
     use super::quota_routing::{slot_from_window_minutes, QuotaSlot};
 
-    let rate_limit = payload.rate_limit.as_ref()?;
     let mut summary = QuotaSummary::default();
-    let mut any_data = false;
+    summary.rate_limit_reset_credits = payload.rate_limit_reset_credits.clone();
+    let mut any_data = summary.rate_limit_reset_credits.is_some();
 
     // Position is just a fallback; `window_minutes` is authoritative.
     // OpenAI usually puts the 5h window in primary and weekly in
@@ -596,19 +733,21 @@ fn quota_summary_from_payload(payload: &RateLimitStatusPayload) -> Option<QuotaS
     // weekly window in the primary slot and secondary null. Routing by
     // size means a Team plan whose only enforced window is weekly
     // doesn't get its data labeled as 5h on the dashboard.
-    for (window, fallback) in [
-        (rate_limit.primary_window.as_ref(), QuotaSlot::FiveHour),
-        (rate_limit.secondary_window.as_ref(), QuotaSlot::Weekly),
-    ] {
-        let Some(window) = window else { continue };
-        let mapped = quota_window_from_rate_limit(window);
-        if mapped.remaining_percent.is_none() && mapped.refresh_at.is_none() {
-            continue;
-        }
-        any_data = true;
-        match slot_from_window_minutes(window.window_minutes, fallback) {
-            QuotaSlot::FiveHour => summary.five_hour = mapped,
-            QuotaSlot::Weekly => summary.weekly = mapped,
+    if let Some(rate_limit) = payload.rate_limit.as_ref() {
+        for (window, fallback) in [
+            (rate_limit.primary_window.as_ref(), QuotaSlot::FiveHour),
+            (rate_limit.secondary_window.as_ref(), QuotaSlot::Weekly),
+        ] {
+            let Some(window) = window else { continue };
+            let mapped = quota_window_from_rate_limit(window);
+            if mapped.remaining_percent.is_none() && mapped.refresh_at.is_none() {
+                continue;
+            }
+            any_data = true;
+            match slot_from_window_minutes(window.window_minutes, fallback) {
+                QuotaSlot::FiveHour => summary.five_hour = mapped,
+                QuotaSlot::Weekly => summary.weekly = mapped,
+            }
         }
     }
 
@@ -751,6 +890,124 @@ mod tests {
         }))
         .unwrap();
         assert!(quota_summary_from_payload(&payload).is_none());
+    }
+
+    #[test]
+    fn quota_summary_preserves_available_reset_credit_count() {
+        let payload: RateLimitStatusPayload = serde_json::from_value(serde_json::json!({
+            "plan_type": "pro",
+            "rate_limit_reset_credits": { "available_count": 2 }
+        }))
+        .unwrap();
+
+        let quota = quota_summary_from_payload(&payload).expect("reset credit count");
+        let credits = quota
+            .rate_limit_reset_credits
+            .expect("reset credit summary");
+        assert_eq!(credits.available_count, Some(2));
+        assert!(credits.credits.is_empty());
+    }
+
+    #[test]
+    fn reset_credit_details_preserve_grant_and_expiry_without_persisting_ids() {
+        let payload = serde_json::json!({
+            "credits": [{
+                "id": "must-not-be-persisted",
+                "granted_at": "2026-07-12T21:12:45.739898Z",
+                "expires_at": "2026-08-11T21:12:45.739898Z"
+            }, {
+                "id": "also-discarded",
+                "granted_at": 1_783_900_000_i64,
+                "expires_at": 1_786_500_000_i64
+            }]
+        });
+
+        let credits = reset_credits_from_payload(&payload).expect("reset credit details");
+        assert_eq!(credits.len(), 2);
+        assert_eq!(credits[0].granted_at, Some(1_783_890_765));
+        assert_eq!(credits[0].expires_at, Some(1_786_482_765));
+        assert_eq!(credits[1].granted_at, Some(1_783_900_000));
+        assert_eq!(credits[1].expires_at, Some(1_786_500_000));
+    }
+
+    #[test]
+    fn reset_credits_401_is_reported_without_response_body() {
+        let error = reset_credits_status_error(StatusCode::UNAUTHORIZED).expect("401 error");
+        assert_eq!(error.error_code, "RESET_CREDITS_UNAUTHORIZED");
+        assert!(error.message.contains("access token"));
+    }
+
+    fn stored_quota_with_credits() -> QuotaSummary {
+        QuotaSummary {
+            rate_limit_reset_credits: Some(RateLimitResetCredits {
+                available_count: Some(2),
+                credits: vec![RateLimitResetCredit {
+                    granted_at: Some(1_783_890_765),
+                    expires_at: Some(1_786_482_765),
+                }],
+            }),
+            ..QuotaSummary::default()
+        }
+    }
+
+    #[test]
+    fn backfill_restores_stored_reset_credits_when_detail_fetch_fails() {
+        let mut quota = Some(QuotaSummary {
+            five_hour: QuotaWindow {
+                remaining_percent: Some(80),
+                ..QuotaWindow::default()
+            },
+            ..QuotaSummary::default()
+        });
+
+        backfill_reset_credits_from_stored(&mut quota, &stored_quota_with_credits());
+
+        let summary = quota.expect("quota kept");
+        assert_eq!(summary.five_hour.remaining_percent, Some(80));
+        let credits = summary.rate_limit_reset_credits.expect("stored credits");
+        assert_eq!(credits.available_count, Some(2));
+        assert_eq!(credits.credits[0].expires_at, Some(1_786_482_765));
+    }
+
+    #[test]
+    fn backfill_keeps_fresh_usage_count_over_stale_stored_cards() {
+        let mut quota = Some(QuotaSummary {
+            rate_limit_reset_credits: Some(RateLimitResetCredits {
+                available_count: Some(1),
+                credits: Vec::new(),
+            }),
+            ..QuotaSummary::default()
+        });
+
+        backfill_reset_credits_from_stored(&mut quota, &stored_quota_with_credits());
+
+        let credits = quota
+            .expect("quota kept")
+            .rate_limit_reset_credits
+            .expect("fresh count kept");
+        assert_eq!(credits.available_count, Some(1));
+        assert!(credits.credits.is_empty());
+    }
+
+    #[test]
+    fn backfill_creates_summary_when_snapshot_has_no_quota() {
+        let mut quota = None;
+
+        backfill_reset_credits_from_stored(&mut quota, &stored_quota_with_credits());
+
+        let summary = quota.expect("summary created for stored credits");
+        assert!(summary.five_hour.remaining_percent.is_none());
+        let credits = summary.rate_limit_reset_credits.expect("stored credits");
+        assert_eq!(credits.available_count, Some(2));
+    }
+
+    #[test]
+    fn backfill_is_a_no_op_without_stored_credits() {
+        let mut quota = None;
+
+        backfill_reset_credits_from_stored(&mut quota, &QuotaSummary::default());
+
+        assert!(quota.is_none());
     }
 
     #[test]

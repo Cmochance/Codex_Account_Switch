@@ -102,6 +102,7 @@ pub fn normalize_quota_summary(
     QuotaSummary {
         five_hour: normalize_quota_window(quota.five_hour),
         weekly: normalize_quota_window(quota.weekly),
+        rate_limit_reset_credits: quota.rate_limit_reset_credits,
     }
 }
 
@@ -439,6 +440,7 @@ mod tests {
                         ..QuotaWindow::default()
                     },
                     weekly: QuotaWindow::default(),
+                    rate_limit_reset_credits: None,
                 },
                 source_mtime_ms: Some(signature.0),
             });

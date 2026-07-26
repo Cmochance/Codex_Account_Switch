@@ -11,6 +11,8 @@ import type {
 import { t, type MessageKey } from "@front-shared/i18n";
 import { state } from "@front-shared/state";
 import { getThemeOption, isThemeId } from "@front-shared/theme";
+import { buildRateLimitResetCreditsPresentation } from "@front-shared/quota-view-model";
+import { formatBeijingDateTimeSeconds } from "@front-shared/time-format";
 
 const isWindowsUiTarget = __CODEX_UI_TARGET__ === "windows";
 const shellRoutes: readonly ShellRoute[] = ["dashboard", "profiles", "settings", "guide"];
@@ -364,6 +366,46 @@ function buildMetricLineMarkup(
   `;
 }
 
+function buildRateLimitResetCreditsMarkup(
+  quota: QuotaSummary | null | undefined,
+  unavailable: boolean,
+  layout: "profile" | "current",
+): string {
+  if (unavailable) {
+    return "";
+  }
+
+  const presentation = buildRateLimitResetCreditsPresentation(quota);
+  if (presentation.state === "unknown") {
+    return "";
+  }
+
+  const layoutClass = layout === "current" ? "current-reset-credits" : "profile-reset-credits";
+  const message = t(state.locale, "resetCreditsAvailable", {
+    value: presentation.availableCount,
+  });
+  const details = presentation.cards.length === 0
+    ? `<span class="reset-credits-details-unknown">${escapeHtml(t(state.locale, "resetCreditsDetailsUnknown"))}</span>`
+    : presentation.cards.map((card, index) => {
+        const grantedAt = card.grantedAt == null
+          ? "--"
+          : (formatBeijingDateTimeSeconds(card.grantedAt, state.locale) ?? "--");
+        const expiresAt = card.expiresAt == null
+          ? "--"
+          : (formatBeijingDateTimeSeconds(card.expiresAt, state.locale) ?? "--");
+        return `<span class="reset-credit-card">
+          <strong>${escapeHtml(t(state.locale, "resetCreditsCard", { value: index + 1 }))}</strong>
+          <span>${escapeHtml(t(state.locale, "resetCreditsGrantedAt", { value: grantedAt }))}</span>
+          <span>${escapeHtml(t(state.locale, "resetCreditsExpiresAt", { value: expiresAt }))}</span>
+        </span>`;
+      }).join("");
+
+  return `<div class="${layoutClass} reset-credits-status">
+    <span class="reset-credits-count">${escapeHtml(message)}</span>
+    <span class="reset-credits-details">${details}</span>
+  </div>`;
+}
+
 function buildProfileQuotaMarkup(profile: ProfileCard): string {
   const unavailable = isProfileUnavailable(profile);
   const quota = profile.quota;
@@ -372,6 +414,7 @@ function buildProfileQuotaMarkup(profile: ProfileCard): string {
     <div class="profile-quota-stack">
       ${buildMetricLineMarkup(t(state.locale, "fiveHourAllowance"), quota?.five_hour, "blue", unavailable, "profile")}
       ${buildMetricLineMarkup(t(state.locale, "weeklyAllowance"), quota?.weekly, "pink", unavailable, "profile")}
+      ${buildRateLimitResetCreditsMarkup(quota, unavailable, "profile")}
     </div>
   `;
 }
@@ -386,6 +429,7 @@ function buildCurrentQuotaMarkup(
     <div class="current-quota-stack">
       ${buildMetricLineMarkup(t(state.locale, "fiveHourAllowance"), quota?.five_hour, "blue", unavailable, "current")}
       ${buildMetricLineMarkup(t(state.locale, "weeklyAllowance"), quota?.weekly, "pink", unavailable, "current")}
+      ${buildRateLimitResetCreditsMarkup(quota, unavailable, "current")}
     </div>
   `;
 }

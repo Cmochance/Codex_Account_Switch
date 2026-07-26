@@ -41,6 +41,12 @@
 - The desktop app does not use a separate local backend or HTTP server at runtime
 - `windows/` remains only as a historical note directory while the Rust path is the primary runtime and regression target
 
+## Quota and reset-credit details
+
+- `chatgpt_api` refreshes `/wham/usage` first, then requests `GET /wham/rate-limit-reset-credits` with the access token and optional `chatgpt-account-id` that the usage round ultimately used.
+- The reset-credit response is normalized into `QuotaSummary.rate_limit_reset_credits`; only the available count, grant time, and expiry time are persisted — never card IDs or raw response bodies.
+- A detail-endpoint failure never blocks the main plan/quota refresh; previously confirmed details are preserved both when a newer session snapshot lacks reset-credit fields and when the detail fetch itself fails (backfilled from the stored profile metadata).
+
 ## Installation behavior
 
 - `macOS-backup/install.sh` is now a compatibility entrypoint with `auto`, `desktop`, and `legacy` modes
