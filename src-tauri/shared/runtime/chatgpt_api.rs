@@ -204,8 +204,21 @@ struct RateLimitWindow {
     /// real `token_count` events have been observed where a weekly
     /// window arrived in the primary slot — see `quota_routing` for
     /// the mapping logic.
+    ///
+    /// Only present in Codex-CLI-produced payloads (session JSONL /
+    /// app-server): `window_minutes` is the CLI's *internal* field
+    /// name, converted from the backend's seconds before it reaches
+    /// those surfaces. The raw `/wham/usage` schema never carries it —
+    /// see `limit_window_seconds`.
     #[serde(default)]
     window_minutes: Option<i64>,
+    /// Length in seconds — the field the raw `/wham/usage` payload
+    /// actually carries (verified against openai/codex
+    /// `codex-backend-openapi-models::RateLimitWindowSnapshot` and a
+    /// live capture on 2026-07-26; e.g. 2_592_000 = the free plan's
+    /// 30-day window).
+    #[serde(default)]
+    limit_window_seconds: Option<i64>,
 }
 
 /// Cheap predicate the caller can hit before paying for an HTTP round-trip.
@@ -787,8 +800,18 @@ fn quota_summary_from_payload(payload: &RateLimitStatusPayload) -> Option<QuotaS
                 continue;
             }
             any_data = true;
-            let slot = slot_from_window_minutes(window.window_minutes, fallback);
-            let slot = if window.window_minutes.is_none() {
+            // The raw `/wham/usage` schema reports the window length as
+            // `limit_window_seconds`; `window_minutes` only exists in
+            // Codex-CLI-converted payloads. Convert the same way the CLI
+            // does (openai/codex backend-client
+            // `window_minutes_from_seconds`) so routing stays exact.
+            let window_minutes = window
+                .window_minutes
+                .or_else(|| window.limit_window_seconds.map(|seconds| seconds / 60));
+            let slot = slot_from_window_minutes(window_minutes, fallback);
+            // Last-ditch heuristic for a payload missing BOTH length
+            // fields: classify by how far away the reset is.
+            let slot = if window_minutes.is_none() {
                 slot_from_reset_at(window.reset_at, now_secs).unwrap_or(slot)
             } else {
                 slot
@@ -984,6 +1007,60 @@ mod tests {
         let error = reset_credits_status_error(StatusCode::UNAUTHORIZED).expect("401 error");
         assert_eq!(error.error_code, "RESET_CREDITS_UNAUTHORIZED");
         assert!(error.message.contains("access token"));
+    }
+
+    #[test]
+    fn quota_summary_routes_by_limit_window_seconds_from_raw_usage_payload() {
+        // Field names exactly as the live `/wham/usage` capture of
+        // 2026-07-26: windows carry `limit_window_seconds`, never
+        // `window_minutes`. A weekly window sitting in the primary
+        // slot must still land in the weekly bucket.
+        let payload: RateLimitStatusPayload = serde_json::from_value(serde_json::json!({
+            "plan_type": "pro",
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                    "used_percent": 20.0,
+                    "limit_window_seconds": 604_800,
+                    "reset_after_seconds": 400_000,
+                    "reset_at": 1_787_621_501_i64
+                },
+                "secondary_window": null
+            }
+        }))
+        .unwrap();
+
+        let quota = quota_summary_from_payload(&payload).expect("quota");
+        assert_eq!(quota.weekly.remaining_percent, Some(80));
+        assert!(quota.five_hour.remaining_percent.is_none());
+    }
+
+    #[test]
+    fn quota_summary_routes_free_plan_monthly_window_to_weekly_slot() {
+        // Free plan live capture: single 30-day window in primary
+        // (limit_window_seconds 2_592_000 = 43_200 min). Renders in
+        // the weekly slot — the dashboard has no month slot, and the
+        // 5h slot would be outright wrong.
+        let payload: RateLimitStatusPayload = serde_json::from_value(serde_json::json!({
+            "plan_type": "free",
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                    "used_percent": 0.0,
+                    "limit_window_seconds": 2_592_000,
+                    "reset_after_seconds": 2_592_000,
+                    "reset_at": 1_787_621_501_i64
+                },
+                "secondary_window": null
+            }
+        }))
+        .unwrap();
+
+        let quota = quota_summary_from_payload(&payload).expect("quota");
+        assert_eq!(quota.weekly.remaining_percent, Some(100));
+        assert!(quota.five_hour.remaining_percent.is_none());
     }
 
     fn stored_quota_with_credits() -> QuotaSummary {

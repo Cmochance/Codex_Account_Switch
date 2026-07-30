@@ -124,11 +124,24 @@ pub fn clear_proxy_state(codex_home: Option<&Path>) {
 #[cfg(target_os = "macos")]
 pub fn apply_proxy_env(command: &mut Command) {
     if let Some(url) = read_proxy_state_cached().effective_url() {
-        command.env("HTTP_PROXY", url);
-        command.env("HTTPS_PROXY", url);
-        command.env("ALL_PROXY", url);
-        // NO_PROXY 留空：本地 callback server（127.0.0.1）通常被各
-        // 工具默认排除，无需额外配置。
+        // 大小写各设一遍：curl 的 `http_proxy` 只认小写（历史 CGI 安全
+        // 原因），reqwest / 多数工具认大写；两套全设覆盖面最广。
+        for key in [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            command.env(key, url);
+        }
+        // 显式排除 loopback：reqwest / curl 并**不**默认排除
+        // 127.0.0.1，不设 NO_PROXY 会把子进程对本机地址的请求
+        // （如 OAuth 回调自检）也送进代理。
+        for key in ["NO_PROXY", "no_proxy"] {
+            command.env(key, "localhost,127.0.0.1");
+        }
     }
 }
 

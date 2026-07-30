@@ -42,7 +42,13 @@ pub enum QuotaSlot {
 pub fn slot_from_window_minutes(window_minutes: Option<i64>, fallback: QuotaSlot) -> QuotaSlot {
     match window_minutes {
         Some(FIVE_HOUR_WINDOW_MINUTES) => QuotaSlot::FiveHour,
-        Some(WEEKLY_WINDOW_MINUTES) => QuotaSlot::Weekly,
+        // Weekly *or longer*: the free plan carries a 30-day window
+        // (43_200 min; `limit_window_seconds` 2_592_000 on
+        // `/wham/usage`, also seen in local session JSONL). The
+        // dashboard only has 5h + weekly slots, so month-scale windows
+        // render in the weekly slot — better than the position
+        // fallback mislabeling a monthly quota as "5h".
+        Some(minutes) if minutes >= WEEKLY_WINDOW_MINUTES => QuotaSlot::Weekly,
         _ => fallback,
     }
 }
@@ -90,6 +96,22 @@ mod tests {
         );
         assert_eq!(
             slot_from_window_minutes(Some(WEEKLY_WINDOW_MINUTES), QuotaSlot::Weekly),
+            QuotaSlot::Weekly
+        );
+    }
+
+    #[test]
+    fn month_scale_window_routes_to_weekly_slot() {
+        // Free plan: 30-day window (43_200 min), observed both in live
+        // `/wham/usage` (limit_window_seconds 2_592_000) and local
+        // session JSONL. Must not fall through to the position hint —
+        // that would label a monthly quota as "5h".
+        assert_eq!(
+            slot_from_window_minutes(Some(43_200), QuotaSlot::FiveHour),
+            QuotaSlot::Weekly
+        );
+        assert_eq!(
+            slot_from_window_minutes(Some(43_200), QuotaSlot::Weekly),
             QuotaSlot::Weekly
         );
     }

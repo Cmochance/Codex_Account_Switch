@@ -26,4 +26,6 @@ This project mainly performs local file operations. When reading plan/quota data
 
 The reset-credit lookup sends only the credentials required for the account scope; the app persists just the available count, grant time, and expiry time — never card IDs or raw response bodies.
 
+The optional proxy setting (macOS) stores the configured proxy URL in plain text in `proxy_state.json` under the runtime directory. If your proxy URL embeds credentials (`http://user:pass@host:port`), treat that file as a secret like the token files above.
+
 Main risk is accidental token exposure through Git, screenshots, shared terminals, insecure backups, or loose Windows ACLs.
