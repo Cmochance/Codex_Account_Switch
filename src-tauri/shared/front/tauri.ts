@@ -9,6 +9,7 @@ import type {
   CurrentQuotaResponse,
   ProfileCard,
   ProfilesSnapshotResponse,
+  ProxyConfig,
   QuotaSummary,
   SwitchResponse,
   UpdateCheckResponse,
@@ -482,4 +483,23 @@ export function redetectCodexCliPath(): Promise<CodexCliRedetectResult> {
 
 export function cancelCodexLogin(): Promise<boolean> {
   return invokeCommand<boolean>("cancel_codex_login");
+}
+
+/** 读取当前生效的代理配置。macOS 上返回 `proxy_state.json` 内容；
+ *  Windows / Linux 永远返回 `{ proxy_url: null }`，前端据此隐藏 UI。 */
+export function getProxyConfig(): Promise<ProxyConfig> {
+  return invokeCommand<ProxyConfig>("get_proxy_config");
+}
+
+/** 保存代理配置。空字符串视为清空（直连）。后端会用 reqwest 校验
+ *  URL 是否合法，失败抛 `INVALID_PROXY_URL`。 */
+export function setProxyConfig(proxyUrl: string): Promise<ProxyConfig> {
+  return invokeCommand<ProxyConfig>("set_proxy_config", {
+    payload: { proxy_url: proxyUrl },
+  });
+}
+
+/** 清空代理配置（恢复直连）。 */
+export function clearProxyConfig(): Promise<ProxyConfig> {
+  return invokeCommand<ProxyConfig>("clear_proxy_config");
 }

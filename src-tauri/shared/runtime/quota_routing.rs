@@ -22,6 +22,12 @@ pub const FIVE_HOUR_WINDOW_MINUTES: i64 = 300;
 /// 24h * 60min = 10_080.
 pub const WEEKLY_WINDOW_MINUTES: i64 = 10_080;
 
+/// Threshold (in seconds) used to classify a window by its `reset_at`
+/// distance from now when `window_minutes` is missing. 6 hours
+/// (21600s) cleanly separates a 5h window (resets within a few hours)
+/// from a weekly window (resets in days).
+pub const RESET_AT_CLASSIFY_THRESHOLD_SECONDS: i64 = 6 * 60 * 60;
+
 /// Which slot of `QuotaSummary` a rate-limit window belongs in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuotaSlot {
@@ -36,8 +42,33 @@ pub enum QuotaSlot {
 pub fn slot_from_window_minutes(window_minutes: Option<i64>, fallback: QuotaSlot) -> QuotaSlot {
     match window_minutes {
         Some(FIVE_HOUR_WINDOW_MINUTES) => QuotaSlot::FiveHour,
-        Some(WEEKLY_WINDOW_MINUTES) => QuotaSlot::Weekly,
+        // Weekly *or longer*: the free plan carries a 30-day window
+        // (43_200 min; `limit_window_seconds` 2_592_000 on
+        // `/wham/usage`, also seen in local session JSONL). The
+        // dashboard only has 5h + weekly slots, so month-scale windows
+        // render in the weekly slot — better than the position
+        // fallback mislabeling a monthly quota as "5h".
+        Some(minutes) if minutes >= WEEKLY_WINDOW_MINUTES => QuotaSlot::Weekly,
         _ => fallback,
+    }
+}
+
+/// Classify a window by the distance between its `reset_at` (Unix
+/// seconds) and `now_secs`. Used when `window_minutes` is missing —
+/// OpenAI's `/wham/usage` payload has been observed omitting
+/// `window_minutes` entirely while still reporting a weekly `reset_at`
+/// several days out. Returns `None` when `reset_at` is missing or in
+/// the past (cannot classify reliably).
+pub fn slot_from_reset_at(reset_at: Option<i64>, now_secs: i64) -> Option<QuotaSlot> {
+    let reset_at = reset_at?;
+    let delta = reset_at - now_secs;
+    if delta <= 0 {
+        return None;
+    }
+    if delta <= RESET_AT_CLASSIFY_THRESHOLD_SECONDS {
+        Some(QuotaSlot::FiveHour)
+    } else {
+        Some(QuotaSlot::Weekly)
     }
 }
 
@@ -70,6 +101,22 @@ mod tests {
     }
 
     #[test]
+    fn month_scale_window_routes_to_weekly_slot() {
+        // Free plan: 30-day window (43_200 min), observed both in live
+        // `/wham/usage` (limit_window_seconds 2_592_000) and local
+        // session JSONL. Must not fall through to the position hint —
+        // that would label a monthly quota as "5h".
+        assert_eq!(
+            slot_from_window_minutes(Some(43_200), QuotaSlot::FiveHour),
+            QuotaSlot::Weekly
+        );
+        assert_eq!(
+            slot_from_window_minutes(Some(43_200), QuotaSlot::Weekly),
+            QuotaSlot::Weekly
+        );
+    }
+
+    #[test]
     fn missing_or_unknown_window_minutes_falls_back_to_position() {
         assert_eq!(
             slot_from_window_minutes(None, QuotaSlot::FiveHour),
@@ -89,5 +136,32 @@ mod tests {
             slot_from_window_minutes(Some(60), QuotaSlot::Weekly),
             QuotaSlot::Weekly
         );
+    }
+
+    #[test]
+    fn slot_from_reset_at_classifies_by_distance() {
+        // 1h ahead -> 5h window
+        assert_eq!(slot_from_reset_at(Some(3600), 0), Some(QuotaSlot::FiveHour));
+        // Exactly at the 6h threshold -> 5h
+        assert_eq!(
+            slot_from_reset_at(Some(RESET_AT_CLASSIFY_THRESHOLD_SECONDS), 0),
+            Some(QuotaSlot::FiveHour)
+        );
+        // 1 day ahead -> weekly
+        assert_eq!(slot_from_reset_at(Some(86_400), 0), Some(QuotaSlot::Weekly));
+        // 5 days ahead -> weekly (the observed 2026-07-29 case)
+        assert_eq!(
+            slot_from_reset_at(Some(5 * 86_400), 0),
+            Some(QuotaSlot::Weekly)
+        );
+    }
+
+    #[test]
+    fn slot_from_reset_at_returns_none_for_missing_or_past() {
+        assert_eq!(slot_from_reset_at(None, 0), None);
+        // Already reset (past) -> cannot classify
+        assert_eq!(slot_from_reset_at(Some(-100), 0), None);
+        // Reset exactly now -> ambiguous, treat as unclassifiable
+        assert_eq!(slot_from_reset_at(Some(0), 0), None);
     }
 }

@@ -1,8 +1,8 @@
 use crate::errors::CommandError;
 use crate::models::{
     ActionResponse, AddProfilePayload, CodexCliRedetectResult, CodexCliStatus, OpenUrlPayload,
-    ProfilePayload, RenameProfilePayload, SetCodexCliPathPayload, UpdateCheckPayload,
-    UpdateCheckResponse, UpdateProfileBaseUrlPayload,
+    ProfilePayload, ProxyConfig, RenameProfilePayload, SetCodexCliPathPayload,
+    SetProxyConfigPayload, UpdateCheckPayload, UpdateCheckResponse, UpdateProfileBaseUrlPayload,
 };
 
 #[cfg(target_os = "macos")]
@@ -245,6 +245,83 @@ pub async fn redetect_codex_cli_path() -> Result<CodexCliRedetectResult, Command
 #[tauri::command]
 pub fn cancel_codex_login() -> Result<bool, CommandError> {
     Ok(crate::shared::login_cancel::cancel_login_in_progress())
+}
+
+/// 返回当前生效的代理配置。仅 macOS 真正读取 `proxy_state.json`；
+/// Windows / Linux 永远返回默认（直连）状态。
+#[tauri::command]
+pub fn get_proxy_config() -> Result<ProxyConfig, CommandError> {
+    #[cfg(target_os = "macos")]
+    {
+        let state = crate::shared::proxy::read_proxy_state_cached();
+        Ok(ProxyConfig {
+            proxy_url: state.proxy_url,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(ProxyConfig::default())
+    }
+}
+
+/// 保存代理配置。空字符串视为清空（直连）。立即丢弃已缓存的
+/// reqwest client，使下一次 plan / quota 刷新走新代理。
+///
+/// URL 校验：用 `reqwest::Proxy::all` 试构建，失败返回
+/// `INVALID_PROXY_URL`。支持 `http://` / `https://` / `socks5://`
+/// / `socks5h://`。
+#[tauri::command]
+pub fn set_proxy_config(payload: SetProxyConfigPayload) -> Result<ProxyConfig, CommandError> {
+    #[cfg(target_os = "macos")]
+    {
+        let trimmed = payload.proxy_url.trim();
+        let next_state = if trimmed.is_empty() {
+            crate::shared::proxy::ProxyState::default()
+        } else {
+            // 用 reqwest 校验 URL 是否可被解析为代理。这一步不发起
+            // 任何网络请求，只是构造 Proxy 内部结构。
+            reqwest::Proxy::all(trimmed).map_err(|error| {
+                CommandError::new(
+                    "INVALID_PROXY_URL",
+                    format!(
+                        "Invalid proxy URL {trimmed:?}: {error}. Expected http://, https://, socks5:// or socks5h://."
+                    ),
+                )
+            })?;
+            crate::shared::proxy::ProxyState {
+                proxy_url: Some(trimmed.to_string()),
+            }
+        };
+        crate::shared::proxy::set_proxy_state(None, next_state.clone());
+        // 丢弃旧 client，下一次 build_http_client 按新配置重建。
+        crate::shared::chatgpt_api::invalidate_http_client();
+        Ok(ProxyConfig {
+            proxy_url: next_state.proxy_url,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = payload;
+        Err(CommandError::new(
+            "PROXY_CONFIG_UNSUPPORTED",
+            "Proxy configuration is only supported on macOS in this build.",
+        ))
+    }
+}
+
+/// 清空代理配置（恢复直连），并丢弃缓存的 reqwest client。
+#[tauri::command]
+pub fn clear_proxy_config() -> Result<ProxyConfig, CommandError> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::shared::proxy::clear_proxy_state(None);
+        crate::shared::chatgpt_api::invalidate_http_client();
+        Ok(ProxyConfig::default())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(ProxyConfig::default())
+    }
 }
 
 #[tauri::command]
